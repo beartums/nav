@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>nav</title>
+  <!-- Inline SVG favicon: no extra request, no file to forget when the
+       ConfigMap is edited, and it doubles as the header mark below. -->
+  <link rel="icon" id="favicon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b6ea5'/%3E%3Cpath d='M9 23V9h3.2l7.6 9.1V9H23v14h-3.2L12.2 14v9H9z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/nav.css">
+</head>
+<body>
+  <aside id="groups" aria-label="Groups">
+    <div class="side-menu" id="side-menu">
+      <button id="side-menu-btn" aria-haspopup="true" aria-expanded="false">Manage &#9662;</button>
+      <ul class="menu-list" id="side-menu-list" hidden>
+        <li><button id="admin-newtile-btn">New tile&hellip;</button></li>
+        <li><button id="admin-site-btn">Site settings&hellip;</button></li>
+        <li><button id="admin-connections-btn">Connections&hellip;</button></li>
+      </ul>
+    </div>
+    <h2>Groups</h2>
+    <ul id="group-list"></ul>
+    <button id="group-add">+ New group</button>
+    <div id="widget-lib"></div>
+    <div id="side-grip" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"
+         tabindex="0" title="Drag to resize (double-click to reset)"></div>
+  </aside>
+
+  <div class="wrap">
+    <div id="imp" role="status">
+      <strong id="imp-who"></strong>
+      <button id="imp-exit">Stop impersonating</button>
+      <span class="note" id="imp-note"></span>
+    </div>
+    <div id="signedout" role="alert" hidden>
+      Your sign-in has expired, so nothing here is updating.
+      <button type="button" id="signedout-reload">Reload</button>
+    </div>
+    <div id="adminbar">
+      <strong>Administrative mode</strong>
+      <label class="tpl">Template <select id="admin-tpl" aria-describedby="admin-tpl-note"></select></label>
+      <span class="hint" id="admin-tpl-note"></span>
+      <span class="hint">Click a tile to edit it &middot; drag tiles between groups or to reorder</span>
+      <button id="admin-viewas-btn">View-as list&hellip;</button>
+      <button id="admin-bulk-btn">Bulk edit&hellip;</button>
+      <button id="admin-done">Done</button>
+    </div>
+    <div id="editbar">
+      <strong>Editing</strong> <span id="edit-name"></span>
+      <span class="hint">Drag tiles and widgets to arrange &middot; drag a corner to resize &middot; click a tile to rename it</span>
+      <button id="edit-revert">Revert to template&hellip;</button>
+      <button id="edit-done">Done</button>
+    </div>
+    <header>
+      <svg class="mark" id="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#3b6ea5"/><path d="M9 23V9h3.2l7.6 9.1V9H23v14h-3.2L12.2 14v9H9z" fill="white"/></svg>
+      <h1>nav</h1>
+      <span class="who" id="who"></span>
+      <input id="search" type="search" placeholder="Search&hellip;" autocomplete="off"
+             aria-label="Search tiles">
+      <div class="menu">
+        <button id="menu-btn" aria-haspopup="true" aria-expanded="false">View &#9662;</button>
+        <ul class="menu-list" id="menu-list" hidden></ul>
+      </div>
+    </header>
+    <div id="out" class="msg">Loading…</div>
+  </div>
+
+  <!-- Tile editor. Movable, deliberately small, and positioned near whatever
+       was clicked rather than centred: the point is to see the change against
+       the layout it affects. -->
+  <div id="editor" role="dialog" aria-label="Edit tile">
+    <div class="bar" id="editor-bar">
+      <strong id="editor-title"></strong>
+      <button id="editor-close" aria-label="Close">&#215;</button>
+    </div>
+    <div class="body" id="editor-body"></div>
+    <div class="foot">
+      <button id="editor-cancel">Cancel</button>
+      <span class="spacer"></span>
+      <span class="note" id="editor-note"></span>
+      <button id="editor-save">Save</button>
+    </div>
+  </div>
+
+  <script src="/static/core.js"></script>
+  <script src="/static/admin.js"></script>
+  <script src="/static/layouts.js"></script>
+  <script src="/static/groups.js"></script>
+  <script src="/static/editor.js"></script>
+  <script src="/static/tiles.js"></script>
+  <script src="/static/bulk.js"></script>
+  <script src="/static/custom-tiles.js"></script>
+  <script src="/static/bulk-table.js"></script>
+  <script src="/static/widgets.js"></script>
+  <script src="/static/widgets-clock-weather.js"></script>
+  <script src="/static/widgets-calendar.js"></script>
+  <script src="/static/widget-layout.js"></script>
+  <script src="/static/group-grid.js"></script>
+  <script src="/static/widget-designer.js"></script>
+  <script src="/static/connections.js"></script>
+  <script src="/static/main.js"></script>
+</body>
+</html>

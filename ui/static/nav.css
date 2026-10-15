@@ -1,0 +1,778 @@
+:root { color-scheme: light dark; --bg:#f6f7f9; --fg:#14161a; --card:#fff;
+        --line:#e3e6ea; --muted:#5b6370; --accent:#3b6ea5; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14161a; --fg:#e8eaed; --card:#1d2027; --line:#2c313a;
+          --muted:#9aa3b0; --accent:#7aa7d9; }
+}
+* { box-sizing: border-box; }
+/* `hidden` must always win. A single unscoped display rule silently
+   defeated it once already. */
+[hidden] { display:none !important; }
+body { margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--fg);
+       font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.wrap { max-width: 1100px; margin: 0 auto; }
+#search { padding:6px 10px; font:inherit; font-size:13px; width:180px;
+          background:var(--card); color:var(--fg); border:1px solid var(--line);
+          border-radius:6px; }
+#search:focus { outline:2px solid var(--accent); outline-offset:1px; }
+@media (max-width: 560px) { #search { width:100%; order:9; } }
+header { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.mark { width:26px; height:26px; flex:0 0 26px; border-radius:6px; }
+h1 { font-size:20px; margin:0; letter-spacing:-0.01em; flex:1; }
+.who { color:var(--muted); font-size:13px; }
+button { font:inherit; padding:7px 14px; border:1px solid var(--line);
+         border-radius:7px; background:var(--card); color:var(--fg); cursor:pointer; }
+button:hover { border-color:var(--accent); }
+
+/* --- view menu: a cascading dropdown, not a panel -------------------
+   An options panel across the top spent a block of vertical space on
+   controls that are touched rarely, above content that is looked at every
+   time. A menu costs one button. */
+.menu { position:relative; }
+.menu-list, .submenu {
+  position:absolute; z-index:20; min-width:190px; margin:0; padding:4px;
+  list-style:none; background:var(--card); border:1px solid var(--line);
+  border-radius:9px; box-shadow:0 8px 24px rgba(0,0,0,.14); }
+.menu-list { top:calc(100% + 6px); right:0; }
+/* Submenus open LEFTWARD: the trigger sits at the right edge of the header,
+   so opening right would go off-screen on a phone. */
+.submenu { right:calc(100% + 4px); top:-4px; display:none; }
+.has-sub:hover > .submenu,
+.has-sub:focus-within > .submenu { display:block; }
+.menu-list li { display:block; }
+/* The positioning context each submenu resolves against. Without this they
+   all land on .menu instead of their own row, stacked on top of each other
+   at the top of the list. */
+.has-sub { position:relative; }
+.menu-list button {
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+  border:0; background:none; padding:7px 10px; border-radius:6px;
+  font:inherit; color:inherit; cursor:pointer; white-space:nowrap; }
+.menu-list button:hover, .menu-list button:focus-visible {
+  background:color-mix(in srgb, var(--accent) 14%, transparent); }
+.menu-list .tick { width:14px; flex:0 0 14px; color:var(--accent); }
+.menu-list .caret { margin-left:auto; color:var(--muted); }
+
+h2.cat { font-size:13px; text-transform:uppercase; letter-spacing:0.06em;
+         color:var(--muted); margin:22px 0 10px; font-weight:600; }
+h2.cat:first-of-type { margin-top:4px; }
+
+/* SCOPED to .tiles on purpose. As a bare `ul` rule this also matched
+   .menu-list, and an author `display` declaration beats the UA stylesheet's
+   `[hidden] { display:none }` -- so setting .hidden on the menu did nothing
+   and it could never be closed. The submenus were unaffected only because
+   `.submenu { display:none }` outranks a bare `ul`. */
+ul.tiles { list-style:none; margin:0; padding:0; display:grid; gap:10px;
+           grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); }
+/* Column-first fills down then across. Needs a bounded height, so the row
+   count is derived from the tile count when this mode is on. */
+ul.tiles.colfirst { grid-auto-flow:column; grid-template-columns:none;
+              grid-auto-columns:minmax(240px, 1fr); }
+
+a.app { display:flex; gap:12px; align-items:center; padding:14px 16px;
+        background:var(--card); border:1px solid var(--line); border-radius:10px;
+        text-decoration:none; color:inherit; }
+a.app:hover { border-color:var(--accent); }
+.icon { width:30px; height:30px; flex:0 0 30px; object-fit:contain; }
+.icon.letter { display:grid; place-items:center; border-radius:7px;
+               background:var(--accent); color:#fff; font-weight:700;
+               font-size:15px; text-transform:uppercase; }
+.text { min-width:0; }
+.name { font-weight:600; }
+.desc { color:var(--muted); font-size:13px; margin-top:3px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* Collapsed: icons only, expanding on hover. The text is kept in the DOM
+   rather than removed so it stays available to a screen reader and the
+   expansion costs no reflow of the grid itself. */
+ul.tiles.collapsed { grid-template-columns:repeat(auto-fill, minmax(58px, 58px)); }
+ul.tiles.collapsed a.app { justify-content:center; padding:12px; position:relative; }
+ul.tiles.collapsed .text { position:absolute; left:100%; top:50%; transform:translateY(-50%);
+                     margin-left:8px; background:var(--card); border:1px solid var(--line);
+                     border-radius:8px; padding:8px 12px; white-space:nowrap;
+                     z-index:5; opacity:0; pointer-events:none; transition:opacity .12s; }
+ul.tiles.collapsed a.app:hover .text,
+ul.tiles.collapsed a.app:focus-visible .text { opacity:1; }
+
+/* --- administrative mode -------------------------------------------
+   The normal layout, annotated -- not a separate screen. Editing what the
+   tiles look like while looking at something that is not the tiles was the
+   first version's mistake. */
+#adminbar, #editbar { position:sticky; top:0; z-index:25; display:none; gap:12px;
+            align-items:center; margin:-24px -16px 16px; padding:10px 16px;
+            background:var(--accent); color:#fff; font-size:13px; }
+body.admin-mode #adminbar { display:flex; }
+body.edit-mode #editbar { display:flex; }
+#adminbar strong, #editbar strong { font-size:14px; }
+#adminbar .hint, #editbar .hint { opacity:.85; flex:1 1 160px; min-width:0; }
+#adminbar button, #editbar button { background:rgba(255,255,255,.15); color:#fff;
+                   border-color:rgba(255,255,255,.35); }
+#adminbar, #editbar { flex-wrap:wrap; row-gap:6px; }
+#adminbar .tpl { display:flex; align-items:center; gap:6px; }
+#adminbar .tpl select { background:rgba(255,255,255,.15); color:#fff; font:inherit;
+                        border:1px solid rgba(255,255,255,.35); border-radius:6px; padding:3px 6px;
+                        max-width:220px; }
+#adminbar .tpl select option, #adminbar .tpl select optgroup { color:var(--fg); background:var(--card); }
+#admin-tpl-note { flex:1 1 160px !important; min-width:0; font-size:12px; }
+
+/* --side-w is set by groups.js from the grip's drag, per viewer. */
+#groups { display:none; position:fixed; left:0; top:0; bottom:0; width:var(--side-w, 210px);
+          padding:16px 12px; overflow:auto; background:var(--card);
+          border-right:1px solid var(--line); z-index:24; }
+body.admin-mode #groups, body.edit-mode #groups { display:block; }
+body.admin-mode .wrap, body.edit-mode .wrap { margin-left:var(--side-w, 210px);
+                                              max-width:calc(1100px + var(--side-w, 210px)); }
+#side-grip { position:fixed; top:0; bottom:0; left:calc(var(--side-w, 210px) - 3px); width:6px;
+             cursor:col-resize; z-index:26; }
+#side-grip:hover, #side-grip:focus-visible, body.side-dragging #side-grip {
+  background:color-mix(in srgb, var(--accent) 40%, transparent); outline:none; }
+body.side-dragging { cursor:col-resize; user-select:none; }
+/* Admin tools: one button in the sidebar rather than a row on the bar. */
+.side-menu { display:none; position:relative; margin-bottom:14px; }
+body.admin-mode .side-menu { display:block; }
+.side-menu > button { width:100%; text-align:left; }
+.side-menu .menu-list { left:0; right:0; min-width:0; }
+#groups h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--muted); margin:0 0 8px; }
+#group-list { list-style:none; margin:0 0 10px; padding:0; display:block; }
+#group-list li { display:flex; align-items:center; gap:6px; padding:7px 8px;
+                 border-radius:7px; font-size:13px; cursor:grab; }
+#group-list li.over { background:color-mix(in srgb, var(--accent) 22%, transparent);
+                      outline:2px dashed var(--accent); }
+#group-list .count { margin-left:auto; color:var(--muted); font-size:12px; }
+
+/* Admin affordances on the real tiles. */
+body.admin-mode a.app, body.edit-mode a.app { cursor:pointer; }
+/* Admin mode has no use for the viewer's View menu: the sort is pinned to
+   position so reordering means anything, and grouping/flow are reader
+   preferences that only confuse what is being edited. */
+body.admin-mode .menu, body.edit-mode .menu { display:none; }
+/* Tabbed grouping: one category at a time. */
+.tabs { display:flex; gap:2px; overflow-x:auto; border-bottom:1px solid var(--line);
+        margin-bottom:14px; scrollbar-width:none; }
+.tabs::-webkit-scrollbar { display:none; }
+.tabs button { flex:0 0 auto; padding:8px 14px; font:inherit; font-size:13px;
+               background:none; border:0; border-bottom:2px solid transparent;
+               color:var(--muted); cursor:pointer; white-space:nowrap; }
+.tabs button[aria-selected="true"] { color:var(--fg); border-bottom-color:var(--accent);
+                                     font-weight:600; }
+.tabs button .count { margin-left:6px; font-size:11px; opacity:.7; }
+/* Touch panning is horizontal here, so let the browser keep vertical
+   scrolling native rather than fighting it in JS. */
+#out.tabbed { touch-action: pan-y; }
+.bulkwrap { overflow-x:auto; }
+table.bulk { width:100%; border-collapse:collapse; font-size:13px;
+             background:var(--card); border:1px solid var(--line); }
+table.bulk th, table.bulk td { padding:6px 8px; border-bottom:1px solid var(--line);
+                               text-align:left; vertical-align:middle; }
+table.bulk th { font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+                color:var(--muted); background:var(--bg); position:sticky; top:0; z-index:1; }
+table.bulk tr.grp td { background:var(--bg); font-weight:600; }
+/* A staged row has to be obvious: nothing here is saved yet. */
+table.bulk tr.dirty td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+table.bulk input[type=text], table.bulk input[type=number] {
+  width:100%; padding:4px 6px; font:inherit; background:var(--bg); color:var(--fg);
+  border:1px solid var(--line); border-radius:5px; }
+table.bulk td.num input { width:62px; }
+table.bulk td.icons { white-space:nowrap; }
+/* Two swatches per app, each showing what that theme will actually get.
+   The dark one is a dark plate with a light edge, the light one a white
+   plate with a dark edge, so an icon that only works on one background is
+   obvious here instead of after it ships. */
+.swatch { width:30px; height:30px; padding:3px; border-radius:6px; cursor:pointer;
+          display:inline-flex; align-items:center; justify-content:center;
+          vertical-align:middle; margin-right:5px; }
+.swatch img { max-width:100%; max-height:100%; object-fit:contain; display:block; }
+.swatch.dark  { background:#1d2027; border:1px solid #f2f4f7; }
+.swatch.light { background:#ffffff; border:1px solid #1d2027; }
+.swatch:hover { outline:2px solid var(--accent); outline-offset:1px; }
+.swatch .none { font-size:9px; line-height:1; color:var(--muted); }
+.swatch.dark .none { color:#8b93a1; }
+/* Field-level change marks. The row bar says "this app", these say
+   "this value" -- without them a dirty row gives no clue what in it moved. */
+table.bulk .chg { outline:2px solid var(--accent); outline-offset:1px; }
+table.bulk input[type=checkbox].chg { outline-offset:2px; }
+table.bulk td.grip { width:22px; cursor:grab; color:var(--muted); text-align:center;
+                     user-select:none; line-height:1; }
+table.bulk td.grip:active { cursor:grabbing; }
+table.bulk tr.dragging { opacity:.4; }
+/* The insert point is drawn on the row it would land ABOVE, and on the
+   group header when the drop would put it first in that group. */
+table.bulk tr.dropbefore > td { box-shadow: inset 0 2px 0 var(--accent); }
+table.bulk tr.grp.dropinto > td { box-shadow: inset 0 -2px 0 var(--accent); }
+table.bulk tr.dropafter > td { box-shadow: inset 0 -2px 0 var(--accent); }
+table.bulk td.preview { width:30px; }
+table.bulk td.preview img { width:24px; height:24px; object-fit:contain; display:block; }
+table.bulk td.act { width:26px; text-align:center; }
+table.bulk button.del { background:none; border:0; cursor:pointer; color:var(--muted);
+                        font-size:15px; line-height:1; padding:2px 4px; }
+table.bulk button.del:hover { color:#c0392b; }
+/* A custom tile is a bookmark, not an Authentik application. Saying so in
+   the row stops "why can't I edit this one's URL?" */
+/* Loud on purpose. Every mistake this feature can cause starts with
+   forgetting the screen is not yours. */
+#signedout { position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:12px;
+             margin:-24px -16px 16px; padding:9px 16px; font-size:13px;
+             background:color-mix(in srgb, var(--accent) 16%, var(--card)); border-bottom:1px solid var(--line); }
+#imp { display:none; align-items:center; gap:10px; flex-wrap:wrap; padding:8px 12px;
+       background:#7a3e00; color:#fff; border-radius:8px; margin-bottom:14px;
+       font-size:13px; }
+body.impersonating #imp { display:flex; }
+body.impersonating { box-shadow: inset 0 0 0 3px #7a3e00; }
+/* Tiles the chosen groups would ADD on top of the person's own access.
+   The question is the delta; what they already reach is context. */
+a.app.added { outline:2px solid #c07a00; outline-offset:2px; }
+a.app.added::after { content:'added'; position:absolute; top:3px; right:5px;
+                     font-size:9px; text-transform:uppercase; letter-spacing:.04em;
+                     color:#c07a00; font-weight:700; }
+li:has(> a.app.added) { position:relative; }
+a.app { position:relative; }
+/* Health (tiles.js paintHealth): down fades with a red dot, unknown a grey
+   dot, up nothing. The words are in the dot's label and tooltip. */
+a.app .h-dot { position:absolute; top:6px; right:6px; width:8px; height:8px; border-radius:50%;
+               box-shadow:0 0 0 2px var(--card); pointer-events:auto; }
+a.app.health-down .h-dot { background:var(--status-crit); }
+a.app.health-unknown .h-dot { background:var(--viz-muted); opacity:.7; }
+a.app.health-down > :not(.h-dot) { opacity:.45; filter:grayscale(1); }
+ul.ugrid > li.size-XS > a.app .h-dot { top:3px; right:3px; width:6px; height:6px; }
+#imp strong { font-weight:700; }
+#imp .note { opacity:.85; font-size:12px; flex:1 1 100%; }
+#imp button { background:#fff; color:#7a3e00; border:0; border-radius:5px;
+              padding:4px 10px; font:inherit; font-size:12px; font-weight:600;
+              cursor:pointer; }
+.gp { position:relative; }
+.gp-pop { position:absolute; z-index:70; left:0; right:0; top:100%; margin-top:2px;
+          background:var(--card); border:1px solid var(--line); border-radius:6px;
+          box-shadow:0 8px 24px rgba(0,0,0,.25); max-height:220px; overflow:auto; }
+.gp-pop button { display:block; width:100%; text-align:left; padding:5px 9px;
+                 font:inherit; font-size:13px; background:none; border:0;
+                 color:var(--fg); cursor:pointer; }
+.gp-pop button:hover, .gp-pop button.on { background:var(--bg); }
+.gp-pop button.mk { border-top:1px solid var(--line); color:var(--accent); }
+.gp-pop button.mk[disabled] { color:var(--muted); cursor:default; }
+.gp-pop .why { padding:4px 9px 6px; font-size:11px; color:var(--muted); }
+.aud { position:relative; }
+.aud-btn { width:100%; text-align:left; padding:6px 8px; font:inherit; font-size:13px;
+           background:var(--bg); color:var(--fg); border:1px solid var(--line);
+           border-radius:5px; cursor:pointer; }
+.aud-pop { position:absolute; z-index:70; left:0; right:0; top:100%; margin-top:2px;
+           background:var(--card); border:1px solid var(--line); border-radius:6px;
+           box-shadow:0 8px 24px rgba(0,0,0,.25); max-height:230px; overflow:auto; }
+.aud-pop input.f { position:sticky; top:0; width:100%; padding:6px 8px; font:inherit;
+                   font-size:12px; border:0; border-bottom:1px solid var(--line);
+                   background:var(--card); color:var(--fg); }
+.aud-pop h4 { margin:0; padding:5px 8px 2px; font-size:10px; text-transform:uppercase;
+              letter-spacing:.04em; color:var(--muted); }
+.aud-pop label { display:flex; gap:7px; align-items:center; padding:4px 8px;
+                 font-size:13px; cursor:pointer; }
+.aud-pop label:hover { background:var(--bg); }
+.aud-pop .none { padding:8px; font-size:12px; color:var(--muted); }
+table.bulk .badge { font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                    color:var(--muted); border:1px solid var(--line);
+                    border-radius:4px; padding:1px 4px; margin-left:6px; }
+.bulkbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
+.bulkbar .pending { color:var(--accent); font-weight:600; }
+body.admin-mode a.app:hover, body.edit-mode a.app:hover { outline:2px solid var(--accent); }
+a.app.dragging { opacity:.4; }
+li.dropbefore { border-left:3px solid var(--accent); margin-left:-3px; }
+
+/* Collapsible categories, in BOTH modes. */
+h2.cat { display:flex; align-items:center; gap:8px; cursor:pointer;
+         user-select:none; }
+h2.cat .chev { transition:transform .12s; }
+h2.cat.closed .chev { transform:rotate(-90deg); }
+
+/* --- the movable editor -------------------------------------------- */
+#editor { position:fixed; z-index:50; width:330px; display:none;
+          background:var(--card); border:1px solid var(--line);
+          border-radius:11px; box-shadow:0 14px 44px rgba(0,0,0,.3); }
+body.editing #editor { display:block; }
+#editor .bar { display:flex; align-items:center; gap:8px; padding:9px 12px;
+               border-bottom:1px solid var(--line); cursor:move; }
+#editor .bar strong { flex:1; font-size:13px; overflow:hidden;
+                      text-overflow:ellipsis; white-space:nowrap; }
+#editor .body { padding:12px; display:grid; gap:8px;
+                /* Scroll the body, never the footer: Save must stay reachable
+                   however long the form (the widget designer is long). */
+                max-height:calc(100vh - 190px); overflow:auto; }
+#editor label { font-size:12px; color:var(--muted); display:grid; gap:3px; }
+#editor input[type=text], #editor select {
+  font:inherit; font-size:13px; padding:6px 8px; border:1px solid var(--line);
+  border-radius:6px; background:var(--bg); color:var(--fg); width:100%; }
+/* Grey italic when the box is showing the inherited value as a placeholder
+   rather than an override that was typed. */
+#editor input.inherited { color:var(--muted); font-style:italic; }
+#editor .foot { display:flex; gap:8px; padding:10px 12px;
+                border-top:1px solid var(--line); }
+#editor .foot .spacer { flex:1; }
+#editor .drop { border:1px dashed var(--line); border-radius:7px;
+                padding:10px; text-align:center; font-size:12px;
+                color:var(--muted); }
+#editor .drop.over { border-color:var(--accent); color:var(--accent); }
+#editor .note { font-size:12px; }
+
+.msg { color:var(--muted); padding:32px 0; }
+.err { color:#c0392b; }
+
+/* --- widgets (roadmap #34) ---------------------------------------------------
+   Chart colours are the dataviz reference palette, light and dark steps both
+   selected and validated as sets -- not nav's accent. Status colours are fixed
+   and never reused for a series; they always ship with an icon and a word. */
+:root { --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100;
+        --series-5:#e87ba4; --series-6:#008300; --series-7:#4a3aa7; --series-8:#e34948;
+        --viz-grid:#e1e0d9; --viz-axis:#c3c2b7; --viz-muted:#898781;
+        --status-good:#0ca30c; --status-warn:#fab219; --status-crit:#d03b3b; }
+@media (prefers-color-scheme: dark) {
+  :root { --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500;
+          --series-5:#d55181; --series-6:#008300; --series-7:#9085e9; --series-8:#e66767;
+          --viz-grid:#2c2c2a; --viz-axis:#383835; }
+}
+.widget { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:12px 14px; position:relative; min-width:0; }
+.widget .w-label { font-size:13px; color:var(--muted); margin:0 0 4px;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.widget .w-value { font-size:28px; font-weight:600; line-height:1.15; }
+.widget .w-sub { font-size:12px; color:var(--muted); }
+.widget .w-level { display:inline-flex; align-items:center; gap:5px; font-size:12px;
+                   margin-left:8px; vertical-align:middle; font-weight:500; }
+.widget .w-level i { width:9px; height:9px; border-radius:50%; display:inline-block; }
+.widget .w-err { color:var(--status-crit); font-size:13px; white-space:pre-wrap; }
+.widget svg { display:block; width:100%; overflow:visible; }
+.widget svg text { fill:var(--viz-muted); font-size:11px; font-variant-numeric:tabular-nums; }
+.widget .w-legend { display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px;
+                    color:var(--muted); margin-top:6px; }
+.widget .w-legend span::before, .widget .w-tip b::before {
+  content:""; display:inline-block; width:12px; height:2px; margin-right:5px;
+  vertical-align:middle; background:var(--k); border-radius:1px; }
+.widget .w-plot:focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:4px; }
+.widget .w-plot:focus:not(:focus-visible) { outline:none; }
+.widget .w-tip { position:absolute; pointer-events:none; background:var(--card);
+                 border:1px solid var(--line); border-radius:8px; padding:6px 8px;
+                 font-size:12px; box-shadow:0 4px 14px rgba(0,0,0,.12); z-index:2;
+                 white-space:nowrap; }
+.widget .w-tip div { display:flex; gap:10px; justify-content:space-between; }
+.widget .w-tip strong { font-weight:600; }
+.widget .w-tip b { font-weight:400; color:var(--muted); }
+.widget .w-tools { display:flex; justify-content:flex-end; gap:8px; margin-top:4px; }
+.widget .w-tools button { font-size:11px; background:none; border:0; color:var(--muted);
+                          cursor:pointer; padding:0; text-decoration:underline; }
+.widget table { width:100%; border-collapse:collapse; font-size:12px; margin-top:6px;
+                font-variant-numeric:tabular-nums; }
+.widget .w-table { max-height:180px; overflow:auto; }
+.widget th, .widget td { text-align:right; padding:2px 6px; border-bottom:1px solid var(--line); }
+.widget th:first-child, .widget td:first-child { text-align:left; }
+.widget ul.w-list { list-style:none; margin:0; padding:0; display:grid; gap:4px; font-size:13px; }
+.widget ul.w-list li { display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+                       min-width:0; }
+.widget ul.w-list li.w-section { font-size:11px; font-weight:600; color:var(--muted);
+                                 text-transform:uppercase; letter-spacing:.04em; margin-top:4px; }
+.widget ul.w-list li.w-section:first-child { margin-top:0; }
+.widget .w-item { display:flex; flex-direction:column; min-width:0; flex:1; color:inherit;
+                  text-decoration:none; }
+.widget a.w-item:hover .w-item-label { text-decoration:underline; }
+.widget .w-item-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.widget .w-item-sub { font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis;
+                      display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.widget .w-badge { display:inline-flex; align-items:center; gap:5px; font-size:11px;
+                   color:var(--muted); white-space:nowrap; flex:0 0 auto; }
+.widget .w-badge i { width:7px; height:7px; border-radius:50%; display:inline-block; }
+.widget .w-label .w-note { display:inline; margin-left:8px; font-size:11px; }
+.widget .w-label .w-note::before { content:'\00b7'; margin-right:8px; }
+
+/* Calendar (widgets-calendar.js): agenda, week columns, month grid. Kind is
+   the chip's left edge, in the categorical order, with a legend beside the
+   headline -- never colour alone. */
+.cal-head { display:flex; align-items:center; gap:10px; margin-bottom:4px; min-width:0; }
+.cal-head .w-label { margin:0; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+                     white-space:nowrap; }
+.cal-legend { display:flex; gap:8px; font-size:11px; color:var(--muted); flex:1; min-width:0; overflow:hidden; }
+.cal-legend span { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.cal-legend i { width:8px; height:8px; border-radius:2px; display:inline-block; }
+.cal-legend .cal-who { font:inherit; color:inherit; background:none; border:1px solid transparent; border-radius:10px;
+  padding:0 5px; cursor:pointer; }
+.cal-legend .cal-who:hover, .cal-legend .cal-who:focus-visible { border-color:var(--line); }
+.cal-legend .cal-who.on { border-color:currentColor; color:var(--fg); }
+.cal-legend .cal-who.off { opacity:.45; }
+.cal-sheet.cal-as-menu { width:auto; max-width:min(260px, calc(100vw - 16px)); flex-direction:row; flex-wrap:wrap;
+  align-items:center; gap:4px; padding:6px 8px; }
+.cal-as-h { font-size:11px; color:var(--muted); margin-right:2px; }
+.cal-as-chip { font:inherit; font-size:12px; padding:1px 8px; border-radius:10px; border:1px solid var(--line);
+  background:none; color:var(--fg); cursor:pointer; }
+.cal-as-chip:hover, .cal-as-chip:focus-visible { border-color:currentColor; }
+.cal-month-name { font-size:12px; color:var(--fg); white-space:nowrap; }
+.cal-nav { display:flex; align-items:center; gap:2px; min-width:0; flex:0 0 auto; }
+.cal-nav button { font:inherit; font-size:12px; line-height:1; padding:3px 7px; border-radius:5px; }
+.cal-nav button:disabled { opacity:.35; cursor:default; }
+.cal-nav .cal-month-name { padding:0 4px; overflow:hidden; text-overflow:ellipsis; }
+.cal-toggle { margin-left:auto; }
+.cal-chip { border-left:3px solid var(--cal-c); padding:1px 4px; border-radius:2px 4px 4px 2px;
+            background:color-mix(in srgb, var(--cal-c) 10%, transparent); font-size:12px;
+            line-height:1.25; min-width:0; }
+.cal-chip .cal-t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cal-chip .cal-s { font-size:10px; color:var(--muted); overflow:hidden; text-overflow:ellipsis;
+                   white-space:nowrap; }
+.cal-done { opacity:.55; }
+.cal-agenda li .cal-chip { flex:1; }
+.cal-week { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:4px; }
+.cal-col { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.cal-week .cal-chip .cal-t { white-space:normal; overflow-wrap:break-word; hyphens:auto; display:-webkit-box;
+                             -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.cal-h { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cal-col.cal-today .cal-h { color:var(--fg); font-weight:600; }
+.cal-month { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:2px; }
+.cal-wd { font-size:10px; color:var(--muted); text-align:center; }
+.cal-cell { border-top:1px solid var(--line); padding:1px 2px; min-width:0; overflow:hidden;
+            display:flex; flex-direction:column; gap:1px; }
+.cal-cell .cal-chip { font-size:10.5px; padding:0 3px; }
+.cal-n { font-size:10px; color:var(--muted); line-height:13px; display:flex; justify-content:space-between; }
+.cal-cell.cal-today { border-top:2px solid var(--series-1); }
+.cal-cell.cal-today .cal-n { color:var(--fg); font-weight:600; }
+.cal-past { opacity:.6; }
+.cal-out { opacity:.35; }
+.cal-more { font-size:10px; color:var(--muted); font-weight:600; }
+.cal-dots { display:flex; gap:3px; flex-wrap:wrap; justify-content:center; padding-top:2px; }
+.cal-init { min-width:15px; height:15px; padding:0 3px; border-radius:8px; display:inline-flex; align-items:center;
+            justify-content:center; font:600 9px/1 system-ui, sans-serif; font-style:normal; color:#fff;
+            box-shadow:0 0 0 1px var(--card); }
+.cal-inits { gap:2px; }
+.cal-struck .cal-t, .cal-init.cal-struck { text-decoration:line-through; }
+.cal-init.cal-struck { opacity:.55; }
+.cal-dot { width:8px; height:8px; border-radius:50%; display:inline-block;
+           box-shadow:0 0 0 1px var(--card); }
+.cal-has { cursor:pointer; }
+.cal-col.cal-has { border-radius:4px; }
+.cal-has:hover { background:color-mix(in srgb, var(--fg) 5%, transparent); }
+.cal-day-pop { width:260px; max-height:calc(100vh - 16px); overflow:auto; background:var(--card);
+               border:1px solid var(--line); padding:8px 10px; display:flex; flex-direction:column; gap:4px; }
+.cal-day-h { font-size:12px; font-weight:600; margin-bottom:2px; }
+.cal-day-pop .cal-chip .cal-t { white-space:normal; overflow-wrap:break-word; }
+.cal-warn { margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#editor.wide { width:min(560px, calc(100vw - 24px)); }
+/* Connections dialog (connections.js). */
+fieldset.conn { border:1px solid var(--line); border-radius:8px; margin:10px 0 0; padding:6px 12px 10px; }
+fieldset.conn legend { font-weight:600; padding:0 4px; }
+.conn-actions { display:flex; align-items:center; gap:8px; margin-top:6px; flex-wrap:wrap; }
+.conn-actions .danger { color:var(--status-crit); }
+.conn-test { flex:1; min-width:0; margin:0; }
+.conn-bad { color:var(--status-crit); }
+details.conn-add { margin-top:12px; }
+details.conn-add summary { cursor:pointer; color:var(--accent); }
+details.conn-add #conn-add-btn { margin-top:6px; }
+#wd-preview { margin-top:10px; }
+
+/* Placed widgets lead their group. A chart takes two columns where there is
+   room for two; on a phone everything is one column. */
+.widget-row { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));
+              gap:12px; margin:0 0 12px; align-items:start; }
+.widget-cell { position:relative; min-width:0; }
+.widget-cell.shape-timeseries { grid-column:span 2; }
+@media (max-width:560px) { .widget-cell.shape-timeseries { grid-column:auto; } }
+.widget-cell .w-remove { position:absolute; top:4px; right:6px; z-index:3; border:0;
+                         background:none; color:var(--muted); font-size:16px; line-height:1;
+                         cursor:pointer; padding:2px 4px; border-radius:4px; }
+.widget-cell .w-remove:hover { color:var(--fg); background:var(--line); }
+.widget-cell .w-edit { position:absolute; top:4px; right:26px; z-index:3; border:0;
+                       background:none; color:var(--muted); font-size:14px; line-height:1;
+                       cursor:pointer; padding:2px 4px; border-radius:4px; }
+.widget-cell .w-edit:hover { color:var(--fg); background:var(--line); }
+
+/* The admin sidebar's widget library. <details>, so collapsing is native. */
+#widget-lib { margin-top:14px; border-top:1px solid var(--line); padding-top:10px; }
+#widget-lib summary { cursor:pointer; font-size:12px; text-transform:uppercase;
+                      letter-spacing:.06em; color:var(--muted); display:flex; gap:6px;
+                      align-items:center; padding:4px 0; list-style:none; }
+#widget-lib summary::-webkit-details-marker { display:none; }
+#widget-lib summary::before { content:"\25be"; transition:transform .12s; }
+#widget-lib details:not([open]) > summary::before { transform:rotate(-90deg); }
+#widget-lib summary .count { margin-left:auto; font-size:12px; }
+#widget-lib .wl-type { margin:2px 0 6px 8px; }
+#widget-lib .wl-type summary { text-transform:none; letter-spacing:0; font-size:13px; color:var(--fg); }
+#widget-lib ul { list-style:none; margin:2px 0 0; padding:0; display:grid; gap:6px; }
+#widget-lib li { display:grid; gap:3px; padding:6px 8px; border-radius:8px; background:var(--card);
+                 border:1px solid var(--line); }
+#widget-lib .wl-name { text-align:left; background:none; border:0; padding:0; color:var(--fg);
+                       font:inherit; font-size:13px; cursor:pointer; overflow:hidden;
+                       text-overflow:ellipsis; white-space:nowrap; }
+#widget-lib .wl-name:hover { color:var(--accent); }
+#widget-lib .wl-where { font-size:11px; color:var(--muted); }
+#widget-lib .note { font-size:12px; color:var(--muted); margin:4px 0 8px; }
+#widget-new, #widget-new-mine { margin-top:8px; width:100%; }
+.wd-actions { display:flex; gap:8px; margin-top:8px; }
+.wd-actions .danger { margin-left:auto; color:var(--status-crit); }
+#wd-labels { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; }
+#wd-labels .note { flex-basis:100%; font-size:12px; color:var(--muted); }
+#wd-labels .wd-label { font-size:12px; border:1px solid var(--line); background:var(--card);
+                       color:var(--muted); border-radius:999px; padding:2px 10px; cursor:pointer;
+                       max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#wd-labels .wd-label strong { color:var(--fg); font-weight:600; }
+#wd-labels .wd-label:hover { border-color:var(--accent); }
+
+/* --- the shared group grid (group-grid.js) -----------------------------------
+   Fixed row height, columns set by script from the width that fits, spans per
+   item size. `dense` packs small items into the gaps beside big ones. */
+ul.ugrid { list-style:none; margin:0; padding:0; display:grid; gap:10px;
+           grid-auto-rows:33px; grid-auto-flow:row dense; }
+ul.ugrid > li { position:relative; min-width:0; display:flex; }
+ul.ugrid > li > a.app { flex:1; min-width:0; }
+ul.ugrid > li.widget-cell > .widget-body { flex:1; min-width:0; overflow:hidden; }
+ul.ugrid > li.widget-cell { overflow:visible; }
+
+/* Tile S: a square-ish cell, icon over name; the description is a popup. */
+ul.ugrid > li.size-S > a.app { flex-direction:column; justify-content:center; gap:6px;
+                               padding:8px; text-align:center; }
+ul.ugrid > li.size-S .text { min-width:0; width:100%; }
+ul.ugrid > li.size-S .name { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+ul.ugrid > li.size-S .desc { position:absolute; top:calc(100% + 6px); left:50%; transform:translateX(-50%);
+                             width:max-content; max-width:240px; white-space:normal; text-align:left;
+                             background:var(--card); border:1px solid var(--line); border-radius:8px;
+                             padding:6px 10px; margin:0; box-shadow:0 4px 14px rgba(0,0,0,.12);
+                             z-index:6; pointer-events:none;
+                             /* display, not opacity: an invisible popup is still laid
+                                out, and near the right edge it widened the page past a
+                                phone's screen. Out of layout until wanted. */
+                             display:none; }
+ul.ugrid > li.size-S > a.app:hover .desc,
+ul.ugrid > li.size-S > a.app:focus-visible .desc { display:block; }
+/* Tile L: room for the whole description. */
+ul.ugrid > li.size-L > a.app { align-items:flex-start; }
+ul.ugrid > li.size-L .icon { width:40px; height:40px; flex-basis:40px; }
+ul.ugrid > li.size-L .desc { white-space:normal; display:-webkit-box; -webkit-line-clamp:4;
+                             -webkit-box-orient:vertical; }
+/* Widget S: just the number. */
+ul.ugrid > li.widget-cell.size-S .w-spark { display:none; }
+
+/* Admin: the corner handle, drop marks, an empty group as a target. */
+.resize-handle { position:absolute; right:2px; bottom:2px; width:14px; height:14px; z-index:4;
+                 cursor:nwse-resize; border-radius:3px; opacity:.55; touch-action:none;
+                 background:linear-gradient(135deg, transparent 50%, var(--muted) 50%, var(--muted) 60%,
+                            transparent 60%, transparent 72%, var(--muted) 72%, var(--muted) 82%, transparent 82%); }
+.resize-handle:hover, .resize-handle:focus-visible { opacity:1; outline:none;
+                 box-shadow:0 0 0 2px var(--accent); }
+li.resizing { outline:2px dashed var(--accent); outline-offset:2px; z-index:5; }
+ul.ugrid > li.dropbefore { box-shadow:-6px 0 0 -2px var(--accent); }
+ul.ugrid.dropend { outline:2px dashed var(--accent); outline-offset:4px; border-radius:10px; }
+body.admin-mode ul.ugrid, body.edit-mode ul.ugrid { min-height:40px; }
+body.admin-mode ul.ugrid > li.widget-cell, body.edit-mode ul.ugrid > li.widget-cell { cursor:grab; }
+li.widget-cell.dragging { opacity:.4; }
+#widget-lib li.wl-drag { cursor:grab; }
+
+/* Compact widgets (XS, S): the shape of things, not a reading. Tighter
+   padding and type; the full widget opens over them (.w-peek). */
+ul.ugrid > li.widget-cell.size-XS > .widget-body,
+ul.ugrid > li.widget-cell.shape-timeseries.size-S > .widget-body { padding:6px 8px; }
+ul.ugrid > li.widget-cell.size-XS .w-label,
+ul.ugrid > li.widget-cell.shape-timeseries.size-S .w-label { font-size:11px; margin-bottom:2px; }
+ul.ugrid > li.widget-cell.size-XS .w-value { font-size:19px; white-space:nowrap;
+                                             overflow:hidden; text-overflow:ellipsis; }
+ul.ugrid > li.widget-cell.size-XS .w-level { margin-left:5px; }
+ul.ugrid > li.widget-cell.size-XS .w-level i { width:8px; height:8px; }
+ul.ugrid > li.widget-cell[tabindex]:focus-visible { outline:2px solid var(--accent);
+                                                    outline-offset:2px; border-radius:10px; }
+.w-peek { position:fixed; z-index:60; max-width:calc(100vw - 16px);
+          box-shadow:0 10px 30px rgba(0,0,0,.18); border-radius:10px; }
+.w-peek > div { margin:0; }
+
+/* Tile XS: the icon alone, in one narrow column. Name and description move
+   to a popup -- kept in the DOM (not removed) so a screen reader still reads
+   the tile, and the link's title says it too. */
+ul.ugrid > li.size-XS > a.app { justify-content:center; align-items:center; padding:3px; border-radius:8px; }
+ul.ugrid > li.size-XS .icon { width:22px; height:22px; flex-basis:22px; }
+ul.ugrid > li.size-XS .icon.letter { font-size:12px; border-radius:5px; }
+ul.ugrid > li.size-XS .text { position:absolute; top:calc(100% + 6px); left:50%; transform:translateX(-50%);
+                              width:max-content; max-width:240px; background:var(--card);
+                              border:1px solid var(--line); border-radius:8px; padding:6px 10px;
+                              box-shadow:0 4px 14px rgba(0,0,0,.12); z-index:6; pointer-events:none;
+                              display:none; }
+ul.ugrid > li.size-XS .desc { white-space:normal; }
+ul.ugrid > li.size-XS > a.app:hover .text,
+ul.ugrid > li.size-XS > a.app:focus-visible .text { display:block; }
+
+.widget .w-label .w-level { margin-left:6px; font-size:11px; }
+.widget .w-label .w-level i { width:7px; height:7px; }
+.widget svg text.w-threshold-label { font-size:10px; paint-order:stroke; stroke:var(--card);
+                                    stroke-width:3px; stroke-linejoin:round; }
+
+/* The View menu's dashboard section heading. */
+.menu-list li.menu-head { font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+                          color:var(--muted); padding:4px 10px 2px; }
+
+/* --- clock (widgets-clock-weather.js) ---------------------------------------- */
+.c-wrap { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; }
+.c-label, .c-date { line-height:1.3; }
+.c-item { display:flex; align-items:center; gap:10px; min-width:0; }
+/* Analog: a grid of faces, each captioned UNDER the face. */
+.c-analog.c-multi { display:grid; gap:8px 10px; justify-items:center; }
+.c-analog .c-item { flex-direction:column; gap:2px; text-align:center; max-width:100%; }
+.c-analog .c-cap { max-width:100%; }
+.c-cap { min-width:0; }
+.c-label { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.c-time { font-size:28px; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.c-multi .c-time { font-size:18px; }
+/* Digital, several zones: label over date on the left, time on the right;
+   the two lines of one zone tight, the zones apart, ruled between. */
+.c-wrap.c-multi.c-digital { display:grid; gap:0 16px; align-items:stretch; }
+.c-multi.c-digital .c-item { display:grid; grid-template-columns:1fr auto; column-gap:8px; row-gap:0;
+                             align-items:center; padding:5px 0; }
+.c-multi.c-digital .c-item.c-sep { border-top:1px solid var(--line); }
+.c-oneline.c-digital .c-item { padding:2px 0; }
+.c-oneline.c-digital .c-label { grid-row:1 / span 2; }
+.c-multi.c-digital .c-cap { display:contents; }
+.c-multi.c-digital .c-label { grid-column:1; grid-row:1; line-height:1.2; }
+.c-multi.c-digital .c-date { grid-column:1; grid-row:2; font-size:11px; line-height:1.2; }
+.c-multi.c-digital .c-time { grid-column:2; grid-row:1 / span 2; text-align:right; }
+/* Too narrow for the time beside its label: under it, label / time / date. */
+.c-stack.c-digital .c-item { grid-template-columns:1fr; }
+.c-stack.c-digital .c-label, .c-stack.c-digital .c-time, .c-stack.c-digital .c-date { grid-column:1; grid-row:auto; text-align:left; }
+.c-time-sm { font-size:12px; font-variant-numeric:tabular-nums; }
+.c-date, .c-off { font-size:12px; color:var(--muted); white-space:nowrap; }
+.c-face .c-rim { fill:none; stroke:var(--viz-axis); stroke-width:2; }
+.c-face .c-tick { stroke:var(--viz-axis); stroke-width:1.5; stroke-linecap:round; }
+.c-face .c-tick.big { stroke:var(--muted); stroke-width:2.5; }
+.c-face .c-hand { stroke:var(--fg); stroke-linecap:round; }
+.c-face .c-h { stroke-width:4.5; }
+.c-face .c-m { stroke-width:3; }
+.c-face .c-s { stroke:var(--series-2); stroke-width:1.5; }
+.c-face .c-hub { fill:var(--fg); }
+ul.ugrid > li.widget-cell.shape-clock.size-XS .c-time { font-size:20px; }
+ul.ugrid > li.widget-cell.shape-clock.size-XS .c-label { font-size:11px; }
+
+/* --- weather ----------------------------------------------------------------- */
+/* Icons and faces keep their own size: `.widget svg` stretches charts to 100%. */
+.widget svg.wx-ico, .widget svg.c-face { width:auto; display:inline-block; }
+.wx-ico { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round;
+          stroke-linejoin:round; flex:0 0 auto; color:var(--fg); }
+.wx-ico .fill { fill:var(--card); }
+.wx-ico .dot { fill:currentColor; stroke:none; }
+.wx-xs { display:flex; align-items:center; gap:6px; height:100%; }
+.wx-xs .wx-temp { font-size:20px; }
+.wx-now { display:flex; align-items:center; gap:10px; }
+.wx-now-txt { min-width:0; }
+.wx-temp { font-size:28px; font-weight:600; line-height:1.1; font-variant-numeric:tabular-nums; }
+.wx-cond { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wx-details { font-size:12px; color:var(--muted); margin:6px 0; line-height:1.5; }
+.wx-hourly { margin-top:4px; }
+.wx-chart { display:block; width:100%; height:46px; }
+.wx-chart .wx-line { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; }
+.wx-chart .wx-pop { fill:var(--series-1); opacity:.22; }
+.wx-hours { display:flex; }
+.wx-h { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:2px;
+        font-size:11px; font-variant-numeric:tabular-nums; }
+.wx-h-t, .wx-h-p { color:var(--muted); white-space:nowrap; }
+.wx-h-v { font-weight:600; }
+.wx-body { display:flex; gap:16px; }
+.wx-col { flex:1 1 0; min-width:0; }
+ul.wx-days { list-style:none; margin:0; padding:0; font-size:12px; font-variant-numeric:tabular-nums; }
+ul.wx-days li { display:flex; align-items:center; gap:6px; padding:2px 0; }
+.wx-d-n { width:44px; flex:0 0 auto; }
+.wx-d-p { width:30px; flex:0 0 auto; color:var(--series-1); text-align:right; font-size:11px; }
+.wx-d-lo { width:30px; text-align:right; color:var(--muted); flex:0 0 auto; }
+.wx-d-hi { width:30px; flex:0 0 auto; font-weight:600; }
+.wx-d-bar { flex:1; position:relative; height:5px; border-radius:3px; background:var(--viz-grid); min-width:30px; }
+.wx-d-fill { position:absolute; top:0; bottom:0; border-radius:3px; background:var(--series-4); }
+/* The hover view: the week UNDER the hours, so the hours get the full width
+   (eight labels collide in half of it). L and XL are wide enough beside. */
+.widget.wx-full .wx-body { flex-direction:column; gap:6px; }
+.wx-wide { display:flex; gap:14px; align-items:center; height:100%; min-width:0; }
+.wx-w-now { flex:0 0 auto; width:180px; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.wx-w-top { display:flex; align-items:center; gap:8px; }
+.wx-w-top .wx-temp { font-size:22px; }
+.wx-w-top .wx-toggle { margin-left:auto; }
+.wx-strip { flex:1 1 0; min-width:0; overflow-y:hidden; }
+.wx-hours-strip .wx-h, .wx-days-strip .wx-h { flex:1 0 72px; gap:1px; line-height:1.2; }
+/* A day carries hi/lo AND its rain chance on one line: wider than an hour. */
+.wx-days-strip .wx-h { flex-basis:90px; }
+.wx-strip .wx-h-v { display:flex; gap:3px; align-items:baseline; white-space:nowrap; }
+.wx-strip .wx-h-p { font-size:10px; font-weight:400; color:var(--series-1); }
+.wx-toggle { display:inline-flex; flex:0 0 auto; border:1px solid var(--line); border-radius:6px;
+             overflow:hidden; }
+.wx-toggle button { font:inherit; font-size:11px; border:0; background:none; color:var(--muted);
+                    padding:1px 7px; cursor:pointer; }
+.wx-toggle button[aria-pressed="true"] { background:var(--line); color:var(--fg); }
+/* S: no room for now beside the strip -- its first hour is now. */
+/* Column layouts: the strip takes its own height, not a share of zero. */
+.wx-stack, .wx-tall { flex-direction:column; align-items:stretch; gap:4px; }
+.wx-stack .wx-strip, .wx-tall .wx-strip { flex:0 0 auto; }
+.wx-stack .wx-w-top .wx-cond { flex:1; min-width:0; }
+.wx-w-head { display:flex; align-items:center; gap:8px; }
+.wx-w-head .w-label { flex:1; min-width:0; margin:0; }
+.wx-tall .wx-now { gap:8px; }
+.wx-tall ul.wx-days { margin-top:4px; }
+/* Under four columns: the reading, as a card. */
+.wx-card { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.wx-card .w-label { margin:0; }
+.wx-card-top { display:flex; align-items:center; gap:6px; min-width:0; }
+.wx-card .wx-temp { font-size:20px; }
+.wx-card-range { margin-left:auto; font-size:11px; color:var(--muted); white-space:nowrap; }
+.wx-narrow { gap:6px; }
+.wx-narrow .wx-toggle { flex-direction:column; }
+.wx-narrow .wx-toggle button { padding:1px 5px; font-size:10px; }
+
+/* More than fits: scroll, the bar only on hover (see scrollIfOver). */
+.scroller { overflow:auto !important; scrollbar-width:thin; scrollbar-color:transparent transparent;
+            overscroll-behavior:contain; }
+.scroller:hover { scrollbar-color:color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+.scroller::-webkit-scrollbar { width:4px; height:4px; }
+.scroller::-webkit-scrollbar-thumb { background:transparent; border-radius:2px; }
+.scroller:hover::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--muted) 45%, transparent); }
+.w-dragscroll, .w-dragscroll * { cursor:grabbing !important; user-select:none; }
+.wx-h-lo { color:var(--muted); font-weight:400; }
+.widget.wx-L .wx-details { margin:2px 0; }
+
+/* A new page or nav-api has landed (main.js versionNote). */
+#new-version { position:fixed; right:16px; bottom:16px; z-index:50; font:inherit; font-size:13px;
+               padding:6px 12px; border-radius:8px; border:1px solid var(--accent);
+               background:var(--card); color:var(--fg); cursor:pointer;
+               box-shadow:0 2px 8px rgba(0,0,0,.15); }
+
+/* choreboard: one chip per chore -- initial, icon, name, chore, as width allows */
+.cal-pchip { padding:1px 3px; }
+.cal-pline { display:flex; align-items:center; gap:3px; min-width:0; white-space:nowrap; }
+.cal-pline .cal-init { flex:none; }
+.cal-ic { flex:none; line-height:1; }
+.cal-who { font-weight:600; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.cal-pline .cal-t { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cal-struck .cal-who, .cal-struck .cal-pline .cal-t { text-decoration:line-through; }
+.cal-month .cal-pchip { font-size:10.5px; }
+
+/* choreboard: interactive chips, the action sheet, the unread bell */
+.cal-pchip.cal-act { cursor:pointer; }
+.cal-pchip.cal-act:hover, .cal-pchip.cal-act:focus-visible { outline:1px solid var(--cal-c); }
+.cal-tentative { border-left-style:dashed; }
+.cal-bell { font-size:11px; text-decoration:none; color:var(--fg); white-space:nowrap; padding:1px 6px;
+            border-radius:10px; background:color-mix(in srgb, var(--danger, #e34948) 16%, transparent); }
+.cal-as { position:relative; }
+.cal-as-on { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid var(--accent, currentColor);
+  background:transparent; color:var(--fg); white-space:nowrap; cursor:pointer; }
+.cal-settle { display:flex; flex-wrap:wrap; gap:6px; }
+.cal-sheet { width:min(320px, calc(100vw - 16px)); background:var(--card); border:1px solid var(--line); padding:10px 12px;
+             display:flex; flex-direction:column; gap:6px; font-size:13px; }
+.cal-sheet.busy { opacity:.6; pointer-events:none; }
+.cal-sheet-h { font-weight:600; }
+.cal-sheet-acts { display:flex; flex-wrap:wrap; gap:6px; }
+.cal-sheet-acts button, .cal-sheet-form button { font:inherit; font-size:12px; }
+.cal-sheet button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.cal-why { flex-basis:100%; }
+.cal-note { font-size:12px; padding:4px 6px; border-radius:6px; background:var(--bg); }
+.cal-err { color:var(--danger, #c0392b); font-size:12px; }
+.cal-err:empty { display:none; }
+.cal-sheet-form { display:flex; flex-direction:column; gap:6px; }
+.cal-sheet-form label { display:flex; flex-direction:column; gap:2px; font-size:12px; color:var(--muted); }
+.cal-cands { max-height:180px; overflow:auto; display:flex; flex-direction:column; gap:2px; font-size:12px; }
+.cal-cand { flex-direction:row !important; color:var(--fg) !important; gap:4px !important; align-items:baseline; }
+
+.cal-icons { display:flex; flex-wrap:wrap; gap:4px; position:relative; align-items:center; }
+.cal-ib { font:inherit; font-size:15px; line-height:1; min-width:30px; height:28px; padding:0 6px; border-radius:7px; }
+.cal-menu { position:absolute; top:100%; right:0; z-index:5; margin-top:4px; background:var(--card); border:1px solid var(--line);
+            border-radius:8px; padding:4px; display:flex; flex-direction:column; min-width:190px; box-shadow:0 6px 18px rgba(0,0,0,.15); }
+.cal-menu[hidden] { display:none; }
+.cal-menu button { font:inherit; font-size:12px; text-align:left; border:0; background:transparent; padding:5px 8px; border-radius:5px; }
+.cal-menu button:hover { background:var(--bg); }
+.cal-sheet-t { font-weight:600; font-size:12px; }
+.cal-seg { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; align-self:flex-start; }
+.cal-seg button { font:inherit; font-size:12px; border:0; border-radius:0; padding:3px 9px; background:transparent; }
+.cal-seg button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+.cal-swap { display:flex; flex-direction:column; gap:6px; }
+.cal-pick { font:inherit; font-size:12px; text-align:left; margin:1px 0; }
+.cal-back { font:inherit; font-size:12px; border:0; background:transparent; color:var(--accent); padding:0; text-align:left; }
+.cal-radios { display:flex; flex-direction:column; gap:2px; }
+.cal-note button { font:inherit; font-size:12px; margin:4px 4px 0 0; }

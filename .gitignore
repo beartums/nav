@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+.tmp/
+tests/node_modules/
+ui/static/version.json
