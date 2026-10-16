@@ -770,13 +770,13 @@ class ChoreboardCalendar(Provider):
                     raise ValueError(e.message) from None
                 as_me = None                  # the token lacks act_as: still show the calendar
                 entries = await cb_call(client, "GET", "/api/calendar", None, params={"from": start, "to": end})
-            unread = 0
+            unread, recent = 0, None
             if as_me:
                 try:
-                    unread = int((await cb_call(client, "GET", "/api/me/inbox", as_me, via=via,
-                                                params={"unread": "true", "limit": 1})).get("unread", 0))
+                    box = await cb_call(client, "GET", "/api/me/inbox", as_me, via=via, params={"limit": 5})
+                    unread, recent = int(box.get("unread", 0)), box.get("items") or []
                 except Exception:  # noqa: BLE001 -- the bell is a nicety
-                    unread = 0
+                    unread, recent = 0, None
         mine = None
         if config["show"] == "mine":
             if me is None:
@@ -788,7 +788,15 @@ class ChoreboardCalendar(Provider):
                 e["can"], e["cannot"] = [], {}
         out = media.calendar([events], config["label"], config["view"], [], (start, end))
         public = creds.resolve("choreboard")[2]
-        out.update({"legend": legend, "actions": bool(as_me), "unread": unread,
+        # The bell's hover: the latest few, each linking to its own page in
+        # Choreboard (a request's approve page), else its day, else the inbox.
+        notes = None if recent is None else [
+            {"title": n.get("title") or "", "body": (n.get("body") or "")[:160], "at": n.get("created_at") or "",
+             "read": bool(n.get("read_at")),
+             "url": (f"{public}{n['path']}" if n.get("path") else f"{public}/calendar?date={n['date']}" if n.get("date")
+                     else f"{public}/inbox") if public else ""}
+            for n in recent]
+        out.update({"legend": legend, "actions": bool(as_me), "unread": unread, "notes": notes,
                     "inbox_url": f"{public}/inbox" if public else "",
                     "people": [{"id": p["id"], "name": p.get("name")} for p in people if p.get("active", 1)],
                     # Choreboard admins may act as anyone else (choreboard checks it again on every call).

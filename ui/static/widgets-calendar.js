@@ -435,14 +435,17 @@ function renderCalendar(el, d, o) {
 
   var head = div('cal-head');
   if (d.label) { head.appendChild(div('w-label', d.label)); }
-  if (d.unread > 0) {
-    // Unread notifications in the app behind the widget (choreboard's inbox).
+  if (d.unread > 0 || Array.isArray(d.notes)) {
+    // The inbox of the app behind the widget (choreboard): always there once
+    // it knows who you are, with the unread count; hover for the latest few.
     var bell = document.createElement(d.inbox_url ? 'a' : 'span');
-    bell.className = 'cal-bell';
-    bell.textContent = '🔔 ' + (d.unread > 99 ? '99+' : d.unread);
-    bell.setAttribute('aria-label', d.unread + ' unread notification' + (d.unread === 1 ? '' : 's'));
+    bell.className = 'cal-bell' + (d.unread > 0 ? ' has-unread' : '');
+    bell.textContent = d.unread > 0 ? '🔔 ' + (d.unread > 99 ? '99+' : d.unread) : '🔔';
+    bell.setAttribute('aria-label', d.unread > 0
+      ? d.unread + ' unread notification' + (d.unread === 1 ? '' : 's') : 'Notifications');
     if (d.inbox_url) { bell.href = d.inbox_url; bell.target = '_blank'; bell.rel = 'noopener'; }
     bell.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    if (Array.isArray(d.notes)) { calNotesHover(bell, d); }
     head.appendChild(bell);
   }
   if (d.acting_as || d.can_act_as) { head.appendChild(calActAs(d, CAL_RENDER.defId)); }
@@ -618,6 +621,70 @@ function calActAs(d, defId) {
   });
   wrap.appendChild(b);
   return wrap;
+}
+
+/** The bell's hover: the latest notifications, unread first-marked, each a
+ *  link to its own page in Choreboard. Floats on the page (a popover inside
+ *  the widget is clipped), and stays while the pointer moves onto it. */
+var CAL_NOTES = null;
+function calNotesClose() {
+  if (CAL_NOTES && CAL_NOTES.parentNode) { CAL_NOTES.parentNode.removeChild(CAL_NOTES); }
+  CAL_NOTES = null;
+}
+function calAgo(iso) {
+  var t = Date.parse(iso);
+  if (isNaN(t)) { return ''; }
+  var m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? 'now' : m < 60 ? m + 'm' : m < 1440 ? Math.round(m / 60) + 'h' : Math.round(m / 1440) + 'd';
+}
+function calNotesHover(bell, d) {
+  var timer = null;
+  function hideSoon() { clearTimeout(timer); timer = setTimeout(calNotesClose, 250); }
+  function show() {
+    clearTimeout(timer);
+    if (CAL_NOTES && CAL_NOTES.owner === bell) { return; }
+    calNotesClose();
+    var r = bell.getBoundingClientRect();
+    var pop = div('w-peek cal-sheet cal-notes');
+    pop.owner = bell;
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'Notifications');
+    pop.addEventListener('mouseenter', function () { clearTimeout(timer); });
+    pop.addEventListener('mouseleave', hideSoon);
+    pop.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    pop.appendChild(div('cal-sheet-h', d.unread > 0 ? d.unread + ' unread' : 'Notifications'));
+    if (!d.notes.length) { pop.appendChild(div('w-sub', 'Nothing yet.')); }
+    d.notes.forEach(function (n) {
+      var it = document.createElement(n.url ? 'a' : 'div');
+      it.className = 'cal-note-item' + (n.read ? '' : ' unread');
+      if (n.url) { it.href = n.url; it.target = '_blank'; it.rel = 'noopener'; }
+      var top = div('cal-note-t');
+      top.appendChild(document.createTextNode(n.title));
+      var ago = document.createElement('span');
+      ago.className = 'w-sub';
+      ago.textContent = calAgo(n.at);
+      top.appendChild(ago);
+      it.appendChild(top);
+      if (n.body) { it.appendChild(div('w-sub cal-note-b', n.body)); }
+      pop.appendChild(it);
+    });
+    if (d.inbox_url) {
+      var all = document.createElement('a');
+      all.className = 'cal-note-all';
+      all.href = d.inbox_url; all.target = '_blank'; all.rel = 'noopener';
+      all.textContent = 'Open the inbox ›';
+      pop.appendChild(all);
+    }
+    document.body.appendChild(pop);
+    var pw = pop.offsetWidth || 300;
+    pop.style.left = Math.min(Math.max(8, r.left), Math.max(8, innerWidth - pw - 8)) + 'px';
+    pop.style.top = Math.min(r.bottom + 4, Math.max(8, innerHeight - (pop.offsetHeight || 200) - 8)) + 'px';
+    CAL_NOTES = pop;
+  }
+  bell.addEventListener('mouseenter', show);
+  bell.addEventListener('focus', show);
+  bell.addEventListener('mouseleave', hideSoon);
+  bell.addEventListener('blur', hideSoon);
 }
 
 function calSheetClose() {
@@ -899,75 +966,80 @@ function calSheetForm(body, a, e, d, run) {
 /** The other side of a swap, in two steps: choose a person or a date (a
  *  toggle), then one of that person's chores (by date) or that date's chores
  *  (by person). Candidates come from the app: other people's open chores. */
+/** The other side of a swap, in three steps (the same as in Choreboard
+ *  itself): by person or by chore; which one; then the other; then the day.
+ *  Each list shows only what still has days behind it, with a count. */
 function calSwapPicker(form, run) {
   var box = div('cal-swap');
   form.appendChild(box);
-  var by = 'person', cands = [], chosen = null;
+  var by = 'person', cands = [], first = null, second = null;
   var toggle = div('cal-seg');
   toggle.setAttribute('role', 'group');
   toggle.setAttribute('aria-label', 'Swap by');
   var list = div('cal-cands', 'Finding chores to swap with…');
   box.appendChild(toggle);
   box.appendChild(list);
-  [['person', 'By person'], ['date', 'By date']].forEach(function (m) {
+  [['person', 'By person'], ['chore', 'By chore']].forEach(function (m) {
     var b = document.createElement('button');
     b.type = 'button';
     b.textContent = m[1];
     b.setAttribute('aria-pressed', String(by === m[0]));
     b.addEventListener('click', function () {
-      by = m[0]; chosen = null;
+      by = m[0]; first = second = null;
       [].forEach.call(toggle.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); });
       draw();
     });
     toggle.appendChild(b);
   });
-  function groups() {
-    var g = {}, order = [];
-    cands.forEach(function (c) {
-      var k = by === 'person' ? c.who : c.date;
-      if (!g[k]) { g[k] = []; order.push(k); }
-      g[k].push(c);
+  function one(c) { return by === 'person' ? c.who : c.title; }
+  function two(c) { return by === 'person' ? c.title : c.who; }
+  function counts(rows, key) {
+    var n = {}, order = [];
+    rows.forEach(function (c) { var k = key(c); if (!n[k]) { n[k] = 0; order.push(k); } n[k]++; });
+    order.sort(function (a, b) { return a.localeCompare(b); });
+    return order.map(function (k) { return [k, n[k]]; });
+  }
+  function picks(rows, key, pick) {
+    counts(rows, key).forEach(function (kv) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cal-pick';
+      b.textContent = kv[0] + ' (' + kv[1] + ')';
+      b.addEventListener('click', function () { pick(kv[0]); draw(); });
+      list.appendChild(b);
     });
-    if (by === 'date') { order.sort(); }
-    return { g: g, order: order };
+  }
+  function back(label, undo) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'cal-back';
+    b.textContent = '‹ ' + label;
+    b.addEventListener('click', function () { undo(); draw(); });
+    list.appendChild(b);
   }
   function draw() {
     list.textContent = '';
     if (!cands.length) { list.textContent = 'Nothing of anyone else\'s in the next 12 weeks.'; return; }
-    var x = groups();
-    if (chosen === null) {
-      // Step 1: who, or which day.
-      x.order.forEach(function (k) {
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'cal-pick';
-        b.textContent = (by === 'person' ? k : calDate(k)) + ' (' + x.g[k].length + ')';
-        b.addEventListener('click', function () { chosen = k; draw(); });
-        list.appendChild(b);
-      });
-      return;
-    }
-    // Step 2: that person's chores by date, or that day's chores by person.
-    var back = document.createElement('button');
-    back.type = 'button';
-    back.className = 'cal-back';
-    back.textContent = '‹ ' + (by === 'person' ? chosen : calDate(chosen));
-    back.addEventListener('click', function () { chosen = null; draw(); });
-    list.appendChild(back);
+    if (first === null) { picks(cands, one, function (k) { first = k; }); return; }
+    var rows = cands.filter(function (c) { return one(c) === first; });
+    back(first, function () { first = second = null; });
+    if (second === null) { picks(rows, two, function (k) { second = k; }); return; }
+    back(second, function () { second = null; });
     var radios = div('cal-radios');
     radios.setAttribute('role', 'radiogroup');
-    radios.setAttribute('aria-label', 'Swap with');
-    (x.g[chosen] || []).forEach(function (c, i) {
-      var l = document.createElement('label');
-      l.className = 'cal-cand';
-      var r = document.createElement('input');
-      r.type = 'radio'; r.name = 'cal-swap'; r.value = c.key;
-      if (i === 0) { r.checked = true; }
-      l.appendChild(r);
-      l.appendChild(document.createTextNode(' ' + (by === 'person' ? calDate(c.date) : c.who) + ' — ' + c.title +
-        (c.window ? ' (' + c.window + ')' : '')));
-      radios.appendChild(l);
-    });
+    radios.setAttribute('aria-label', 'Which day');
+    rows.filter(function (c) { return two(c) === second; })
+      .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; })
+      .forEach(function (c, i) {
+        var l = document.createElement('label');
+        l.className = 'cal-cand';
+        var r = document.createElement('input');
+        r.type = 'radio'; r.name = 'cal-swap'; r.value = c.key;
+        if (i === 0) { r.checked = true; }
+        l.appendChild(r);
+        l.appendChild(document.createTextNode(' ' + calDate(c.date) + (c.window ? ' (' + c.window + ')' : '')));
+        radios.appendChild(l);
+      });
     list.appendChild(radios);
   }
   run('candidates', { weeks: 12 }).then(function (res) { cands = res.candidates || []; draw(); },

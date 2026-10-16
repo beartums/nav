@@ -2186,7 +2186,7 @@ test('choreboard widget: the sheet opens at the chore, even from the day popover
   doc.body.click();
 });
 
-test('choreboard widget: swap by person or by date, then pick the chore', async () => {
+test('choreboard widget: swap by person or by chore, then the other, then the day', async () => {
   const { window, doc } = await boot();
   const day = window.calDay(new window.Date());
   const d2 = window.calAdd(day, 3);
@@ -2217,14 +2217,16 @@ test('choreboard widget: swap by person or by date, then pick the chore', async 
   const picks = () => [...sheet.querySelectorAll('.cal-pick')].map((b) => b.textContent);
   assert.deepEqual(picks(), ['Evan (2)', 'Mom (1)']);
   [...sheet.querySelectorAll('.cal-pick')][0].click();
-  assert.equal(sheet.querySelectorAll('.cal-radios input').length, 2, "Evan's two chores, by date");
-  // By date instead: two dates, then that day's chores by person.
-  [...sheet.querySelectorAll('.cal-seg button')].find((b) => b.textContent === 'By date').click();
-  assert.equal(sheet.querySelectorAll('.cal-pick').length, 2);
+  // Step 2: Evan's chores.
+  assert.deepEqual(picks(), ['🐕 Dog (1)', '🗑️ Bins (1)'].sort((x, y) => x.localeCompare(y)));
+  // By chore instead: chores, then whose, then the day.
+  [...sheet.querySelectorAll('.cal-seg button')].find((b) => b.textContent === 'By chore').click();
+  assert.deepEqual(picks(), ['🐕 Dog (2)', '🗑️ Bins (1)'].sort((x, y) => x.localeCompare(y)));
+  [...sheet.querySelectorAll('.cal-pick')].find((b) => b.textContent.startsWith('🐕')).click();
+  assert.deepEqual(picks(), ['Evan (1)', 'Mom (1)']);
   [...sheet.querySelectorAll('.cal-pick')][1].click();
-  const labels = [...sheet.querySelectorAll('.cal-cand')].map((l) => l.textContent.trim());
-  assert.deepEqual(labels.map((t) => t.split(' — ')[0]), ['Evan', 'Mom']);
-  [...sheet.querySelectorAll('.cal-radios input')][1].checked = true;
+  assert.deepEqual([...sheet.querySelectorAll('.cal-back')].map((b) => b.textContent), ['‹ 🐕 Dog', '‹ Mom']);
+  assert.equal(sheet.querySelectorAll('.cal-radios input').length, 1);
   sheet.querySelector('input[type=text]').value = 'practice';
   sheet.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
@@ -2382,6 +2384,37 @@ test('choreboard widget: a member asks someone to take their chore', async () =>
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(posts.at(-1), { action: 'propose_give', params: { key: 'k1', person_id: 4, done_by: 4, note: 'practice' } });
   doc.body.click();
+});
+
+test('choreboard widget: the bell is always there, and hovering it shows the latest notifications', async () => {
+  const { window, doc } = await boot();
+  const day = window.calDay(new window.Date());
+  const draw = (extra) => {
+    const el = doc.createElement('div');
+    doc.body.appendChild(el);
+    window.renderWidget(el, { type: 'choreboard.calendar', shape: 'calendar', data: { label: 'C', view: 'week', actions: true,
+      events: [{ date: day, title: 'x', initial: 'T', series: 2, who: 'Toby', name: 'Dog', key: 'k', can: [] }],
+      inbox_url: 'https://cb.example/inbox', ...extra } }, { key: 'def10', size: 'XL', span: [12, 8] });
+    return el;
+  };
+  let bell = draw({ unread: 0, notes: [] }).querySelector('.cal-bell');
+  assert.equal(bell.textContent, '🔔', 'no unread: still a bell, no count');
+  bell = draw({ unread: 1, notes: [
+    { title: 'Toby wants to swap with you', body: 'Toby asks: you do their Dog…', at: new window.Date().toISOString(),
+      read: false, url: 'https://cb.example/requests/9' },
+    { title: 'Skipped: Bins', body: '', at: '2026-10-01T00:00:00Z', read: true, url: 'https://cb.example/calendar?date=2026-10-01' }] })
+    .querySelector('.cal-bell');
+  assert.equal(bell.textContent, '🔔 1');
+  bell.dispatchEvent(new window.Event('mouseenter'));
+  const pop = doc.querySelector('.cal-notes');
+  assert.ok(pop, 'hover opens the summary');
+  const items = [...pop.querySelectorAll('.cal-note-item')];
+  assert.equal(items.length, 2);
+  assert.ok(items[0].classList.contains('unread') && !items[1].classList.contains('unread'));
+  assert.equal(items[0].getAttribute('href'), 'https://cb.example/requests/9');
+  assert.match(pop.textContent, /Open the inbox/);
+  assert.equal(draw({ unread: 0 }).querySelector('.cal-bell'), null, 'no inbox data (no act_as): no bell');
+  window.calNotesClose();
 });
 
 test('choreboard widget without actions: chips are not buttons', async () => {
