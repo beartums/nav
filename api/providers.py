@@ -902,6 +902,10 @@ class VenueEvents(Provider):
         "venue": {"type": "string", "label": "Venue (Ticketmaster name)", "default": "Barclays Center"},
         "week_start": {"type": "enum", "label": "Week starts", "default": "sunday",
                        "choices": ["sunday", "monday"]},
+        "time_filter": {"type": "enum", "label": "Time filter", "default": "none",
+                        "choices": list(ticketmaster.FILTERS)},
+        "time_from": {"type": "string", "label": "Time (or from), e.g. 18:00", "default": ""},
+        "time_to": {"type": "string", "label": "To (for 'between')", "default": ""},
     }
     presets = [{"title": "Barclays Center", "config": {"label": "Barclays Center", "venue": "Barclays Center",
                                                        "week_start": "sunday"}}]
@@ -912,6 +916,11 @@ class VenueEvents(Provider):
             raise ValueError("no Ticketmaster API key -- add one in Connections")
         auth = creds.params("ticketmaster", key)
         start = 0 if config["week_start"] == "sunday" else 1
+        mode, a, b = config["time_filter"], "", ""
+        if mode != "none":
+            a = ticketmaster.hhmm(config["time_from"], "Time (or from)")
+            if mode == "exclude between":
+                b = ticketmaster.hhmm(config["time_to"], "To")
         async with httpx.AsyncClient(timeout=10) as client:
             vid = TM_VENUES.get(config["venue"])
             if not vid:
@@ -926,7 +935,7 @@ class VenueEvents(Provider):
             r = await client.get(f"{base}/discovery/v2/events.json", params={
                 **auth, "venueId": vid, "startDateTime": frm, "endDateTime": to, "size": 200, "sort": "date,asc"})
             r.raise_for_status()
-        evs = ticketmaster.events(r.json())
+        evs = ticketmaster.events(r.json(), mode, a, b)
         first = (dt.date.fromisoformat(frm[:10]) + dt.timedelta(days=1)).isoformat()
         last = (dt.date.fromisoformat(to[:10]) - dt.timedelta(days=2)).isoformat()
         return {"label": config["label"], "view": "week", "events": evs, "warnings": [],

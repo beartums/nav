@@ -822,4 +822,6 @@ ul.wx-days li { display:flex; align-items:center; gap:6px; padding:2px 0; }
 .cal-sday.cal-on .cal-sn { color:var(--fg); font-weight:700; }
 .cal-sday.cal-today { background:color-mix(in srgb, var(--series-1) 12%, transparent);
   border-color:color-mix(in srgb, var(--series-1) 60%, transparent); }
-.cal-sday.cal-today .cal-sdow, .cal-sday.cal-today .cal-sn { color:var(--fg); font-weight:700; }
+.cal-sday.cal-today .cal-sdow { color:var(--fg); font-weight:700; }
+.cal-sday.cal-today .cal-sn { background:var(--series-1); color:#fff; font-weight:700; border-radius:999px;
+  min-width:18px; padding:0 4px; text-align:center; }

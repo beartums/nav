@@ -33,6 +33,22 @@ class Ticketmaster(unittest.TestCase):
         self.assertTrue(out[2]["struck"] and out[2]["sub"].endswith("cancelled"))
         self.assertEqual(out[1]["date"], "2026-10-23")
 
+    def test_time_filters(self):
+        reply = {"_embedded": {"events": [ev("Matinee", "2026-10-21", time="14:00:00"),
+                                          ev("Evening", "2026-10-21", time="19:30:00"),
+                                          ev("Late", "2026-10-21", time="23:00:00"),
+                                          ev("Some day", "2026-10-22", timeTBA=True)]}}
+        names = lambda *f: [e["title"].split(" ", 2)[-1] if e["title"][0].isdigit() else e["title"]
+                            for e in tm.events(reply, *f)]
+        self.assertEqual(names("exclude after", "20:00"), ["Matinee", "Evening", "Some day"])
+        self.assertEqual(names("exclude before", "18:00"), ["Evening", "Late", "Some day"])
+        self.assertEqual(names("exclude between", "12:00", "17:00"), ["Evening", "Late", "Some day"])
+        self.assertEqual(names("exclude between", "22:00", "15:00"), ["Evening", "Some day"], "wraps midnight")
+        self.assertEqual(tm.hhmm("6 PM", "x"), "18:00")
+        self.assertEqual(tm.hhmm("7:30 pm", "x"), "19:30")
+        with self.assertRaises(ValueError):
+            tm.hhmm("dinner", "Time")
+
     def test_window_starts_at_the_week_start_with_slack(self):
         thu = dt.date(2026, 10, 15)
         self.assertEqual(tm.window(thu, 0), ("2026-10-10T00:00:00Z", "2026-12-07T00:00:00Z"))   # Sun Oct 11 - 1
