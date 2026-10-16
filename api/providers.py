@@ -26,6 +26,7 @@ import media
 import openchore
 import promql
 import remote
+import ticketmaster
 import weather
 from widgets import EVERYONE, SHAPES, ActionError, Provider, register
 
@@ -880,6 +881,56 @@ class ChoreboardCalendar(Provider):
                     cb_call(client, "GET", "/api/people", None), cb_call(client, "GET", "/api/chores", None))
                 return {"candidates": chorecal.candidates(entries, key, people, chores_, start)}
         raise ActionError(400, f"unknown action {action}")
+
+
+TM_VENUES: dict[str, str] = {}        # keyword -> Discovery venue id; venues don't move
+
+
+@register
+class VenueEvents(Provider):
+    """What's on at a venue, from Ticketmaster's Discovery API, as a one-week
+    strip: a mark on each day with something on; hover for what and when.
+    Public listings, so anyone signed in may see it."""
+    type = "ticketmaster.venue"
+    title = "Venue events"
+    description = "What's on at a venue (Ticketmaster): a week strip, hover a day for times."
+    app = EVERYONE
+    shape = "calendar"
+    ttl = 86400          # once a day: schedules change slowly, and the key has a daily quota
+    config_schema = {
+        "label": {"type": "string", "label": "Headline", "default": "Barclays Center"},
+        "venue": {"type": "string", "label": "Venue (Ticketmaster name)", "default": "Barclays Center"},
+        "week_start": {"type": "enum", "label": "Week starts", "default": "sunday",
+                       "choices": ["sunday", "monday"]},
+    }
+    presets = [{"title": "Barclays Center", "config": {"label": "Barclays Center", "venue": "Barclays Center",
+                                                       "week_start": "sunday"}}]
+
+    async def fetch(self, config: dict[str, Any], who: str) -> dict[str, Any]:
+        base, key, _ = creds.resolve("ticketmaster")
+        if not key:
+            raise ValueError("no Ticketmaster API key -- add one in Connections")
+        auth = creds.params("ticketmaster", key)
+        start = 0 if config["week_start"] == "sunday" else 1
+        async with httpx.AsyncClient(timeout=10) as client:
+            vid = TM_VENUES.get(config["venue"])
+            if not vid:
+                r = await client.get(f"{base}/discovery/v2/venues.json",
+                                     params={**auth, "keyword": config["venue"], "size": 10})
+                r.raise_for_status()
+                vid = ticketmaster.venue_id(r.json(), config["venue"])
+                if not vid:
+                    raise ValueError(f"Ticketmaster knows no venue called {config['venue']!r}")
+                TM_VENUES[config["venue"]] = vid
+            frm, to = ticketmaster.window(dt.date.today(), start)
+            r = await client.get(f"{base}/discovery/v2/events.json", params={
+                **auth, "venueId": vid, "startDateTime": frm, "endDateTime": to, "size": 200, "sort": "date,asc"})
+            r.raise_for_status()
+        evs = ticketmaster.events(r.json())
+        first = (dt.date.fromisoformat(frm[:10]) + dt.timedelta(days=1)).isoformat()
+        last = (dt.date.fromisoformat(to[:10]) - dt.timedelta(days=2)).isoformat()
+        return {"label": config["label"], "view": "week", "events": evs, "warnings": [],
+                "range": [first, last], "strip": True, "week_start": start}
 
 
 @register

@@ -228,7 +228,7 @@ function calAgenda(box, byDay, today, mode, sp, step) {
     if (day < first || day > last) { return; }
     any = true;
     var h = document.createElement('li');
-    h.className = 'w-section';
+    h.className = 'w-section' + (day === today ? ' cal-today' : '');
     h.textContent = calName(day, today, true);
     ul.appendChild(h);
     byDay[day].forEach(function (e) {
@@ -402,6 +402,7 @@ document.addEventListener('click', function (ev) {
 
 function renderCalendar(el, d, o) {
   o = o || {};
+  if (d.strip) { calStrip(el, d, o); return; }
   CAL_RENDER = { defId: String(o.key || '').replace(/^def/, ''), d: d };
   var ui = widgetUi(o.key);
   var mode = ui.cal || d.view || 'week';
@@ -522,6 +523,60 @@ function renderCalendar(el, d, o) {
 
 /** ‹ the span › -- and Today, once stepped away. A step the data does not
  *  cover is disabled, not empty: "nothing then" would be a lie. */
+/** A one-week strip for small widgets (payload `strip: true`): seven days from
+ *  the payload's `week_start` (0 Sunday … 6 Saturday; default the locale's),
+ *  each a date with a mark when something's on. Hover or focus a marked day
+ *  for what and when. ‹ › step a week while the data covers it. */
+function calStrip(el, d, o) {
+  var key = o.key || 'preview';
+  var today = calDay(new Date());
+  var first = d.week_start >= 0 && d.week_start <= 6 ? d.week_start : calFirstDay();
+  var step = CAL_STEP[key] || 0;
+  var start = calAdd(today, -((calParse(today).getDay() - first + 7) % 7) + 7 * step);
+  if (step && !calCovered(d, [start, calAdd(start, 6)], today)) { step = CAL_STEP[key] = 0; start = calAdd(today, -((calParse(today).getDay() - first + 7) % 7)); }
+  var byDay = {};
+  d.events.forEach(function (e) {
+    var day = calWhen(e);
+    if (day) { (byDay[day] = byDay[day] || []).push(e); }
+  });
+  function redraw() { el.innerHTML = ''; calStrip(el, d, o); }
+  el.classList.add('cal-strip-w');
+  var head = div('cal-head');
+  if (d.label) { head.appendChild(div('w-label', d.label)); }
+  var nav = div('cal-nav');
+  [['‹', 'Previous week', -1], ['›', 'Next week', 1]].forEach(function (x, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = x[0];
+    b.title = x[1];
+    b.setAttribute('aria-label', x[1]);
+    var s2 = calAdd(start, 7 * x[2]);
+    b.disabled = !calCovered(d, [s2, calAdd(s2, 6)], today);
+    b.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    b.addEventListener('click', function (ev) { ev.stopPropagation(); ev.preventDefault(); CAL_STEP[key] = step + x[2]; redraw(); });
+    if (i === 1) { nav.appendChild(div('cal-month-name', calSpanName('week', [start, calAdd(start, 6)], today))); }
+    nav.appendChild(b);
+  });
+  head.appendChild(nav);
+  el.appendChild(head);
+  var row = div('cal-strip');
+  for (var i = 0; i < 7; i++) {
+    var day = calAdd(start, i), evs = byDay[day] || [];
+    var cell = div('cal-sday' + (day === today ? ' cal-today' : '') + (day < today ? ' cal-past' : '') +
+                   (evs.length ? ' cal-on' : ''));
+    cell.appendChild(div('cal-sdow', calParse(day).toLocaleDateString(undefined, { weekday: 'narrow' })));
+    cell.appendChild(div('cal-sn', String(calParse(day).getDate())));
+    var marks = div('cal-smarks');
+    evs.slice(0, 3).forEach(function (e) { marks.appendChild(calDot(e, day)); });
+    cell.appendChild(marks);
+    if (evs.length) { calDayPeek(cell, day, evs, today); }
+    else { cell.setAttribute('aria-label', calName(day, today, true) + ': nothing'); }
+    row.appendChild(cell);
+  }
+  el.appendChild(row);
+  if (d.warnings && d.warnings.length) { el.appendChild(div('w-sub cal-warn', '⚠ ' + d.warnings.join(' · '))); }
+}
+
 function calNav(mode, step, sp, today, agenda, d, go, roomW) {
   var nav = div('cal-nav');
   function btn(text, label, n, ok) {

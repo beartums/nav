@@ -2439,6 +2439,28 @@ test('choreboard swap calendar: only swappable days pick, your day is marked, vi
   assert.equal(window.localStorage.getItem('nav.swapView'), 'list', 'remembered');
 });
 
+test('calendar strip: one week from Sunday, a mark on days with something on, today highlighted', async () => {
+  const { window, doc } = await boot();
+  const today = window.calDay(new window.Date());
+  const sunday = window.calAdd(today, -window.calParse(today).getDay());
+  const el = doc.createElement('div');
+  doc.body.appendChild(el);
+  window.renderWidget(el, { type: 'ticketmaster.venue', shape: 'calendar', data: { label: 'Barclays Center', view: 'week',
+    strip: true, week_start: 0, range: [window.calAdd(sunday, -1), window.calAdd(sunday, 30)],
+    events: [{ date: window.calAdd(sunday, 3), title: '7:30 PM Nets vs Knicks', sub: 'Sports' },
+             { date: window.calAdd(sunday, 3), title: '10 AM Tour' }] } }, { key: 'def11', size: 'M', span: [4, 2] });
+  const days = [...el.querySelectorAll('.cal-sday')];
+  assert.equal(days.length, 7);
+  assert.equal(days[0].querySelector('.cal-sn').textContent, String(window.calParse(sunday).getDate()), 'starts on Sunday');
+  assert.equal(days.findIndex((d) => d.classList.contains('cal-today')), window.calParse(today).getDay());
+  assert.equal(days[3].querySelectorAll('.cal-dot').length, 2);
+  assert.ok(days[3].classList.contains('cal-on') && !days[2].classList.contains('cal-on'));
+  assert.match(days[3].getAttribute('aria-label'), /Nets vs Knicks/);
+  el.querySelector('[aria-label="Next week"]').click();
+  assert.equal(el.querySelector('.cal-sday .cal-sn').textContent, String(window.calParse(window.calAdd(sunday, 7)).getDate()));
+  assert.ok(el.querySelector('[aria-label="Next week"]').disabled === false);
+});
+
 test('choreboard widget without actions: chips are not buttons', async () => {
   const { window, doc } = await boot();
   const day = window.calDay(new window.Date());

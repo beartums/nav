@@ -176,6 +176,8 @@ Sizes: XS 2×2 (dot; the word is its tooltip), S 4×2.
 | `warnings` | string[] | Shown in one line under the calendar, e.g. one source of several failing. |
 | `range` | `["YYYY-MM-DD", "YYYY-MM-DD"]` | The days your events cover. ‹ and › step a week or month only while the view stays inside it. Without it, the page assumes 37 days back to 44 ahead. |
 | `legend` | `[{label, series}]` | Your own legend, replacing the kinds one. E.g. one entry per person. |
+| `strip` | boolean | Draw a one-week strip instead (small widgets): seven days, a mark on each day with something on, hover for the day's events. |
+| `week_start` | 0–6 | The strip's first day (0 Sunday). Default: the viewer's locale. |
 
 Event:
 

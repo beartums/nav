@@ -60,6 +60,11 @@ APPS: dict[str, dict[str, Any]] = {
     # "read"), sent as a bearer token. github.com/beartums/choreboard
     "choreboard": {"label": "Choreboard", "auth": "bearer", "test": "/api/me",
                    "url": "http://choreboard.tools.svc.cluster.local"},
+    # A Discovery API consumer key (developer.ticketmaster.com -> My Apps),
+    # sent as ?apikey=. Public event listings: the venue-events widget.
+    "ticketmaster": {"label": "Ticketmaster", "auth": "query:apikey",
+                     "test": "/discovery/v2/classifications.json?size=1",
+                     "url": "https://app.ticketmaster.com"},
 }
 
 # slug -> {url, public_url, secret (sealed), hint, label, auth, custom}; loaded from the database
@@ -195,8 +200,19 @@ def auth_of(slug: str) -> str:
     return APPS[slug]["auth"] if slug in APPS else (STORED.get(slug) or {}).get("auth") or "bearer"
 
 
+QUERY = re.compile(r"^query:([A-Za-z0-9_-]{1,64})$")
+
+
+def params(slug: str, key: str) -> dict[str, str]:
+    """A key sent in the query string (`query:<name>`), else nothing."""
+    m = QUERY.match(auth_of(slug))
+    return {m.group(1): key} if m and key else {}
+
+
 def headers(slug: str, key: str) -> dict[str, str]:
     auth = auth_of(slug)
+    if QUERY.match(auth):
+        return {}
     if auth == "bearer":
         return {"Authorization": f"Bearer {key}"}
     if auth == "x-api-key":

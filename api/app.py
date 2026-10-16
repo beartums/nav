@@ -1761,7 +1761,7 @@ async def test_connection(slug: str, _: str = Depends(require_admin)) -> dict[st
     try:
         async with httpx.AsyncClient(timeout=6) as client:
             test = creds.APPS[slug]["test"] if slug in creds.APPS else ""
-            r = await client.get(url + test, headers=creds.headers(slug, key))
+            r = await client.get(url + test, headers=creds.headers(slug, key), params=creds.params(slug, key))
     except httpx.HTTPError as exc:
         return {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
     if r.status_code in (401, 403):

@@ -85,3 +85,10 @@ class Sealed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QueryKeys(unittest.TestCase):
+    def test_a_query_key_goes_in_params_not_headers(self):
+        self.assertEqual(creds.params("ticketmaster", "k1"), {"apikey": "k1"})
+        self.assertEqual(creds.headers("ticketmaster", "k1"), {})
+        self.assertEqual(creds.params("sonarr", "k1"), {})
