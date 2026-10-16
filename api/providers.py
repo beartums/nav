@@ -788,16 +788,23 @@ class ChoreboardCalendar(Provider):
                 e["can"], e["cannot"] = [], {}
         out = media.calendar([events], config["label"], config["view"], [], (start, end))
         public = creds.resolve("choreboard")[2]
+        # Links into Choreboard while acting as someone keep acting as them
+        # there (?act_as=<id>; Choreboard checks the viewer is an admin).
+        def link(url: str) -> str:
+            if not (url and via and me):
+                return url
+            return f"{url}{'&' if '?' in url else '?'}act_as={me['id']}"
+
         # The bell's hover: the latest few, each linking to its own page in
         # Choreboard (a request's approve page), else its day, else the inbox.
         notes = None if recent is None else [
             {"title": n.get("title") or "", "body": (n.get("body") or "")[:160], "at": n.get("created_at") or "",
              "read": bool(n.get("read_at")),
-             "url": (f"{public}{n['path']}" if n.get("path") else f"{public}/calendar?date={n['date']}" if n.get("date")
-                     else f"{public}/inbox") if public else ""}
+             "url": link((f"{public}{n['path']}" if n.get("path") else f"{public}/calendar?date={n['date']}"
+                          if n.get("date") else f"{public}/inbox") if public else "")}
             for n in recent]
         out.update({"legend": legend, "actions": bool(as_me), "unread": unread, "notes": notes,
-                    "inbox_url": f"{public}/inbox" if public else "",
+                    "inbox_url": link(f"{public}/inbox") if public else "",
                     "people": [{"id": p["id"], "name": p.get("name")} for p in people if p.get("active", 1)],
                     # Choreboard admins may act as anyone else (choreboard checks it again on every call).
                     "can_act_as": bool(real and real.get("role") == "admin" and as_me is not None),

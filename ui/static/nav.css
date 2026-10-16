@@ -785,3 +785,23 @@ ul.wx-days li { display:flex; align-items:center; gap:6px; padding:2px 0; }
 .cal-back { font:inherit; font-size:12px; border:0; background:transparent; color:var(--accent); padding:0; text-align:left; }
 .cal-radios { display:flex; flex-direction:column; gap:2px; }
 .cal-note button { font:inherit; font-size:12px; margin:4px 4px 0 0; }
+
+/* the swap's last step: a small calendar of swappable days */
+.cal-daypick { display:flex; flex-direction:column; gap:4px; }
+.cal-dp-nav { display:flex; align-items:center; gap:6px; font-size:12px; }
+.cal-dp-nav button { font:inherit; background:none; border:1px solid var(--line); border-radius:6px; color:var(--fg);
+  cursor:pointer; padding:0 6px; }
+.cal-dp-title { flex:1; text-align:center; }
+.cal-mini { display:grid; grid-template-columns:repeat(7, 1fr); gap:2px; }
+.cal-dow { font-size:10px; color:var(--muted); text-align:center; }
+.cal-dp { display:flex; align-items:center; justify-content:center; height:24px; border-radius:5px; font-size:11px;
+  color:var(--muted); border:1px solid transparent; position:relative; }
+.cal-dp input { position:absolute; opacity:0; pointer-events:none; }
+.cal-dp.outside { opacity:.4; }
+.cal-dp.today { text-decoration:underline; }
+.cal-dp.ok { color:var(--fg); font-weight:600; cursor:pointer; border-color:var(--accent, #4a7dff);
+  background:color-mix(in srgb, var(--accent, #4a7dff) 14%, transparent); }
+.cal-dp.ok:hover, .cal-dp.ok:focus-within { background:color-mix(in srgb, var(--accent, #4a7dff) 30%, transparent); }
+.cal-dp.on { background:var(--accent, #4a7dff); color:#fff; }
+.cal-dp.own { outline:2px dashed var(--danger, #e34948); outline-offset:-2px; color:var(--fg); }
+.cal-dp-key i.cal-dp { display:inline-block; width:10px; height:10px; vertical-align:middle; }

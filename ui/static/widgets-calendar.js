@@ -930,7 +930,7 @@ function calSheetForm(body, a, e, d, run) {
     n.type = 'number'; n.min = '0'; n.value = '0';
     fields.deduct = field('Points to take from ' + (e.who || 'them') + ' (0 for none)', n);
   }
-  if (needs.indexOf('swap') >= 0) { fields.swap = calSwapPicker(f, run); }
+  if (needs.indexOf('swap') >= 0) { fields.swap = calSwapPicker(f, run, e.date); }
   var note = document.createElement('input');
   note.type = 'text';
   var noteRequired = needs.indexOf('note') >= 0 || needs.indexOf('swap') >= 0 || a[0] === 'covered';
@@ -966,10 +966,123 @@ function calSheetForm(body, a, e, d, run) {
 /** The other side of a swap, in two steps: choose a person or a date (a
  *  toggle), then one of that person's chores (by date) or that date's chores
  *  (by person). Candidates come from the app: other people's open chores. */
+/** The swap's last step: a small calendar (week or month) where only the
+ *  days you could swap with can be picked and your own day is marked -- or
+ *  the same days as a plain list. Each pickable day holds a radio named
+ *  cal-swap, which is what the form reads. The view is remembered. */
+var CAL_SWAP_VIEW_KEY = 'nav.swapView';
+function calDayPicker(days, own) {
+  var box = div('cal-daypick');
+  var view = 'month';
+  try { view = localStorage.getItem(CAL_SWAP_VIEW_KEY) || 'month'; } catch (e) { /* fine */ }
+  var anchor = days.length ? days[0].date : calDay(new Date());
+  var picked = days.length ? days[0].key : null;
+  var byDate = {};
+  days.forEach(function (c) { byDate[c.date] = byDate[c.date] || c; });
+  var today = calDay(new Date());
+  var first = calFirstDay();
+
+  function radio(c, label, cls) {
+    var l = document.createElement('label');
+    l.className = cls;
+    var r = document.createElement('input');
+    r.type = 'radio'; r.name = 'cal-swap'; r.value = c.key;
+    r.checked = c.key === picked;
+    r.addEventListener('change', function () { picked = c.key; draw(); });
+    l.appendChild(r);
+    l.appendChild(document.createTextNode(label));
+    return l;
+  }
+  function draw() {
+    box.textContent = '';
+    var bar = div('cal-dp-bar');
+    var seg = div('cal-seg');
+    seg.setAttribute('role', 'group');
+    seg.setAttribute('aria-label', 'Calendar view');
+    [['week', 'Week'], ['month', 'Month'], ['list', 'Agenda']].forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = m[1];
+      b.setAttribute('aria-pressed', String(view === m[0]));
+      b.addEventListener('click', function () {
+        view = m[0];
+        try { localStorage.setItem(CAL_SWAP_VIEW_KEY, view); } catch (e) { /* fine */ }
+        draw();
+      });
+      seg.appendChild(b);
+    });
+    bar.appendChild(seg);
+    box.appendChild(bar);
+    var group = div(view === 'list' ? 'cal-radios' : 'cal-mini');
+    group.setAttribute('role', 'radiogroup');
+    group.setAttribute('aria-label', 'Which day');
+    if (view === 'list') {
+      days.forEach(function (c) {
+        group.appendChild(radio(c, ' ' + calDate(c.date) + (c.window ? ' (' + c.window + ')' : ''), 'cal-cand'));
+      });
+      box.appendChild(group);
+      return;
+    }
+    var a = calParse(anchor), from, to, title;
+    if (view === 'week') {
+      from = calAdd(anchor, -((a.getDay() - first + 7) % 7));
+      to = calAdd(from, 6);
+      title = 'Week of ' + calDate(from);
+    } else {
+      var m1 = calDay(new Date(a.getFullYear(), a.getMonth(), 1));
+      var mEnd = calDay(new Date(a.getFullYear(), a.getMonth() + 1, 0));
+      from = calAdd(m1, -((calParse(m1).getDay() - first + 7) % 7));
+      to = calAdd(mEnd, (first + 6 - calParse(mEnd).getDay() + 7) % 7);
+      title = a.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    }
+    var nav = div('cal-dp-nav');
+    [['‹', -1], [title, 0], ['›', 1]].forEach(function (x) {
+      if (!x[1]) { nav.appendChild(div('cal-dp-title', x[0])); return; }
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = x[0];
+      b.setAttribute('aria-label', (x[1] < 0 ? 'Previous ' : 'Next ') + view);
+      b.addEventListener('click', function () {
+        if (view === 'week') { anchor = calAdd(anchor, 7 * x[1]); }
+        else { var p = calParse(anchor); anchor = calDay(new Date(p.getFullYear(), p.getMonth() + x[1], 1)); }
+        draw();
+      });
+      nav.appendChild(b);
+    });
+    box.appendChild(nav);
+    for (var i = 0; i < 7; i++) {
+      var w = new Date(2024, 0, 7 + ((first + i) % 7));      // a known Sunday, plus offsets
+      group.appendChild(div('cal-dow', w.toLocaleDateString(undefined, { weekday: 'narrow' })));
+    }
+    var month = calParse(anchor).getMonth();
+    for (var d = from; d <= to; d = calAdd(d, 1)) {
+      var c = byDate[d];
+      var cls = 'cal-dp' + (c ? ' ok' : '') + (c && c.key === picked ? ' on' : '') + (d === own ? ' own' : '') +
+        (d === today ? ' today' : '') + (view === 'month' && calParse(d).getMonth() !== month ? ' outside' : '');
+      var n = String(calParse(d).getDate());
+      if (c) {
+        var l = radio(c, n, cls);
+        l.title = calDate(d) + (c.window ? ' (' + c.window + ')' : '');
+        group.appendChild(l);
+      } else {
+        var sp = div(cls, n);
+        if (d === own) { sp.title = 'Your day'; }
+        group.appendChild(sp);
+      }
+    }
+    box.appendChild(group);
+    var key = div('w-sub cal-dp-key');
+    key.innerHTML = '<i class="cal-dp own"></i> your day · <i class="cal-dp ok"></i> can swap';
+    box.appendChild(key);
+  }
+  draw();
+  return box;
+}
+
 /** The other side of a swap, in three steps (the same as in Choreboard
  *  itself): by person or by chore; which one; then the other; then the day.
  *  Each list shows only what still has days behind it, with a count. */
-function calSwapPicker(form, run) {
+function calSwapPicker(form, run, own) {
   var box = div('cal-swap');
   form.appendChild(box);
   var by = 'person', cands = [], first = null, second = null;
@@ -1025,22 +1138,9 @@ function calSwapPicker(form, run) {
     back(first, function () { first = second = null; });
     if (second === null) { picks(rows, two, function (k) { second = k; }); return; }
     back(second, function () { second = null; });
-    var radios = div('cal-radios');
-    radios.setAttribute('role', 'radiogroup');
-    radios.setAttribute('aria-label', 'Which day');
-    rows.filter(function (c) { return two(c) === second; })
-      .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; })
-      .forEach(function (c, i) {
-        var l = document.createElement('label');
-        l.className = 'cal-cand';
-        var r = document.createElement('input');
-        r.type = 'radio'; r.name = 'cal-swap'; r.value = c.key;
-        if (i === 0) { r.checked = true; }
-        l.appendChild(r);
-        l.appendChild(document.createTextNode(' ' + calDate(c.date) + (c.window ? ' (' + c.window + ')' : '')));
-        radios.appendChild(l);
-      });
-    list.appendChild(radios);
+    var days = rows.filter(function (c) { return two(c) === second; })
+      .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    list.appendChild(calDayPicker(days, own));
   }
   run('candidates', { weeks: 12 }).then(function (res) { cands = res.candidates || []; draw(); },
                                         function () { list.textContent = ''; });

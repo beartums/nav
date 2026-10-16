@@ -2226,7 +2226,11 @@ test('choreboard widget: swap by person or by chore, then the other, then the da
   assert.deepEqual(picks(), ['Evan (1)', 'Mom (1)']);
   [...sheet.querySelectorAll('.cal-pick')][1].click();
   assert.deepEqual([...sheet.querySelectorAll('.cal-back')].map((b) => b.textContent), ['‹ 🐕 Dog', '‹ Mom']);
-  assert.equal(sheet.querySelectorAll('.cal-radios input').length, 1);
+  // The last step is a small calendar: one pickable day, and Agenda lists it.
+  assert.equal(sheet.querySelectorAll('.cal-mini input[name=cal-swap]').length + sheet.querySelectorAll('.cal-radios input').length, 1);
+  [...sheet.querySelectorAll('.cal-daypick .cal-seg button')].find((b) => b.textContent === 'Agenda').click();
+  assert.equal(sheet.querySelectorAll('.cal-radios input[name=cal-swap]').length, 1);
+  [...sheet.querySelectorAll('.cal-daypick .cal-seg button')].find((b) => b.textContent === 'Month').click();
   sheet.querySelector('input[type=text]').value = 'practice';
   sheet.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0));
@@ -2415,6 +2419,24 @@ test('choreboard widget: the bell is always there, and hovering it shows the lat
   assert.match(pop.textContent, /Open the inbox/);
   assert.equal(draw({ unread: 0 }).querySelector('.cal-bell'), null, 'no inbox data (no act_as): no bell');
   window.calNotesClose();
+});
+
+test('choreboard swap calendar: only swappable days pick, your day is marked, views switch', async () => {
+  const { window } = await boot();
+  try { window.localStorage.removeItem('nav.swapView'); } catch (e) { /* fine */ }
+  const box = window.calDayPicker([{ key: 'a', date: '2026-10-14', window: '' }, { key: 'b', date: '2026-10-28', window: 'by 6 PM' }],
+                                  '2026-10-12');
+  assert.match(box.querySelector('.cal-dp-title').textContent, /October 2026/);
+  assert.equal(box.querySelectorAll('.cal-mini .cal-dp.ok').length, 2);
+  assert.equal(box.querySelector('.cal-mini .cal-dp.own').textContent, '12');
+  assert.equal(box.querySelector('input[name=cal-swap]:checked').value, 'a', 'the first day is picked to start');
+  box.querySelectorAll('input[name=cal-swap]')[1].click();
+  assert.equal(box.querySelector('input[name=cal-swap]:checked').value, 'b');
+  [...box.querySelectorAll('.cal-seg button')].find((x) => x.textContent === 'Week').click();
+  assert.equal(box.querySelectorAll('.cal-mini .cal-dp').length, 7);
+  [...box.querySelectorAll('.cal-seg button')].find((x) => x.textContent === 'Agenda').click();
+  assert.equal(box.querySelectorAll('.cal-radios input').length, 2);
+  assert.equal(window.localStorage.getItem('nav.swapView'), 'list', 'remembered');
 });
 
 test('choreboard widget without actions: chips are not buttons', async () => {
