@@ -172,12 +172,12 @@ Sizes: XS 2×2 (dot; the word is its tooltip), S 4×2.
 |---|---|---|
 | `events` | array | **Required.** |
 | `label` | string | Headline. |
-| `view` | `"week"` \| `"month"` | Which view it opens on. Each viewer can toggle it. |
+| `view` | `"week"` \| `"month"` \| `"agenda"` | Which view it opens on. Each viewer can switch it. |
 | `warnings` | string[] | Shown in one line under the calendar, e.g. one source of several failing. |
 | `range` | `["YYYY-MM-DD", "YYYY-MM-DD"]` | The days your events cover. ‹ and › step a week or month only while the view stays inside it. Without it, the page assumes 37 days back to 44 ahead. |
 | `legend` | `[{label, series}]` | Your own legend, replacing the kinds one. E.g. one entry per person. |
 | `strip` | boolean | Draw a one-week strip instead (small widgets): seven days, a mark on each day with something on, hover for the day's events. |
-| `week_start` | 0–6 | The strip's first day (0 Sunday). Default: the viewer's locale. |
+| `week_start` | 0–6 | The first day of the week for week, month and strip views (0 Sunday … 6 Saturday). Default Sunday. |
 
 Event:
 
@@ -193,8 +193,8 @@ Event:
 | `initial` | string | One or two letters. When a cell is too small for titles, each event shows as this, in its colour, instead of a dot per kind: "who has something that day". More than five become "+N"; the day's popover lists all. |
 | `struck` | boolean | Drawn struck through (skipped, missed). |
 
-The week view starts today and the month view shows the current month; each
-steps from there. To allow a month either way, send about 70 days back and
+The week view shows the week containing today (from `week_start`), the month
+view the current month, the agenda the next 30 days; each steps from there. To allow a month either way, send about 70 days back and
 ahead, and say so in `range`. Narrow sizes draw an agenda and open the full
 calendar on hover.
 
@@ -204,8 +204,10 @@ calendar on hover.
   {"at": "2026-10-15T18:00:00Z", "title": "Garden waste", "sub": "kerbside by 7am", "done": false}]}
 ```
 
-Sizes: M 4×4 (agenda), L 8×4 (week columns, or month as dots), XL 12×8 (month
-with names), W full-width × 4. Below 8 columns it's always an agenda.
+Sizes: M 4×4, L 8×4, XL 12×8, W full-width × 4, or any custom span. A view
+never changes by itself with size: where names don't fit, days show initials
+or coloured dots, and hovering a day lists its events. Agenda is the viewer's
+choice.
 
 **Interactive calendars** (built-in providers only, for now -- e.g.
 `choreboard.calendar`). With `"actions": true` in the payload, an event with a

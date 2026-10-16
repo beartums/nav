@@ -103,6 +103,6 @@ def events(events_reply: dict[str, Any], mode: str = "none", a: str = "", b: str
 def window(today: dt.date, week_start: int) -> tuple[str, str]:
     """[the start of this week, DAYS on], as Discovery wants them (UTC, Z).
     A day's slack each side for the venue's zone."""
-    back = (today.isoweekday() % 7 - week_start) % 7
+    back = (today.isoweekday() % 7 - week_start) % 7      # isoweekday % 7: Sunday 0
     first = today - dt.timedelta(days=back + 1)
     return f"{first.isoformat()}T00:00:00Z", f"{(first + dt.timedelta(days=DAYS + 2)).isoformat()}T00:00:00Z"

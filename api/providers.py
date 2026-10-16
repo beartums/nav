@@ -30,6 +30,11 @@ import ticketmaster
 import weather
 from widgets import EVERYONE, SHAPES, ActionError, Provider, register
 
+# The calendar widgets' "Week starts" setting: the payload's week_start
+# (0 Sunday … 6 Saturday), which the page uses for week and month views.
+WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+WEEK_START = {"type": "enum", "label": "Week starts", "default": "sunday", "choices": WEEKDAYS}
+
 # The operator names the service vmsingle-<CR name>; the CR is the chart's
 # fullname, <release>-victoria-metrics-k8s-stack, and the release is
 # `monitoring` (apps/monitoring.yaml). Overridable for when that changes.
@@ -407,7 +412,8 @@ class ArrCalendar(Provider):
         "movies": {"type": "bool", "label": "Films (Radarr)", "default": True},
         "music": {"type": "bool", "label": "Music (Lidarr)", "default": True},
         "view": {"type": "enum", "label": "Opens on", "default": "week",
-                 "choices": ["week", "month"]},
+                 "choices": ["week", "month", "agenda"]},
+        "week_start": WEEK_START,
         "unmonitored": {"type": "bool", "label": "Include unmonitored", "default": False},
     }
 
@@ -444,7 +450,9 @@ class ArrCalendar(Provider):
                 parts.append(r)
         if not parts:
             raise ValueError("; ".join(warnings))
-        return media.calendar(parts, config["label"], config["view"], warnings, (start, end))
+        out = media.calendar(parts, config["label"], config["view"], warnings, (start, end))
+        out["week_start"] = WEEKDAYS.index(config["week_start"])
+        return out
 
 
 @register
@@ -739,7 +747,8 @@ class ChoreboardCalendar(Provider):
                "cancel_swap", "candidates", "undo_swap", "request_undo", "propose_give")
     config_schema = {
         "label": {"type": "string", "label": "Headline", "default": "Chores"},
-        "view": {"type": "enum", "label": "Opens on", "default": "week", "choices": ["week", "month"]},
+        "view": {"type": "enum", "label": "Opens on", "default": "week", "choices": ["week", "month", "agenda"]},
+        "week_start": WEEK_START,
         "show": {"type": "enum", "label": "Whose chores", "default": "everyone", "choices": ["everyone", "mine"]},
         "skipped": {"type": "bool", "label": "Show skipped days", "default": True},
     }
@@ -788,6 +797,7 @@ class ChoreboardCalendar(Provider):
             for e in events:
                 e["can"], e["cannot"] = [], {}
         out = media.calendar([events], config["label"], config["view"], [], (start, end))
+        out["week_start"] = WEEKDAYS.index(config["week_start"])
         public = creds.resolve("choreboard")[2]
         # Links into Choreboard while acting as someone keep acting as them
         # there (?act_as=<id>; Choreboard checks the viewer is an admin).
@@ -900,8 +910,7 @@ class VenueEvents(Provider):
     config_schema = {
         "label": {"type": "string", "label": "Headline", "default": "Barclays Center"},
         "venue": {"type": "string", "label": "Venue (Ticketmaster name)", "default": "Barclays Center"},
-        "week_start": {"type": "enum", "label": "Week starts", "default": "sunday",
-                       "choices": ["sunday", "monday"]},
+        "week_start": WEEK_START,
         "time_filter": {"type": "enum", "label": "Time filter", "default": "none",
                         "choices": list(ticketmaster.FILTERS)},
         "time_from": {"type": "string", "label": "Time (or from), e.g. 18:00", "default": ""},
@@ -915,7 +924,7 @@ class VenueEvents(Provider):
         if not key:
             raise ValueError("no Ticketmaster API key -- add one in Connections")
         auth = creds.params("ticketmaster", key)
-        start = 0 if config["week_start"] == "sunday" else 1
+        start = WEEKDAYS.index(config["week_start"])
         mode, a, b = config["time_filter"], "", ""
         if mode != "none":
             a = ticketmaster.hhmm(config["time_from"], "Time (or from)")

@@ -8,12 +8,14 @@
 // `at` (an instant, bucketed by the VIEWER's local day) or `date` (a calendar
 // day, never shifted), plus kind (tv | movie | music), title, sub and done.
 //
-// By the cell's width:
-//   under 8 columns  an agenda: the days that have something, each a heading
-//   8+, week         seven columns from today
-//   8+, month        this month as a grid; chips where they fit, dots where not
-// Week or month is this viewer's choice, per widget (widgetUi), defaulting to
-// the definition's `view`. ‹ and › step a week or a month, as far as the
+// Three views, the viewer's choice per widget (widgetUi), defaulting to the
+// definition's `view`:
+//   week    seven columns from the week's first day (payload `week_start`,
+//           0 Sunday … 6 Saturday; default Sunday)
+//   month   this month as a grid
+//   agenda  the next 30 days that have something, each a heading
+// A small widget never switches view by itself: week and month shrink to
+// initials or coloured dots per day, and the day's popover has the names. ‹ and › step a week or a month, as far as the
 // payload's `range` (the days nav-api fetched) covers; the step is not kept --
 // a reload is back at today.
 'use strict';
@@ -34,12 +36,27 @@ var CAL_STEP = {};          // widget key -> weeks or months from now
  *  from today + 7*step. Month: that month's days (the grid's spill-over days
  *  are drawn muted and not counted). The agenda's step 0 month is the next
  *  30 days, as before. */
-function calSpan(mode, step, today, agenda) {
+var CAL_WEEK_START = 0;     // set per render from the payload's week_start
+
+/** The payload's first day of the week (0 Sunday … 6 Saturday); Sunday when
+ *  it doesn't say. */
+function calWeekStart(d) {
+  return d && d.week_start >= 0 && d.week_start <= 6 ? d.week_start : 0;
+}
+
+function calWeekOf(day) {
+  return calAdd(day, -((calParse(day).getDay() - CAL_WEEK_START + 7) % 7));
+}
+
+function calSpan(mode, step, today) {
   if (mode === 'week') {
-    var a = calAdd(today, 7 * step);
+    var a = calAdd(calWeekOf(today), 7 * step);
     return [a, calAdd(a, 6), a];
   }
-  if (agenda && step === 0) { return [today, calAdd(today, 30), today]; }
+  if (mode === 'agenda') {
+    var g = calAdd(today, 30 * step);
+    return [g, calAdd(g, 29), g];
+  }
   var t = calParse(today);
   var first = new Date(t.getFullYear(), t.getMonth() + step, 1);
   var last = new Date(t.getFullYear(), t.getMonth() + step + 1, 0);
@@ -92,15 +109,6 @@ function calName(s, today, long) {
 }
 
 /** Sunday or Monday, as the viewer's locale has it. */
-function calFirstDay() {
-  try {
-    var loc = new Intl.Locale(navigator.language || 'en-US');
-    var info = loc.getWeekInfo ? loc.getWeekInfo() : loc.weekInfo;
-    if (info && info.firstDay) { return info.firstDay % 7; }
-  } catch (e) { /* older engines */ }
-  return 0;
-}
-
 function calTip(e, day) {
   return e.title + (e.sub ? ' — ' + e.sub : '') +
     (e.at ? ' · ' + new Date(e.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '') +
@@ -277,7 +285,7 @@ function calMonth(box, byDay, anchor, today, room) {
   var t = calParse(anchor);
   var first = new Date(t.getFullYear(), t.getMonth(), 1);
   var start = new Date(first);
-  start.setDate(1 - ((first.getDay() - calFirstDay() + 7) % 7));
+  start.setDate(1 - ((first.getDay() - CAL_WEEK_START + 7) % 7));
   var end = new Date(t.getFullYear(), t.getMonth() + 1, 0);
   var weeks = Math.ceil(((end - start) / 864e5 + 1) / 7);
   var grid = div('cal-month');
@@ -402,6 +410,7 @@ document.addEventListener('click', function (ev) {
 
 function renderCalendar(el, d, o) {
   o = o || {};
+  CAL_WEEK_START = calWeekStart(d);
   if (d.strip) { calStrip(el, d, o); return; }
   CAL_RENDER = { defId: String(o.key || '').replace(/^def/, ''), d: d };
   var ui = widgetUi(o.key);
@@ -421,13 +430,13 @@ function renderCalendar(el, d, o) {
     (byDay[day] = byDay[day] || []).push(e);
     kinds[e.kind] = true;
   });
-  var agenda = room.w < CAL_AGENDA_W;
+  var agenda = mode === 'agenda';
   el.classList.toggle('cal-is-agenda', agenda);
   var skey = o.key || 'preview';
   var step = CAL_STEP[skey] || 0;
-  var sp = calSpan(mode, step, today, agenda);
+  var sp = calSpan(mode, step, today);
   // A refresh may have narrowed the range under a step: back to today.
-  if (step && !calCovered(d, sp, today)) { step = CAL_STEP[skey] = 0; sp = calSpan(mode, 0, today, agenda); }
+  if (step && !calCovered(d, sp, today)) { step = CAL_STEP[skey] = 0; sp = calSpan(mode, 0, today); }
   function redraw() {
     el.innerHTML = '';
     renderCalendar(el, d, o);
@@ -489,11 +498,12 @@ function renderCalendar(el, d, o) {
   var tog = div('wx-toggle cal-toggle');
   tog.setAttribute('role', 'group');
   tog.setAttribute('aria-label', 'Calendar view');
-  [['week', 'Week', 'W'], ['month', 'Month', 'M']].forEach(function (m) {
+  var narrow = room.w < CAL_AGENDA_W;
+  [['week', 'Week', 'W'], ['month', 'Month', 'M'], ['agenda', 'Agenda', 'A']].forEach(function (m) {
     var b = document.createElement('button');
     b.type = 'button';
     b.dataset.mode = m[0];
-    b.textContent = agenda ? m[2] : m[1];
+    b.textContent = narrow ? m[2] : m[1];
     b.title = m[1];
     b.setAttribute('aria-pressed', String(mode === m[0]));
     b.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
@@ -530,7 +540,7 @@ function renderCalendar(el, d, o) {
 function calStrip(el, d, o) {
   var key = o.key || 'preview';
   var today = calDay(new Date());
-  var first = d.week_start >= 0 && d.week_start <= 6 ? d.week_start : calFirstDay();
+  var first = calWeekStart(d);
   var step = CAL_STEP[key] || 0;
   var start = calAdd(today, -((calParse(today).getDay() - first + 7) % 7) + 7 * step);
   if (step && !calCovered(d, [start, calAdd(start, 6)], today)) { step = CAL_STEP[key] = 0; start = calAdd(today, -((calParse(today).getDay() - first + 7) % 7)); }
@@ -590,16 +600,16 @@ function calNav(mode, step, sp, today, agenda, d, go, roomW) {
     b.addEventListener('click', function (ev) { ev.stopPropagation(); ev.preventDefault(); go(n); });
     return b;
   }
-  var unit = mode === 'week' ? 'week' : 'month';
+  var unit = mode === 'week' ? 'week' : mode === 'agenda' ? '30 days' : 'month';
   nav.appendChild(btn('‹', 'Previous ' + unit, step - 1,
-                      calCovered(d, calSpan(mode, step - 1, today, agenda), today)));
+                      calCovered(d, calSpan(mode, step - 1, today), today)));
   var name = div('cal-month-name', calSpanName(mode, sp, today));
   // Not needed: the agenda's "next 7/30 days", or a narrow week whose column
   // heads already say the dates (and the header has no room for it).
-  if ((agenda && step === 0) || (mode === 'week' && !agenda && roomW < 600)) { name.hidden = true; }
+  if ((agenda && step === 0) || (mode === 'week' && roomW < 600)) { name.hidden = true; }
   nav.appendChild(name);
   nav.appendChild(btn('›', 'Next ' + unit, step + 1,
-                      calCovered(d, calSpan(mode, step + 1, today, agenda), today)));
+                      calCovered(d, calSpan(mode, step + 1, today), today)));
   if (step !== 0) { nav.appendChild(btn('Today', 'Back to today', 0, true)); }
   return nav;
 }
@@ -985,7 +995,7 @@ function calSheetForm(body, a, e, d, run) {
     n.type = 'number'; n.min = '0'; n.value = '0';
     fields.deduct = field('Points to take from ' + (e.who || 'them') + ' (0 for none)', n);
   }
-  if (needs.indexOf('swap') >= 0) { fields.swap = calSwapPicker(f, run, e.date); }
+  if (needs.indexOf('swap') >= 0) { fields.swap = calSwapPicker(f, run, e.date, calWeekStart(d)); }
   var note = document.createElement('input');
   note.type = 'text';
   var noteRequired = needs.indexOf('note') >= 0 || needs.indexOf('swap') >= 0 || a[0] === 'covered';
@@ -1026,7 +1036,7 @@ function calSheetForm(body, a, e, d, run) {
  *  the same days as a plain list. Each pickable day holds a radio named
  *  cal-swap, which is what the form reads. The view is remembered. */
 var CAL_SWAP_VIEW_KEY = 'nav.swapView';
-function calDayPicker(days, own) {
+function calDayPicker(days, own, weekStart) {
   var box = div('cal-daypick');
   var view = 'month';
   try { view = localStorage.getItem(CAL_SWAP_VIEW_KEY) || 'month'; } catch (e) { /* fine */ }
@@ -1035,7 +1045,7 @@ function calDayPicker(days, own) {
   var byDate = {};
   days.forEach(function (c) { byDate[c.date] = byDate[c.date] || c; });
   var today = calDay(new Date());
-  var first = calFirstDay();
+  var first = weekStart >= 0 && weekStart <= 6 ? weekStart : 0;
 
   function radio(c, label, cls) {
     var l = document.createElement('label');
@@ -1137,7 +1147,7 @@ function calDayPicker(days, own) {
 /** The other side of a swap, in three steps (the same as in Choreboard
  *  itself): by person or by chore; which one; then the other; then the day.
  *  Each list shows only what still has days behind it, with a count. */
-function calSwapPicker(form, run, own) {
+function calSwapPicker(form, run, own, weekStart) {
   var box = div('cal-swap');
   form.appendChild(box);
   var by = 'person', cands = [], first = null, second = null;
@@ -1195,7 +1205,7 @@ function calSwapPicker(form, run, own) {
     back(second, function () { second = null; });
     var days = rows.filter(function (c) { return two(c) === second; })
       .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
-    list.appendChild(calDayPicker(days, own));
+    list.appendChild(calDayPicker(days, own, weekStart));
   }
   run('candidates', { weeks: 12 }).then(function (res) { cands = res.candidates || []; draw(); },
                                         function () { list.textContent = ''; });

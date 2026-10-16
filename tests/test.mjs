@@ -2022,30 +2022,40 @@ test('a list draws sections, links and state words, as text', async () => {
   assert.equal(empty.querySelector('.w-sub').textContent, 'Nothing planned.');
 });
 
-test('the calendar is an agenda when narrow, a week or a month when wide', async () => {
+test('the calendar: week from Sunday, month, or agenda by choice; small sizes draw dots, never switch view', async () => {
   const { window, doc } = await boot();
   const day = (n) => { const d = new window.Date(); d.setDate(d.getDate() + n);
     return window.calDay(d); };
+  const today = day(0), dow = window.calParse(today).getDay();
   const cal = { type: 'arr.calendar', shape: 'calendar', data: { label: 'Coming up', view: 'week',
     warnings: ['Lidarr: HTTP 500'], events: [
       { kind: 'tv', at: new window.Date(Date.now() + 3600e3).toISOString(), title: 'Show', sub: 'S01E01 · Pilot', done: false },
-      { kind: 'movie', date: day(2), title: 'Film (2026)', sub: 'Digital', done: true },
+      { kind: 'movie', date: today, title: 'Film (2026)', sub: 'Digital', done: true },
       { kind: 'music', date: day(40), title: 'Far off', sub: 'Band', done: false }] } };
   const narrow = doc.createElement('div');
   window.renderWidget(narrow, cal, { key: 'cal1', size: 'M', span: [4, 4] });
-  assert.ok(narrow.querySelector('.cal-agenda'));
-  assert.deepEqual([...narrow.querySelectorAll('.cal-agenda .cal-t')].map((t) => t.textContent),
-                   ['Show', '✓ Film (2026)'], 'the week; downloaded marked; 40 days out left off');
+  assert.equal(narrow.querySelector('.cal-agenda'), null, 'small is still a week, not an agenda');
+  assert.equal(narrow.querySelectorAll('.cal-week .cal-col').length, 7);
+  assert.ok(narrow.querySelector('.cal-week .cal-dot'), 'too narrow for names: dots');
   assert.match(narrow.querySelector('.cal-warn').textContent, /Lidarr/);
+  // Agenda is a choice.
+  narrow.querySelector('.cal-toggle [data-mode=agenda]').click();
+  assert.deepEqual([...narrow.querySelectorAll('.cal-agenda .cal-t')].map((t) => t.textContent).sort(),
+                   ['Show', '✓ Film (2026)'].sort(), 'the next 30 days; downloaded marked; 40 days out left off');
 
   const wide = doc.createElement('div');
   window.renderWidget(wide, cal, { key: 'cal2', size: 'L', span: [8, 4] });
-  assert.equal(wide.querySelectorAll('.cal-week .cal-col').length, 7);
-  assert.equal(wide.querySelector('.cal-col .cal-h').textContent, 'Today');
+  const cols = [...wide.querySelectorAll('.cal-week .cal-col')];
+  assert.equal(cols.length, 7);
+  assert.ok(cols[dow].classList.contains('cal-today'), 'the week starts on Sunday by default');
+  assert.equal(cols[dow].querySelector('.cal-h').textContent, 'Today');
   assert.deepEqual([...wide.querySelectorAll('.cal-legend span')].map((s) => s.textContent),
                    ['TV', 'Films', 'Music']);
-  // A date-only release lands on its own day, two columns along.
-  assert.equal(wide.querySelectorAll('.cal-col')[2].querySelector('.cal-t').textContent, '✓ Film (2026)');
+
+  // A week_start moves the first column.
+  const mon = doc.createElement('div');
+  window.renderWidget(mon, { ...cal, data: { ...cal.data, week_start: 1 } }, { key: 'cal3', size: 'L', span: [8, 4] });
+  assert.ok([...mon.querySelectorAll('.cal-week .cal-col')][(dow + 6) % 7].classList.contains('cal-today'));
 
   // Month: remembered per widget, and a short cell draws dots, not chips.
   wide.querySelector('.cal-toggle [data-mode=month]').click();
@@ -2057,7 +2067,6 @@ test('the calendar is an agenda when narrow, a week or a month when wide', async
   window.renderWidget(big, cal, { key: 'cal2', size: 'XL', span: [12, 8] });
   assert.ok(big.querySelector('.cal-month .cal-chip'), 'XL has room for names');
 });
-
 test('choreboard chips: initial, then icon, then name, then chore, as width allows', async () => {
   const { window, doc } = await boot();
   const d = new window.Date(); d.setDate(d.getDate() + 1);
@@ -2109,7 +2118,7 @@ test('choreboard chips stack by height: "+N" when they do not fit, a row of init
   assert.equal(flat.querySelectorAll('.cal-inits .cal-init').length, window.CAL_MAX_INITIALS);
 });
 
-test('choreboard: a legend of people, and the agenda shows everything', async () => {
+test('choreboard: a legend of people, and the agenda (when chosen) shows everything', async () => {
   const { window, doc } = await boot();
   const day = window.calDay(new window.Date());
   const events = [{ date: day, title: '🗑️ Bins', sub: 'Cara · skipped', initial: 'Ca', series: 3, icon: '🗑️',
@@ -2119,7 +2128,7 @@ test('choreboard: a legend of people, and the agenda shows everything', async ()
     events, legend: [{ label: 'Cara', series: 3 }] } }, { key: 'cbL', size: 'XL', span: [12, 8] });
   assert.deepEqual([...wide.querySelectorAll('.cal-legend span')].map((x) => x.textContent), ['Cara']);
   const narrow = doc.createElement('div');
-  window.renderWidget(narrow, { type: 'choreboard.calendar', shape: 'calendar', data: { label: 'Chores', view: 'week',
+  window.renderWidget(narrow, { type: 'choreboard.calendar', shape: 'calendar', data: { label: 'Chores', view: 'agenda',
     events } }, { key: 'cbA', size: 'M', span: [4, 4] });
   const chip = narrow.querySelector('.cal-agenda .cal-pchip');
   assert.ok(chip && chip.classList.contains('cal-struck'));
@@ -2560,15 +2569,16 @@ test('the calendar steps a week or a month, only as far as its range', async () 
   const el = doc.createElement('div');
   window.renderWidget(el, cal, { key: 'nav1', size: 'L', span: [8, 4] });
   const nav = () => [...el.querySelectorAll('.cal-nav button')];
-  assert.equal(el.querySelector('.cal-col .cal-h').textContent, 'Today');
+  const first = () => el.querySelector('.cal-col .cal-h').textContent;
+  const sunday = window.calWeekOf(day(0));
+  assert.equal(first(), window.calName(sunday, day(0), false), 'the week from its Sunday');
   assert.equal(nav().length, 2, 'no Today button at today');
   nav()[1].click();
-  assert.equal(el.querySelector('.cal-col .cal-h').textContent, window.calName(day(7), day(0), false),
-    'next: the week after');
+  assert.equal(first(), window.calName(window.calAdd(sunday, 7), day(0), false), 'next: the week after');
   assert.ok([...el.querySelectorAll('.cal-t')].some((t) => t.textContent === 'Next week'));
   assert.equal(nav()[2].textContent, 'Today');
   nav()[2].click();
-  assert.equal(el.querySelector('.cal-col .cal-h').textContent, 'Today', 'Today goes back');
+  assert.equal(first(), window.calName(sunday, day(0), false), 'Today goes back');
 
   // Month: one back and one on are always covered; two on never are.
   el.querySelector('.cal-toggle [data-mode=month]').click();
@@ -2580,11 +2590,12 @@ test('the calendar steps a week or a month, only as far as its range', async () 
     nm.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
   assert.equal(el.querySelector('.cal-today'), null, 'today is not in next month');
 
-  // An agenda marks itself, so the cell knows to offer the full view on hover.
+  // An agenda (chosen, never forced by size) marks itself.
   const narrow = doc.createElement('div');
   window.renderWidget(narrow, cal, { key: 'nav2', size: 'M', span: [4, 4] });
+  assert.equal(narrow.classList.contains('cal-is-agenda'), false);
+  narrow.querySelector('.cal-toggle [data-mode=agenda]').click();
   assert.ok(narrow.classList.contains('cal-is-agenda'));
-  assert.equal(el.classList.contains('cal-is-agenda'), false);
 });
 
 test('connections: keys are write-only, and Save sends only what changed', async () => {
