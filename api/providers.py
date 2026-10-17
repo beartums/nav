@@ -27,6 +27,8 @@ import openchore
 import promql
 import remote
 import ticketmaster
+import week
+import widgets
 import weather
 from widgets import EVERYONE, SHAPES, ActionError, Provider, register
 
@@ -949,6 +951,68 @@ class VenueEvents(Provider):
         last = (dt.date.fromisoformat(to[:10]) - dt.timedelta(days=2)).isoformat()
         return {"label": config["label"], "view": "week", "events": evs, "warnings": [],
                 "range": [first, last], "strip": True, "week_start": start}
+
+
+@register
+class CombinedWeek(Provider):
+    """One week of everything: weather on top, a mark for venue events, a row
+    each for releases and chores -- drawn from OTHER saved widgets, named
+    here, so their settings (Barclays' time filter, "mine" chores) and their
+    caches apply, and each viewer sees only the sources they could see on
+    their own. Hover a day for all of it."""
+    type = "combined.week"
+    title = "This week"
+    description = "Weather, events, releases and chores in one compact week, from widgets you already have."
+    app = EVERYONE              # each source is checked for the viewer (widgets.SOURCES)
+    shape = "week"
+    ttl = 60
+    config_schema = {
+        "label": {"type": "string", "label": "Headline", "default": "This week"},
+        "weather": {"type": "string", "label": "Weather widget (its name)", "default": ""},
+        "marks": {"type": "string", "label": "Event widgets shown as an icon (names, comma-separated)", "default": ""},
+        "mark_icon": {"type": "string", "label": "Icon for those", "default": "🏟"},
+        "rows": {"type": "string", "label": "Calendar widgets shown as rows (names, comma-separated)", "default": ""},
+        "week_start": WEEK_START,
+    }
+
+    @classmethod
+    def per_user_for(cls, config: dict[str, Any]) -> bool:
+        return True             # which sources you may see, and your chores, are yours
+
+    async def fetch(self, config: dict[str, Any], who: str) -> dict[str, Any]:
+        if widgets.SOURCES is None:
+            raise ValueError("combined widgets need nav-api's database")
+        names = lambda s: [x.strip() for x in (s or "").split(",") if x.strip()]
+
+        async def load(ref: str) -> tuple[dict[str, Any] | None, int, str]:
+            src = await widgets.SOURCES(ref, who)
+            if src is None:
+                return None, 0, ref
+            cls, cfg, def_id = src
+            return await widgets.run(cls, cfg, who), def_id, ref
+
+        wx_ref = config["weather"].strip()
+        jobs = ([load(wx_ref)] if wx_ref else []) + [load(r) for r in names(config["marks"])] \
+            + [load(r) for r in names(config["rows"])]
+        got = await asyncio.gather(*jobs)
+        warnings = [w for p, _, ref in got if (w := week.problem(ref, p))]
+        wx = got[0] if wx_ref else None
+        marks = got[1 if wx_ref else 0:][:len(names(config["marks"]))]
+        rows = got[(1 if wx_ref else 0) + len(marks):]
+        out: dict[str, Any] = {
+            "label": config["label"], "week_start": WEEKDAYS.index(config["week_start"]), "warnings": warnings,
+            "weather": week.weather_days(wx[0]) if wx and wx[0] else {},
+            "units": ((wx[0] or {}).get("data") or {}).get("units") if wx else None,
+            "marks": [{"label": ref, "icon": config["mark_icon"] or "●", "def": d, "events": week.events_of(p, d)}
+                      for p, d, ref in marks if p and not p.get("error")],
+            "rows": [{"label": ((p.get("data") or {}).get("label") or ref), "def": d, "events": week.events_of(p, d),
+                      "legend": (p.get("data") or {}).get("legend"),
+                      "day_url": week.day_url((p.get("data") or {}).get("inbox_url"))}
+                     for p, d, ref in rows if p and not p.get("error")]}
+        r = week.span([p for p, _, _ in marks + rows])
+        if r:
+            out["range"] = r
+        return out
 
 
 @register

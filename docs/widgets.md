@@ -209,6 +209,23 @@ never changes by itself with size: where names don't fit, days show initials
 or coloured dots, and hovering a day lists its events. Agenda is the viewer's
 choice.
 
+### `week`: one compact week of several things
+
+What the built-in **This week** widget (`combined.week`) draws: it reads other
+saved widgets by name -- a weather widget, event widgets shown as an icon,
+calendar widgets shown as rows -- with each viewer's own permissions and each
+widget's own settings and cache.
+
+| Field | Type | |
+|---|---|---|
+| `rows` | `[{label, events, day_url?}]` | **Required.** A line per source: initials where events have `initial`, else coloured dots. `day_url` + a date links the day's popover section out. |
+| `weather` | `{"YYYY-MM-DD": {icon, hi, lo, text, pop}}` | Icon and high/low per day. |
+| `units` | `{temp}` | E.g. `"°F"`, in the popover. |
+| `marks` | `[{label, icon, events}]` | An icon on days with something (e.g. 🏟 for a venue). |
+| `week_start`, `range`, `label`, `warnings` | | As for `calendar`. |
+
+Events are `calendar` events. Hover, focus or tap a day for everything on it.
+
 **Interactive calendars** (built-in providers only, for now -- e.g.
 `choreboard.calendar`). With `"actions": true` in the payload, an event with a
 `key` is a button that opens a sheet of what the viewer may do:

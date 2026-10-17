@@ -36,7 +36,7 @@ import re
 import time
 from typing import Any, Awaitable, Callable
 
-SHAPES = ("stat", "timeseries", "list", "status", "clock", "weather", "calendar")
+SHAPES = ("stat", "timeseries", "list", "status", "clock", "weather", "calendar", "week")
 
 # The sizes a placed widget may take, per shape, smallest first. The page owns
 # what each means in grid cells (static/group-grid.js); the server only refuses
@@ -45,7 +45,7 @@ SHAPES = ("stat", "timeseries", "list", "status", "clock", "weather", "calendar"
 SIZES = {"stat": ("XS", "S", "M", "L"), "timeseries": ("XS", "S", "M", "L", "XL"),
          "list": ("S", "M", "L"), "status": ("XS", "S"),
          "clock": ("XS", "S", "M", "L"), "weather": ("XS", "S", "M", "L", "XL", "W"),
-         "calendar": ("M", "L", "XL", "W")}
+         "calendar": ("M", "L", "XL", "W"), "week": ("M", "L", "XL", "W")}
 TILE_SIZES = ("XS", "S", "M", "L")
 
 # Past the largest named size a widget may take any span, "COLSxROWS" (the
@@ -62,6 +62,14 @@ def size_ok(shape: str, size: str | None) -> bool:
     return bool(m and shape in SIZES and int(m.group(1)) <= CUSTOM_MAX[0]
                 and int(m.group(2)) <= CUSTOM_MAX[1])
 EVERYONE = "*"
+
+# How a provider reads ANOTHER saved widget (the combined week): set by app.py,
+# which owns the database and the permission check. An async callable
+#   (ref, who) -> (provider class, validated config, def id) | None
+# where ref is a widget's title (the viewer's own copy first, then the
+# library's) or "#<id>", and None means not found OR not this viewer's to see
+# -- the two are deliberately indistinguishable.
+SOURCES: Callable[[str, str], Awaitable[tuple[type["Provider"], dict[str, Any], int] | None]] | None = None
 
 # A failing upstream is cached too, briefly, so a dashboard of ten tabs does not
 # turn one outage into a request storm. Short enough that recovery shows fast.
@@ -277,6 +285,8 @@ def check_shape(shape: str, data: Any) -> str | None:
         return "weather needs `current`: an object"
     if shape == "calendar" and not isinstance(data.get("events"), list):
         return "calendar needs `events`: a list"
+    if shape == "week" and not isinstance(data.get("rows"), list):
+        return "week needs `rows`: a list"
     return None
 
 

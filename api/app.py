@@ -1393,6 +1393,44 @@ async def reachable_slugs(who: str) -> set[str]:
     return set(got["slugs"])
 
 
+async def viewer_groups(who: str) -> set[str]:
+    """The viewer's Authentik groups, cached like their apps: for a widget
+    read on their behalf (the combined week), which has no request headers."""
+    async def make() -> tuple[dict[str, Any], int]:
+        return {"groups": sorted(await user_groups(who))}, ACCESS_TTL
+    got = await ACCESS.get("groups\x00" + who, make)
+    return set(got["groups"])
+
+
+async def resolve_source(ref: str, who: str) -> tuple[Any, dict[str, Any], int] | None:
+    """widgets.SOURCES: another saved widget, as `who` may see it -- their own
+    copy of that title first (a customized one), then the library's. None
+    when there's no such widget or they may not see it."""
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    by_id = ref[1:].isdigit() and ref.startswith("#")
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        rows = await (await conn.execute(
+            "SELECT id, type, title, config, owner, audience FROM widget_defs"
+            " WHERE (owner IS NULL OR owner = %s) AND " + ("id = %s" if by_id else "lower(title) = lower(%s)")
+            + " ORDER BY (owner IS NULL), id", (who, int(ref[1:]) if by_id else ref))).fetchall()
+    for r in rows:
+        cls = widgets.REGISTRY.get(r["type"])
+        if cls is None or cls.shape == "week":                 # no week inside a week
+            continue
+        if not may_see(cls, r, await reachable_slugs(who), await viewer_groups(who)):
+            continue
+        try:
+            return cls, widgets.validate_config(cls, r["config"]), r["id"]
+        except widgets.ConfigError:
+            continue
+    return None
+
+
+widgets.SOURCES = resolve_source
+
+
 @app.get("/api/widgets/types")
 async def widget_types(request: Request, who: str = Depends(whoami)) -> dict[str, Any]:
     """The widget types this caller may add -- filtered, not merely flagged, so

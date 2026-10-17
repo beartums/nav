@@ -41,15 +41,16 @@ var SIZE_SPANS = {
   status:     { XS: [2, 2], S: [4, 2] },
   clock:      { XS: [2, 2], S: [4, 2], M: [4, 4], L: [8, 4] },
   weather:    { XS: [2, 2], S: [4, 2], M: [4, 4], L: [8, 6], XL: [12, 6], W: [WIDE, 2] },
-  // Under 8 columns an agenda; 8+ a week of columns or a month grid.
+  // Week, month or agenda at any size; narrow ones draw dots.
   calendar:   { M: [4, 4], L: [8, 4], XL: [12, 8], W: [WIDE, 4] },
+  week:       { M: [4, 4], L: [8, 4], XL: [12, 8], W: [WIDE, 4] },
   unknown:    { M: [4, 4] }
 };
 // A resize drag in progress, and a re-layout deferred until it ends.
 var RESIZING = false, RELAYOUT_PENDING = false;
 
 var SIZE_DEFAULT = { tile: 'M', stat: 'M', timeseries: 'M', list: 'M', status: 'S', clock: 'S', weather: 'M',
-                     calendar: 'L', unknown: 'M' };
+                     calendar: 'L', week: 'L', unknown: 'M' };
 
 function useGroupGrid() { return opts.collapse !== 'on'; }
 

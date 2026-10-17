@@ -344,13 +344,14 @@ function calDayClose() {
   CAL_DAY = null;
 }
 
-function calDayOpen(cell, day, evs, today) {
+function calDayOpen(cell, day, evs, today, fill) {
   calDayClose();
   var pop = div('w-peek cal-day-pop');
   pop.setAttribute('role', 'dialog');
   pop.setAttribute('aria-label', calName(day, today, true));
   pop.appendChild(div('cal-day-h', calName(day, today, true)));
-  evs.forEach(function (e) {
+  if (fill) { fill(pop); }
+  else evs.forEach(function (e) {
     if (e.initial) { pop.appendChild(calPersonChip(e, 4, true)); return; }
     var c = calChip(e, day, true);
     if (e.at) {
@@ -369,7 +370,7 @@ function calDayOpen(cell, day, evs, today) {
   CAL_DAY = { el: pop, cell: cell, timer: null };
 }
 
-function calDayPeek(cell, day, evs, today) {
+function calDayPeek(cell, day, evs, today, fill) {
   cell.tabIndex = 0;
   cell.classList.add('cal-has');
   cell.setAttribute('aria-label', calName(day, today, true) + ': ' +
@@ -380,7 +381,7 @@ function calDayPeek(cell, day, evs, today) {
   function open() {
     var prev = CAL_RENDER;
     CAL_RENDER = ctx;
-    try { calDayOpen(cell, day, evs, today); } finally { CAL_RENDER = prev; }
+    try { calDayOpen(cell, day, evs, today, fill); } finally { CAL_RENDER = prev; }
   }
   cell.addEventListener('mouseenter', function () {
     if (CAL_DAY && CAL_DAY.cell === cell) { return; }
@@ -1215,4 +1216,136 @@ function calSwapPicker(form, run, own, weekStart) {
 document.addEventListener('click', function () { if (CAL_SHEET) { calSheetClose(); } });
 document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && CAL_SHEET) { calSheetClose(); } });
 
+/* --- the combined week (shape `week`, provider combined.week) ----------------
+ * Seven narrow columns from the week's first day. Top: weather icon and
+ * high/low; then an icon per "mark" source with something that day (Barclays);
+ * then a row per calendar source -- initials (chores) or coloured dots
+ * (releases). Everything else is in the day's popover: hover, focus or tap. */
+function renderWeek(el, d, o) {
+  o = o || {};
+  CAL_WEEK_START = calWeekStart(d);
+  CAL_RENDER = { defId: String(o.key || '').replace(/^def/, ''), d: d };
+  var key = o.key || 'preview';
+  var today = calDay(new Date());
+  var step = CAL_STEP[key] || 0;
+  var start = calAdd(calWeekOf(today), 7 * step);
+  var covered = function (s) { return !d.range || (calAdd(s, 6) >= d.range[0] && s <= d.range[1]); };
+  if (step && !covered(start)) { step = CAL_STEP[key] = 0; start = calWeekOf(today); }
+  function redraw() { el.innerHTML = ''; renderWeek(el, d, o); }
+  function byDay(evs) {
+    var m = {};
+    (evs || []).forEach(function (e) { var k = calWhen(e); if (k) { (m[k] = m[k] || []).push(e); } });
+    return m;
+  }
+  var marks = (d.marks || []).map(function (m) { return { m: m, days: byDay(m.events) }; });
+  var rows = (d.rows || []).map(function (r) { return { r: r, days: byDay(r.events) }; });
+  var temp = (d.units && d.units.temp) || '°';
+
+  var head = div('cal-head');
+  if (d.label) { head.appendChild(div('w-label', d.label)); }
+  var nav = div('cal-nav');
+  function btn(text, label, n, ok) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = text; b.title = label;
+    b.setAttribute('aria-label', label);
+    b.disabled = !ok;
+    b.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
+    b.addEventListener('click', function (ev) { ev.stopPropagation(); ev.preventDefault(); CAL_STEP[key] = n; redraw(); });
+    return b;
+  }
+  nav.appendChild(btn('‹', 'Previous week', step - 1, covered(calAdd(start, -7))));
+  nav.appendChild(div('cal-month-name', calSpanName('week', [start, calAdd(start, 6)], today)));
+  nav.appendChild(btn('›', 'Next week', step + 1, covered(calAdd(start, 7))));
+  if (step) { nav.appendChild(btn('Today', 'Back to this week', 0, true)); }
+  head.appendChild(nav);
+  el.appendChild(head);
+
+  var grid = div('wk-grid');
+  grid.style.gridTemplateColumns = 'auto repeat(7, minmax(0, 1fr))';
+  // Row labels down the left; the day columns are one cell each, stacked inside.
+  var labels = div('wk-labels');
+  labels.appendChild(div('wk-l wk-l-day', ''));
+  if (Object.keys(d.weather || {}).length) { labels.appendChild(div('wk-l wk-l-wx', '')); }
+  if (marks.length) { labels.appendChild(div('wk-l wk-l-mark', '')); }
+  rows.forEach(function (x) { labels.appendChild(div('wk-l', x.r.label)); });
+  grid.appendChild(labels);
+
+  for (var i = 0; i < 7; i++) {
+    var day = calAdd(start, i);
+    var col = div('wk-col' + (day === today ? ' cal-today' : '') + (day < today ? ' cal-past' : ''));
+    var h = div('wk-day');
+    h.appendChild(div('wk-dow', calParse(day).toLocaleDateString(undefined, { weekday: 'narrow' })));
+    h.appendChild(div('wk-n', String(calParse(day).getDate())));
+    col.appendChild(h);
+    var wx = (d.weather || {})[day];
+    if (Object.keys(d.weather || {}).length) {
+      var w = div('wk-wx');
+      if (wx) {
+        if (typeof wxIcon === 'function' && wx.icon) { w.appendChild(wxIcon(wx.icon, true, 14)); }
+        w.appendChild(div('wk-t', (wx.hi != null ? Math.round(wx.hi) : '–') + '/' + (wx.lo != null ? Math.round(wx.lo) : '–')));
+      }
+      col.appendChild(w);
+    }
+    if (marks.length) {
+      var mk = div('wk-marks');
+      marks.forEach(function (x) { if (x.days[day]) { mk.appendChild(div('wk-mark', x.m.icon)); } });
+      col.appendChild(mk);
+    }
+    var all = [];
+    rows.forEach(function (x) {
+      var evs = x.days[day] || [];
+      var cell = div('wk-row');
+      var people = evs.some(function (e) { return e.initial; });
+      evs.slice(0, people ? 3 : 4).forEach(function (e) {
+        if (people) {
+          var s = div('wk-init' + (e.struck ? ' cal-struck' : '') + (e.done ? ' cal-done' : ''), e.initial);
+          s.style.setProperty('--cal-c', calColor(e));
+          cell.appendChild(s);
+        } else { cell.appendChild(calDot(e, day)); }
+      });
+      if (evs.length > (people ? 3 : 4)) { cell.appendChild(div('wk-more', '+' + (evs.length - (people ? 3 : 4)))); }
+      col.appendChild(cell);
+      all = all.concat(evs);
+    });
+    marks.forEach(function (x) { all = all.concat(x.days[day] || []); });
+    (function (day, wx) {
+      calDayPeek(col, day, all, today, function (pop) {
+        if (wx) {
+          var line = div('wk-pop-wx');
+          if (typeof wxIcon === 'function' && wx.icon) { line.appendChild(wxIcon(wx.icon, true, 18)); }
+          line.appendChild(document.createTextNode(' ' + (wx.text || '') + ' · ' +
+            (wx.hi != null ? Math.round(wx.hi) + temp : '') + ' / ' + (wx.lo != null ? Math.round(wx.lo) + temp : '') +
+            (wx.pop ? ' · ' + wx.pop + '% rain' : '')));
+          pop.appendChild(line);
+        }
+        marks.forEach(function (x) {
+          var evs = x.days[day] || [];
+          if (!evs.length) { return; }
+          pop.appendChild(div('wk-pop-h', x.m.icon + ' ' + x.m.label));
+          evs.forEach(function (e) { pop.appendChild(calChip(e, day, true)); });
+        });
+        rows.forEach(function (x) {
+          var evs = x.days[day] || [];
+          if (!evs.length) { return; }
+          var hdr = div('wk-pop-h', x.r.label);
+          if (x.r.day_url) {
+            var a = document.createElement('a');
+            a.href = x.r.day_url + day; a.target = '_blank'; a.rel = 'noopener';
+            a.className = 'wk-pop-link';
+            a.textContent = 'open ›';
+            hdr.appendChild(a);
+          }
+          pop.appendChild(hdr);
+          evs.forEach(function (e) { pop.appendChild(e.initial ? calPersonChip(e, 4, true) : calChip(e, day, true)); });
+        });
+        if (!wx && !all.length) { pop.appendChild(div('w-sub', 'Nothing on.')); }
+      });
+    })(day, wx);
+    grid.appendChild(col);
+  }
+  el.appendChild(grid);
+  if (d.warnings && d.warnings.length) { el.appendChild(div('w-sub cal-warn', '⚠ ' + d.warnings.join(' · '))); }
+}
+
+WIDGET_RENDERERS.week = renderWeek;
 WIDGET_RENDERERS.calendar = renderCalendar;

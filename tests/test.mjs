@@ -2470,6 +2470,40 @@ test('calendar strip: one week from Sunday, a mark on days with something on, to
   assert.ok(el.querySelector('[aria-label="Next week"]').disabled === false);
 });
 
+test('combined week: weather, a mark, rows of dots and initials; the day popover has it all', async () => {
+  const { window, doc } = await boot();
+  const today = window.calDay(new window.Date());
+  const sunday = window.calAdd(today, -window.calParse(today).getDay());
+  const el = doc.createElement('div');
+  doc.body.appendChild(el);
+  window.renderWidget(el, { type: 'combined.week', shape: 'week', data: { label: 'This week', week_start: 0,
+    units: { temp: '°F' }, weather: { [today]: { icon: 'clear', hi: 64.4, lo: 51, text: 'Clear', pop: 10 } },
+    marks: [{ label: 'Barclays Center', icon: '🏟', events: [{ date: today, title: '7:30 PM Nets vs Knicks' }] }],
+    rows: [{ label: 'Coming up', events: [{ date: today, title: 'Show', kind: 'tv' }, { date: today, title: 'Film', kind: 'movie' }] },
+           { label: 'Chores', day_url: 'https://cb.example/calendar?date=',
+             events: [{ date: today, title: '🐕 Walk the dog', initial: 'T', series: 2, who: 'Toby', name: 'Walk the dog' }] }],
+    range: [window.calAdd(sunday, -7), window.calAdd(sunday, 20)] } }, { key: 'def12', size: 'L', span: [8, 4] });
+  const cols = [...el.querySelectorAll('.wk-col')];
+  assert.equal(cols.length, 7);
+  const t = cols[window.calParse(today).getDay()];
+  assert.ok(t.classList.contains('cal-today'));
+  assert.equal(t.querySelector('.wk-t').textContent, '64/51');
+  assert.equal(t.querySelector('.wk-mark').textContent, '🏟');
+  const rows = t.querySelectorAll('.wk-row');
+  assert.equal(rows[0].querySelectorAll('.cal-dot').length, 2, 'releases as dots');
+  assert.equal(rows[1].querySelector('.wk-init').textContent, 'T', 'chores as initials');
+  assert.deepEqual([...el.querySelectorAll('.wk-labels .wk-l')].map((x) => x.textContent).filter(Boolean), ['Coming up', 'Chores']);
+  t.dispatchEvent(new window.Event('focus'));
+  const pop = doc.querySelector('.cal-day-pop');
+  assert.match(pop.textContent, /Clear · 64°F \/ 51°F · 10% rain/);
+  assert.match(pop.textContent, /Barclays Center/);
+  assert.match(pop.textContent, /Nets vs Knicks/);
+  assert.equal(pop.querySelector('.wk-pop-link').getAttribute('href'), 'https://cb.example/calendar?date=' + today);
+  window.calDayClose();
+  el.querySelector('[aria-label="Next week"]').click();
+  assert.equal(el.querySelector('.wk-col .wk-n').textContent, String(window.calParse(window.calAdd(sunday, 7)).getDate()));
+});
+
 test('choreboard widget without actions: chips are not buttons', async () => {
   const { window, doc } = await boot();
   const day = window.calDay(new window.Date());
