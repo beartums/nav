@@ -1,0 +1,20 @@
+{
+  // Run by griflab's scheduled Renovate workflow (beartums/griflab
+  // .github/workflows/renovate.yml), which covers this repo too.
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended"],
+  timezone: "America/New_York",
+  dependencyDashboard: true,
+  // One PR per ecosystem for the routine updates; majors stay separate PRs.
+  packageRules: [
+    { matchManagers: ["pip_requirements"], matchUpdateTypes: ["minor", "patch"], groupName: "api dependencies" },
+    { matchManagers: ["npm"], matchUpdateTypes: ["minor", "patch"], groupName: "page test dependencies" },
+    { matchManagers: ["github-actions"], groupName: "github actions" },
+    {
+      // The image's Python. A new major (3.15) waits until it has a patch
+      // release and its wheels exist for every dependency, amd64 and arm64.
+      matchManagers: ["dockerfile"], matchPackageNames: ["python"], matchUpdateTypes: ["major", "minor"],
+      minimumReleaseAge: "30 days",
+    },
+  ],
+}
