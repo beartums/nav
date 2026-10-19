@@ -11,6 +11,12 @@
     { matchManagers: ["npm"], matchUpdateTypes: ["minor", "patch"], groupName: "page test dependencies" },
     { matchManagers: ["github-actions"], groupName: "github actions" },
     {
+      // CI's python-version follows the image's Python (Dockerfile FROM python:X-slim): moving it on
+      // its own would test a different Python from the one that runs. The
+      // Dockerfile PR is the Python upgrade; bump CI in that same PR.
+      matchManagers: ["github-actions"], matchDepNames: ["python"], enabled: false,
+    },
+    {
       // The image's Python. A new major (3.15) waits until it has a patch
       // release and its wheels exist for every dependency, amd64 and arm64.
       matchManagers: ["dockerfile"], matchPackageNames: ["python"], matchUpdateTypes: ["major", "minor"],
