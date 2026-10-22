@@ -1,6 +1,6 @@
 # Pinned, because an unpinned rebuild of a dashboard is a supply-chain change
 # nobody reviewed. Bump deliberately.
-fastapi==0.149.0
+fastapi==0.161.0
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 psycopg[binary]==3.3.6
