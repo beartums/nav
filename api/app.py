@@ -686,8 +686,9 @@ async def copy_layout(conn: Any, src: dict[str, Any], dst: int, who: str) -> Non
         "INSERT INTO layout_tiles (layout_id, slug, fields) "
         "SELECT %s, slug, fields FROM layout_tiles WHERE layout_id = %s", (dst, src["id"]))
     await conn.execute(
-        "INSERT INTO widget_placements (layout_id, def_id, category, ord, size, created_by) "
-        "SELECT %s, def_id, category, ord, size, %s FROM widget_placements WHERE layout_id = %s",
+        "INSERT INTO widget_placements (layout_id, def_id, category, ord, size, hidden, above_fold, created_by) "
+        "SELECT %s, def_id, category, ord, size, hidden, above_fold, %s FROM widget_placements "
+        "WHERE layout_id = %s",
         (dst, who, src["id"]))
 
 
@@ -948,7 +949,8 @@ async def add_placement(conn: Any, lay: dict[str, Any], def_id: int, body: dict[
 
 
 async def edit_placement(conn: Any, lid: int | None, pid: int, body: dict[str, Any]) -> None:
-    """Resize (`size`) or move to another group (`category`). `lid` None: any
+    """Resize (`size`), move to another group (`category`), hide (`hidden`) or
+    keep showing when its group is collapsed (`above_fold`). `lid` None: any
     layout (the pre-templates admin route)."""
     row = await (await conn.execute(
         "SELECT p.id, p.layout_id, d.type, d.config FROM widget_placements p "
@@ -971,6 +973,11 @@ async def edit_placement(conn: Any, lid: int | None, pid: int, body: dict[str, A
         if not cat:
             raise HTTPException(422, "a placement needs a group")
         sets.append("category = %s"); args.append(cat)
+    for flag in ("hidden", "above_fold"):
+        if flag in body:
+            if not isinstance(body[flag], bool):
+                raise HTTPException(422, f"{flag} must be true or false")
+            sets.append(f"{flag} = %s"); args.append(body[flag])
     if sets:
         await conn.execute(f"UPDATE widget_placements SET {', '.join(sets)} WHERE id = %s",
                            (*args, pid))
@@ -1551,7 +1558,7 @@ async def list_widgets(request: Request, who: str = Depends(whoami),
             "SELECT id, type, title, config, owner, audience FROM widget_defs "
             "WHERE owner IS NULL OR owner = %s ORDER BY title, id", (who,))).fetchall()
         places = await (await conn.execute(
-            "SELECT id, def_id, category, ord, size FROM widget_placements "
+            "SELECT id, def_id, category, ord, size, hidden, above_fold FROM widget_placements "
             "WHERE layout_id = %s ORDER BY category, ord, id", (lay["id"],))).fetchall()
     keep = []
     for r in defs:

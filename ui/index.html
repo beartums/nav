@@ -22,7 +22,6 @@
     <h2>Groups</h2>
     <ul id="group-list"></ul>
     <button id="group-add">+ New group</button>
-    <div id="widget-lib"></div>
     <div id="side-grip" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"
          tabindex="0" title="Drag to resize (double-click to reset)"></div>
   </aside>
@@ -37,20 +36,44 @@
       Your sign-in has expired, so nothing here is updating.
       <button type="button" id="signedout-reload">Reload</button>
     </div>
+    <!-- The mode bars are icons; each says what it does on hover (title) and to
+         a screen reader (aria-label). The ⓘ carries the how-to hint. -->
     <div id="adminbar">
+      <button class="tb side-toggle" type="button" title="Show or hide the sidebar"
+              aria-label="Show or hide the sidebar">&#9707;</button>
       <strong>Administrative mode</strong>
       <label class="tpl">Template <select id="admin-tpl" aria-describedby="admin-tpl-note"></select></label>
       <span class="hint" id="admin-tpl-note"></span>
-      <span class="hint">Click a tile to edit it &middot; drag tiles between groups or to reorder</span>
-      <button id="admin-viewas-btn">View-as list&hellip;</button>
-      <button id="admin-bulk-btn">Bulk edit&hellip;</button>
-      <button id="admin-done">Done</button>
+      <span class="tb-info" tabindex="0" role="note"
+            title="Click a tile to edit it &middot; drag tiles between groups or to reorder &middot; drag a widget from the widgets panel">&#9432;</span>
+      <span class="tb-spacer"></span>
+      <button class="tb widgets-toggle" type="button" id="admin-widgets-btn" title="Widgets: drag one onto the page"
+              aria-label="Widgets" aria-expanded="false">&#9638;</button>
+      <button class="tb" type="button" id="admin-viewas-btn" title="View-as list&hellip;" aria-label="View-as list">&#128101;</button>
+      <button class="tb" type="button" id="admin-bulk-btn" title="Bulk edit&hellip;" aria-label="Bulk edit">&#9636;</button>
+      <button class="tb tb-done" type="button" id="admin-done" title="Done" aria-label="Done">&#10003;</button>
     </div>
     <div id="editbar">
+      <button class="tb side-toggle" type="button" title="Show or hide the sidebar"
+              aria-label="Show or hide the sidebar">&#9707;</button>
       <strong>Editing</strong> <span id="edit-name"></span>
-      <span class="hint">Drag tiles and widgets to arrange &middot; drag a corner to resize &middot; click a tile to rename it</span>
-      <button id="edit-revert">Revert to template&hellip;</button>
-      <button id="edit-done">Done</button>
+      <span class="tb-info" tabindex="0" role="note"
+            title="Drag tiles and widgets to arrange &middot; drag a corner to resize &middot; click a tile to rename it &middot; drag a widget from the widgets panel">&#9432;</span>
+      <span class="tb-spacer"></span>
+      <button class="tb widgets-toggle" type="button" id="edit-widgets-btn" title="Widgets: drag one onto the page"
+              aria-label="Widgets" aria-expanded="false">&#9638;</button>
+      <button class="tb" type="button" id="edit-revert" title="Revert to template&hellip;" aria-label="Revert to template">&#8634;</button>
+      <button class="tb tb-done" type="button" id="edit-done" title="Done" aria-label="Done">&#10003;</button>
+    </div>
+    <!-- The widget palette: every widget you may place, filtered by type, each
+         draggable onto the page; "New widget" dragged onto the page makes one
+         there. Opened from the bar's widgets icon. -->
+    <div id="widget-palette" role="dialog" aria-label="Widgets" hidden>
+      <div class="wp-head">
+        <strong>Widgets</strong>
+        <button type="button" class="wp-close" aria-label="Close" title="Close">&#215;</button>
+      </div>
+      <div id="widget-lib"></div>
     </div>
     <header>
       <svg class="mark" id="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#3b6ea5"/><path d="M9 23V9h3.2l7.6 9.1V9H23v14h-3.2L12.2 14v9H9z" fill="white"/></svg>
@@ -59,7 +82,8 @@
       <input id="search" type="search" placeholder="Search&hellip;" autocomplete="off"
              aria-label="Search tiles">
       <div class="menu">
-        <button id="menu-btn" aria-haspopup="true" aria-expanded="false">View &#9662;</button>
+        <button id="menu-btn" class="burger" aria-haspopup="true" aria-expanded="false" aria-label="Menu"
+                title="Menu"><span></span><span></span><span></span></button>
         <ul class="menu-list" id="menu-list" hidden></ul>
       </div>
     </header>

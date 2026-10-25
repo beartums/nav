@@ -254,6 +254,7 @@ function dragKey() {
   if (DRAG.slug) { return 'app:' + DRAG.slug; }
   if (DRAG.widget) { return 'w:' + DRAG.widget; }
   if (DRAG.def) { return 'def:' + DRAG.def; }
+  if (DRAG.newWidget) { return 'new'; }
   return null;
 }
 
@@ -271,7 +272,7 @@ function acceptDrops(ul, cat) {
   ul.addEventListener('dragover', function (ev) {
     if (!wanted()) { return; }
     ev.preventDefault();
-    if (ev.dataTransfer) { ev.dataTransfer.dropEffect = DRAG.def ? 'copy' : 'move'; }
+    if (ev.dataTransfer) { ev.dataTransfer.dropEffect = DRAG.def || DRAG.newWidget ? 'copy' : 'move'; }
     var t = target(ev);
     clearDropMarks();
     if (t && t.dataset.key !== dragKey()) { t.classList.add('dropbefore'); }
@@ -288,15 +289,55 @@ function acceptDrops(ul, cat) {
     var t = target(ev);
     var before = t ? t.dataset.key : null;
     clearDropMarks();
-    DRAG.slug = null; DRAG.widget = null; DRAG.def = null;
+    DRAG.slug = null; DRAG.widget = null; DRAG.def = null; DRAG.newWidget = false;
     if (before === moved) { return; }
     placeInGroup(cat, moved, before);
   });
 }
 
+/** `items` re-sorted into the order they are SEEN in, not the stored sequence.
+ *
+ *  The packer backfills: a small tile later in the sequence drops into the gap
+ *  beside a big widget. So the tile shown 2nd can be 7th in the sequence, and a
+ *  drop that renumbered by the sequence moved everything you weren't touching
+ *  -- "I moved Calibre to 2nd and Navidrome went to 7th". Renumbering from what
+ *  is on screen first makes the stored sequence what you saw, so only the
+ *  dropped item moves. Column-first reads down then across (its placed cells);
+ *  row-first reads across then down (its layout boxes). No layout (jsdom, a
+ *  group not on screen): the sequence stands. */
+function onScreenOrder(cat, items) {
+  var ul = null;
+  Array.prototype.forEach.call(document.querySelectorAll('ul.ugrid'), function (u) {
+    if (u.dataset.cat === cat) { ul = u; }
+  });
+  if (!ul) { return items; }
+  var pos = {};
+  Array.prototype.forEach.call(ul.querySelectorAll('[data-key]'), function (el) {
+    if (ul.classList.contains('colfirst')) {
+      var c = parseInt(el.style.gridColumn, 10), r = parseInt(el.style.gridRow, 10);
+      if (!isNaN(c) && !isNaN(r)) { pos[el.dataset.key] = [c, r]; }
+    } else {
+      var b = el.getBoundingClientRect();
+      if (b.width || b.height) { pos[el.dataset.key] = [Math.round(b.top), Math.round(b.left)]; }
+    }
+  });
+  if (!Object.keys(pos).length) { return items; }
+  return items.map(function (it, i) { return { it: it, i: i, p: pos[it.key] }; })
+    .sort(function (x, y) {
+      if (!x.p || !y.p) { return x.p ? -1 : y.p ? 1 : x.i - y.i; }
+      return (x.p[0] - y.p[0]) || (x.p[1] - y.p[1]) || (x.i - y.i);
+    })
+    .map(function (x) { return x.it; });
+}
+
 /** Move `moved` (a key) before `before` (a key, or null for the end) in
  *  `cat`, renumber the whole group, show it at once, then persist. */
 function placeInGroup(cat, moved, before) {
+  if (moved === 'new') {
+    // "New widget" dropped here: design it, then place what was saved here.
+    widgetDesigner(null, null, { onCreate: function (defId) { placeInGroup(cat, 'def:' + defId, before); } });
+    return;
+  }
   if (moved.indexOf('def:') === 0) {
     // From the library: create the placement first, then position it.
     var defId = Number(moved.slice(4));
@@ -307,7 +348,8 @@ function placeInGroup(cat, moved, before) {
     return;
   }
   var tiles = sorted(APPS.filter(function (x) { return (x.category || 'Other') === cat; }));
-  var items = groupItems(tiles, widgetsIn(cat)).filter(function (it) { return it.key !== moved; });
+  var items = onScreenOrder(cat, groupItems(tiles, widgetsIn(cat)))
+    .filter(function (it) { return it.key !== moved; });
   var item;
   if (moved.indexOf('app:') === 0) {
     var a = APPS.filter(function (x) { return 'app:' + x.slug === moved; })[0];

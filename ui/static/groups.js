@@ -41,7 +41,8 @@ function buildGroups() {
   // While the bulk table is open the staged order is the truth; reading
   // categoriesOf() here would show the rail and the table disagreeing
   // about the order of the very thing you just dragged.
-  var order = (BULK.on && BULK.cats) ? BULK.cats.slice() : categoriesOf(APPS, true);
+  // pageCats: a group holding only widgets is a group here too.
+  var order = (BULK.on && BULK.cats) ? BULK.cats.slice() : pageCats(true);
 
   order.forEach(function (cat) {
     var li = document.createElement('li');
@@ -56,7 +57,9 @@ function buildGroups() {
 
     var n = document.createElement('span');
     n.className = 'count';
-    n.textContent = APPS.filter(function (a) { return (a.category || 'Other') === cat; }).length;
+    // Tiles and widgets both: a widget is a member of its group.
+    n.textContent = APPS.filter(function (a) { return (a.category || 'Other') === cat; }).length +
+                    widgetsIn(cat).length;
     li.appendChild(n);
 
     // Hiding is per group and site-wide: an admin deciding a whole section
@@ -89,7 +92,7 @@ function buildGroups() {
     li.addEventListener('dragover', function (ev) {
       // A tile or widget dropped here moves to this group; a library widget
       // is added to it; a group dropped here reorders.
-      if (!DRAG.slug && !DRAG.group && !DRAG.widget && !DRAG.def) { return; }
+      if (!DRAG.slug && !DRAG.group && !DRAG.widget && !DRAG.def && !DRAG.newWidget) { return; }
       if (DRAG.group === cat) { return; }
       ev.preventDefault();
       li.classList.add('over');
@@ -109,11 +112,11 @@ function buildGroups() {
         saveGroups(next, groupHiddenList());
         return;
       }
-      if (DRAG.widget || DRAG.def) {
+      if (DRAG.widget || DRAG.def || DRAG.newWidget) {
         // Appended to the end of that group, through the same path as a drop
         // inside the page, so tiles and widgets stay one sequence.
-        var key = DRAG.widget ? 'w:' + DRAG.widget : 'def:' + DRAG.def;
-        DRAG.widget = null; DRAG.def = null;
+        var key = DRAG.widget ? 'w:' + DRAG.widget : DRAG.def ? 'def:' + DRAG.def : 'new';
+        DRAG.widget = null; DRAG.def = null; DRAG.newWidget = false;
         placeInGroup(cat, key, null);
         return;
       }
@@ -203,5 +206,23 @@ document.getElementById('group-add').addEventListener('click', function () {
   grip.addEventListener('keydown', function (ev) {
     var d = ev.key === 'ArrowLeft' ? -20 : ev.key === 'ArrowRight' ? 20 : 0;
     if (d) { ev.preventDefault(); set(now() + d, true); }
+  });
+})();
+
+// The sidebar folds away (the bars' ◫ icon), per device: arranging with the
+// whole width when the groups list isn't needed.
+(function () {
+  function set(collapsed) {
+    document.body.classList.toggle('side-collapsed', collapsed);
+    Array.prototype.forEach.call(document.querySelectorAll('.side-toggle'), function (b) {
+      b.setAttribute('aria-expanded', String(!collapsed));
+    });
+    try { localStorage.setItem('nav.side', collapsed ? 'collapsed' : 'open'); } catch (e) {}
+  }
+  var was = null;
+  try { was = localStorage.getItem('nav.side'); } catch (e) {}
+  set(was === 'collapsed');
+  Array.prototype.forEach.call(document.querySelectorAll('.side-toggle'), function (b) {
+    b.addEventListener('click', function () { set(!document.body.classList.contains('side-collapsed')); });
   });
 })();

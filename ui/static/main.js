@@ -73,7 +73,7 @@ function tabCats() {
     var inCat = APPS.filter(function (a) { return (a.category || 'Other') === c; });
     // While searching, a tab with no matches is a dead end you can swipe
     // into and find empty. Widgets never match a search (widgetRow).
-    return SEARCH ? filtered(inCat).length > 0 : inCat.length > 0 || widgetsIn(c).length > 0;
+    return SEARCH ? filtered(inCat).length > 0 : inCat.length > 0 || widgetsShown(c, false).length > 0;
   });
 }
 
@@ -198,7 +198,8 @@ function render() {
     });
     // pageCats, not categoriesOf: a group holding only widgets still renders.
     pageCats(arranging()).forEach(function (c) {
-      var placed = widgetsIn(c);
+      // Widgets count as members: a group of only widgets is a group.
+      var placed = widgetsShown(c, false);
       if (!byCat[c] && !placed.length) { return; }
       byCat[c] = byCat[c] || [];
       // A hidden group stays visible in admin mode -- otherwise hiding one
@@ -225,14 +226,14 @@ function render() {
       // The shared grid holds tiles AND widgets; a collapsed group or a
       // search shows neither widget (widgets never match a search).
       var gridded = useGroupGrid();
-      var wshown = gridded && !collapsed[c] && !SEARCH ? placed : [];
+      var wshown = gridded && !SEARCH ? widgetsShown(c, collapsed[c]) : [];
       var body = gridded ? groupGrid(c, shown, wshown) : grid(shown);
       // In admin mode an empty group stays a visible drop target.
       body.hidden = shown.length === 0 && !wshown.length && !(gridded && arranging() && !collapsed[c]);
-      if (collapsed[c] && shown.length) {
+      if (collapsed[c] && (shown.length || wshown.length)) {
         var pin = document.createElement('span');
         pin.className = 'count';
-        pin.textContent = shown.length + ' of ' + all.length;
+        pin.textContent = (shown.length + wshown.length) + ' of ' + (all.length + placed.length);
         pin.style.cssText = 'margin-left:auto; color:var(--muted); font-size:12px;';
         h.appendChild(pin);
       }
@@ -246,7 +247,7 @@ function render() {
       out.appendChild(h);
       // Outside the shared grid, widgets lead their group in their own row,
       // and fold away with it.
-      var wrow = gridded || collapsed[c] ? null : widgetRow(placed);
+      var wrow = gridded ? null : widgetRow(widgetsShown(c, collapsed[c]));
       if (wrow) { out.appendChild(wrow); }
       out.appendChild(body);
     });
@@ -259,7 +260,7 @@ function render() {
     // No groups to put them in: every placed widget once, at the top.
     var once = {};
     var frow = widgetRow(WIDGETS.placements.filter(function (p) {
-      if (once[p.def_id]) { return false; }
+      if (once[p.def_id] || !widgetVisible(p)) { return false; }
       once[p.def_id] = 1;
       return arranging() || !groupHidden(p.category);
     }));

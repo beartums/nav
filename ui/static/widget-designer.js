@@ -20,7 +20,8 @@
 // provider it was written for.
 'use strict';
 
-function widgetDesigner(existing, placement) {
+function widgetDesigner(existing, placement, opts) {
+  opts = opts || {};
   EDITING = '__widgets__';
   var inPlace = !!placement;
   var personal = existing ? !!existing.mine : !ADMIN_MODE;
@@ -308,11 +309,14 @@ function widgetDesigner(existing, placement) {
     (inPlace ? send('PUT', layoutPath('/placements/' + placement + '/widget'),
                     { title: title, config: cfg })
       : existing ? send('PUT', base + '/' + existing.id, body) : send('POST', base, body))
-      .then(function () {
+      .then(function (r) {
         // An edited config must not be shown from the old cached data.
         if (existing) { delete WIDGET_DATA[existing.id]; }
         closeEditor();
-        return reloadWidgets();
+        return reloadWidgets().then(function () {
+          // Made by dropping "New widget" on the page: place it there.
+          if (!existing && !inPlace && opts.onCreate && r && r.id != null) { opts.onCreate(r.id); }
+        });
       })
       .catch(function (e) { note.textContent = e.message; });
   }

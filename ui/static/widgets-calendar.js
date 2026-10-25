@@ -573,18 +573,39 @@ function calStrip(el, d, o) {
   var row = div('cal-strip');
   for (var i = 0; i < 7; i++) {
     var day = calAdd(start, i), evs = byDay[day] || [];
+    // On or off: a day with something on is FILLED in its kind's colour (two
+    // kinds: split diagonally), not dotted -- the question is "is there
+    // something", and a filled day answers it across the room. Cancelled
+    // events don't light a day; they still show in its popover.
+    var live = evs.filter(function (e) { return !e.struck; });
     var cell = div('cal-sday' + (day === today ? ' cal-today' : '') + (day < today ? ' cal-past' : '') +
-                   (evs.length ? ' cal-on' : ''));
+                   (live.length ? ' cal-on' : ''));
     cell.appendChild(div('cal-sdow', calParse(day).toLocaleDateString(undefined, { weekday: 'narrow' })));
     cell.appendChild(div('cal-sn', String(calParse(day).getDate())));
-    var marks = div('cal-smarks');
-    evs.slice(0, 3).forEach(function (e) { marks.appendChild(calDot(e, day)); });
-    cell.appendChild(marks);
+    if (live.length) {
+      var cols = [];
+      live.forEach(function (e) { var c = calColor(e); if (cols.indexOf(c) < 0) { cols.push(c); } });
+      cell.style.setProperty('--ev', cols[0]);
+      cell.style.setProperty('--ev2', cols[1] || cols[0]);
+    }
     if (evs.length) { calDayPeek(cell, day, evs, today); }
     else { cell.setAttribute('aria-label', calName(day, today, true) + ': nothing'); }
     row.appendChild(cell);
   }
   el.appendChild(row);
+  // The key: the payload's kinds (only those on in some week it covers).
+  if (Array.isArray(d.legend) && d.legend.length) {
+    var keyRow = div('cal-skey');
+    d.legend.forEach(function (l) {
+      var s = document.createElement('span');
+      var sw = document.createElement('i');
+      sw.style.background = calColor({ series: l.series });
+      s.appendChild(sw);
+      s.appendChild(document.createTextNode(l.label));
+      keyRow.appendChild(s);
+    });
+    el.appendChild(keyRow);
+  }
   if (d.warnings && d.warnings.length) { el.appendChild(div('w-sub cal-warn', '⚠ ' + d.warnings.join(' · '))); }
 }
 

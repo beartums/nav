@@ -950,7 +950,7 @@ class VenueEvents(Provider):
         first = (dt.date.fromisoformat(frm[:10]) + dt.timedelta(days=1)).isoformat()
         last = (dt.date.fromisoformat(to[:10]) - dt.timedelta(days=2)).isoformat()
         return {"label": config["label"], "view": "week", "events": evs, "warnings": [],
-                "range": [first, last], "strip": True, "week_start": start}
+                "range": [first, last], "strip": True, "week_start": start, "legend": ticketmaster.legend(evs)}
 
 
 @register

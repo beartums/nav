@@ -245,6 +245,11 @@ BEGIN
 END $$;
 
 ALTER TABLE widget_placements ALTER COLUMN layout_id SET NOT NULL;
+
+-- A widget, like a tile, can be hidden (off the page, kept in the layout) or
+-- above the fold (still shown when its group is collapsed). 2026-10-25.
+ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS hidden     BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS above_fold BOOLEAN NOT NULL DEFAULT false;
 -- A library widget's AUDIENCE: Authentik groups (lower-cased) who see its data
 -- without its app, or '*' for everyone signed in -- the family seeing what is
 -- coming up without a Sonarr login. Admin-set, per definition; NULL or empty

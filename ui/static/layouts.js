@@ -124,6 +124,8 @@ function buildTemplatePicker() {
   note.textContent = LAYOUT.is_default
     ? 'The default: everyone without a dashboard of their own sees this.'
     : 'Not the default: nobody sees it until it is made the default or copied into a dashboard.';
+  // One line on the bar, cut short when narrow; the whole sentence on hover.
+  note.title = note.textContent;
 }
 
 function templateAction(v) {

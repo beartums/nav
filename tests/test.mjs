@@ -2448,7 +2448,7 @@ test('choreboard swap calendar: only swappable days pick, your day is marked, vi
   assert.equal(window.localStorage.getItem('nav.swapView'), 'list', 'remembered');
 });
 
-test('calendar strip: one week from Sunday, a mark on days with something on, today highlighted', async () => {
+test('calendar strip: one week from Sunday, days with something on filled in their kind\'s colour, a key', async () => {
   const { window, doc } = await boot();
   const today = window.calDay(new window.Date());
   const sunday = window.calAdd(today, -window.calParse(today).getDay());
@@ -2456,14 +2456,21 @@ test('calendar strip: one week from Sunday, a mark on days with something on, to
   doc.body.appendChild(el);
   window.renderWidget(el, { type: 'ticketmaster.venue', shape: 'calendar', data: { label: 'Barclays Center', view: 'week',
     strip: true, week_start: 0, range: [window.calAdd(sunday, -1), window.calAdd(sunday, 30)],
-    events: [{ date: window.calAdd(sunday, 3), title: '7:30 PM Nets vs Knicks', sub: 'Sports' },
-             { date: window.calAdd(sunday, 3), title: '10 AM Tour' }] } }, { key: 'def11', size: 'M', span: [4, 2] });
+    legend: [{ label: 'Basketball', series: 1 }, { label: 'Concert', series: 3 }],
+    events: [{ date: window.calAdd(sunday, 3), title: '7:30 PM Nets vs Knicks', sub: 'Sports', series: 1 },
+             { date: window.calAdd(sunday, 3), title: '10 AM Tour', series: 3 },
+             { date: window.calAdd(sunday, 4), title: 'Gone', series: 3, struck: true }] } },
+    { key: 'def11', size: 'M', span: [4, 2] });
   const days = [...el.querySelectorAll('.cal-sday')];
   assert.equal(days.length, 7);
   assert.equal(days[0].querySelector('.cal-sn').textContent, String(window.calParse(sunday).getDate()), 'starts on Sunday');
   assert.equal(days.findIndex((d) => d.classList.contains('cal-today')), window.calParse(today).getDay());
-  assert.equal(days[3].querySelectorAll('.cal-dot').length, 2);
+  assert.equal(el.querySelectorAll('.cal-dot').length, 0, 'filled, not dotted');
   assert.ok(days[3].classList.contains('cal-on') && !days[2].classList.contains('cal-on'));
+  assert.equal(days[3].style.getPropertyValue('--ev'), 'var(--series-1)');
+  assert.equal(days[3].style.getPropertyValue('--ev2'), 'var(--series-3)', 'two kinds: both colours');
+  assert.ok(!days[4].classList.contains('cal-on'), 'a cancelled event does not light its day');
+  assert.deepEqual([...el.querySelectorAll('.cal-skey span')].map((x) => x.textContent), ['Basketball', 'Concert']);
   assert.match(days[3].getAttribute('aria-label'), /Nets vs Knicks/);
   el.querySelector('[aria-label="Next week"]').click();
   assert.equal(el.querySelector('.cal-sday .cal-sn').textContent, String(window.calParse(window.calAdd(sunday, 7)).getDate()));
@@ -2770,6 +2777,32 @@ test('widgets step aside for a search and fold away with a collapsed group', asy
   assert.ok(doc.querySelector('.widget-cell[data-placement="11"]'), 'Monitoring still open');
 });
 
+test('a hidden widget is off the page; an above-the-fold one survives its group collapsing', async () => {
+  const saved = JSON.parse(JSON.stringify(SAVED));
+  saved.placements[0].above_fold = true;           // Media's stat stays when Media folds
+  saved.placements[2].hidden = true;               // Monitoring's chart is hidden
+  const routes = (u) => (u === 'api/widgets' ? saved : widgetRoutes(u));
+  const { window, doc } = await boot(APPS, null, routes);
+  await settle(window, () => doc.querySelector('.widget-cell[data-placement="10"]'), 'widgets');
+  assert.equal(doc.querySelector('.widget-cell[data-placement="12"]'), null, 'hidden: not drawn');
+  click(doc.querySelectorAll('h2.cat')[0]);
+  await settle(window, () => doc.querySelector('h2.cat.closed'), 'Media folded');
+  assert.ok(doc.querySelector('.widget-cell[data-placement="10"]'), 'above the fold: still shown');
+  assert.equal(doc.querySelector('h2.cat .count').textContent, '1 of 3', 'counted with the tiles');
+});
+
+test('a group holding only widgets is in the rail, counted', async () => {
+  const saved = JSON.parse(JSON.stringify(SAVED));
+  saved.placements.push({ id: 13, def_id: 2, category: 'Charts only', ord: 0, size: null });
+  const routes = (u) => (u === 'api/widgets' ? saved : widgetRoutes(u));
+  const { window, doc } = await boot(APPS, null, routes);
+  await enterAdmin(window, doc);
+  await settle(window, () => [...doc.querySelectorAll('#group-list li')].some((li) => li.textContent.includes('Charts only')),
+               'the widget-only group in the rail');
+  const li = [...doc.querySelectorAll('#group-list li')].find((x) => x.textContent.includes('Charts only'));
+  assert.equal(li.querySelector('.count').textContent, '1');
+});
+
 test('while impersonating, widgets show their layout but never the data', async () => {
   const { window, doc, seen } = await boot(APPS, null, widgetRoutes);
   await settle(window, () => doc.querySelector('.widget-cell'), 'widgets');
@@ -2796,12 +2829,19 @@ test('tabs: a widget-only group gets a tab, and widgets sit above its tiles', as
   assert.equal(g.firstElementChild.dataset.key, 'w:10', 'the widget leads the tab');
 });
 
-test('the admin library groups saved widgets by type, without an add dropdown', async () => {
+test('the widget palette: one list, type as a filter chip and a tag, no add dropdown', async () => {
   const { window, doc, seen } = await boot(APPS, null, widgetRoutes);
   await enterAdmin(window, doc);
-  await settle(window, () => doc.querySelectorAll('#widget-lib .wl-type').length === 2, 'library');
-  const sections = [...doc.querySelectorAll('#widget-lib .wl-type > summary')].map((x) => x.firstChild.textContent);
-  assert.deepEqual(sections, ['Metric value', 'Metric chart']);
+  await settle(window, () => doc.querySelectorAll('#widget-lib .wl-list li').length === 2, 'library');
+  const chips = [...doc.querySelectorAll('#widget-lib .wl-chip')].map((x) => x.textContent);
+  assert.deepEqual(chips, ['All', 'Metric chart', 'Metric value'], 'All, then each type; no Mine in admin mode');
+  assert.deepEqual([...doc.querySelectorAll('#widget-lib .wl-tag')].map((x) => x.textContent).sort(),
+                   ['Metric chart', 'Metric value']);
+  // The palette opens from the bar's widgets icon.
+  assert.ok(doc.getElementById('widget-palette').hidden);
+  click(doc.getElementById('admin-widgets-btn'));
+  assert.equal(doc.getElementById('widget-palette').hidden, false);
+  assert.equal(doc.getElementById('admin-widgets-btn').getAttribute('aria-expanded'), 'true');
   // Adding is by dragging (tested separately); no select clutters the list.
   assert.equal(doc.querySelector('#widget-lib select'), null);
   const nas = [...doc.querySelectorAll('#widget-lib li')].find((li) => li.querySelector('.wl-name').textContent === 'NAS used');
@@ -2815,14 +2855,41 @@ test('the admin library groups saved widgets by type, without an add dropdown', 
   assert.equal(seen.find((s) => s.url === 'api/layouts/1/placements/10').method, 'DELETE');
 });
 
-test('the library remembers which sections are closed, per device', async () => {
+test('the sidebar folds away from the bar, remembered per device', async () => {
   const { window, doc } = await boot(APPS, null, widgetRoutes);
   await enterAdmin(window, doc);
-  await settle(window, () => doc.querySelector('#widget-lib .wl-type'), 'library');
-  const sec = doc.querySelector('#widget-lib .wl-type');
-  sec.open = false;
-  sec.dispatchEvent(new window.Event('toggle'));
-  assert.equal(JSON.parse(window.localStorage.getItem('nav.widgetlib'))['vm.stat'], false);
+  const t = doc.querySelector('#adminbar .side-toggle');
+  assert.equal(t.title, 'Show or hide the sidebar', 'an icon, described on hover');
+  click(t);
+  assert.ok(doc.body.classList.contains('side-collapsed'));
+  assert.equal(window.localStorage.getItem('nav.side'), 'collapsed');
+  click(t);
+  assert.ok(!doc.body.classList.contains('side-collapsed'));
+});
+
+test('a type chip filters the palette, and is remembered per device', async () => {
+  const { window, doc } = await boot(APPS, null, widgetRoutes);
+  await enterAdmin(window, doc);
+  await settle(window, () => doc.querySelector('#widget-lib .wl-chip[data-filter="vm.stat"]'), 'library');
+  click(doc.querySelector('#widget-lib .wl-chip[data-filter="vm.stat"]'));
+  assert.deepEqual([...doc.querySelectorAll('#widget-lib .wl-list .wl-name')].map((x) => x.textContent), ['NAS used']);
+  assert.equal(JSON.parse(window.localStorage.getItem('nav.widgetlib')).filter, 'vm.stat');
+});
+
+test('"New widget" dragged onto the page designs one and places it where it was dropped', async () => {
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
+    u === 'api/admin/widgets' ? { ok: true, id: 1 } : widgetRoutes(u));
+  await enterAdmin(window, doc);
+  await settle(window, () => doc.getElementById('widget-new'), 'palette');
+  const g = doc.querySelector('.ugrid[data-cat="Media"]');
+  const target = g.querySelector('[data-key="app:sonarr"]');
+  drag(window, doc.getElementById('widget-new'), target);
+  await settle(window, () => doc.querySelectorAll('#wd-type option').length === 2, 'the designer opens');
+  doc.querySelector('[data-field=query]').value = 'up';
+  doc.getElementById('editor-save').click();
+  await settle(window, () => seen.some((s) => s.url === 'api/layouts/1/placements' && s.method === 'POST'),
+               'placed after saving');
+  assert.equal(JSON.parse(seen.find((s) => s.url === 'api/layouts/1/placements').body).category, 'Media');
 });
 
 test('saving a new widget writes a definition; editing one PUTs it, type fixed', async () => {
@@ -2840,7 +2907,7 @@ test('saving a new widget writes a definition; editing one PUTs it, type fixed',
   await settle(window, () => !doc.body.classList.contains('editing'), 'dialog closes');
 
   // Edit from the library: prefilled, type locked, previewed on open.
-  click(doc.querySelector('#widget-lib .wl-name'));
+  click([...doc.querySelectorAll('#widget-lib .wl-name')].find((x) => x.textContent === 'NAS used'));
   await settle(window, () => doc.querySelector('[data-field=query]'), 'edit form');
   assert.equal(doc.getElementById('wd-type').disabled, true);
   assert.equal(doc.getElementById('wd-title').value, 'NAS used');
@@ -2853,7 +2920,7 @@ test('saving a new widget writes a definition; editing one PUTs it, type fixed',
   assert.equal(JSON.parse(seen.find((s) => s.url === 'api/admin/widgets/1').body).config.warn, 85);
 
   // Delete, from the same dialog.
-  click(doc.querySelector('#widget-lib .wl-name'));
+  click([...doc.querySelectorAll('#widget-lib .wl-name')].find((x) => x.textContent === 'NAS used'));
   await settle(window, () => doc.getElementById('wd-delete'), 'delete button');
   click(doc.getElementById('wd-delete'));
   await settle(window, () => seen.some((s) => s.url === 'api/admin/widgets/1' && s.method === 'DELETE'), 'DELETE');
@@ -3082,6 +3149,31 @@ test('column-first fill uses the same grid, handles and all', async () => {
   // Placed at explicit cells, never left to spill into implicit columns.
   for (const li of g.children) { assert.match(li.style.gridColumn, /^\d+ \/ span \d+$/); }
   assert.ok(g.querySelectorAll('.resize-handle').length >= 3, 'resizing works here too');
+});
+
+test('a drop renumbers from the order on screen, not the stored sequence', async () => {
+  // The packer backfills: the item SHOWN second can be seventh in the stored
+  // sequence. Renumbering by the sequence then moved items nobody touched
+  // ("moved Calibre to 2nd, Navidrome went to 7th"). onScreenOrder() reads the
+  // placed cells, so the sequence becomes what the person saw.
+  const { window, doc } = await boot(APPS);
+  const ul = doc.createElement('ul');
+  ul.className = 'ugrid colfirst';
+  ul.dataset.cat = 'Shown';
+  // Sequence a, b, c -- but on screen c sits above b in the first column.
+  [['a', '1 / span 4', '1 / span 2'], ['b', '1 / span 4', '5 / span 2'], ['c', '1 / span 4', '3 / span 2']]
+    .forEach(([k, col, row]) => {
+      const li = doc.createElement('li');
+      li.dataset.key = k; li.style.gridColumn = col; li.style.gridRow = row;
+      ul.appendChild(li);
+    });
+  doc.body.appendChild(ul);
+  const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }, { key: 'offscreen' }];
+  const got = window.onScreenOrder('Shown', items).map((x) => x.key);
+  assert.deepEqual(got, ['a', 'c', 'b', 'offscreen'], 'column-first reads down the placed cells; unplaced keep their place after');
+  assert.deepEqual(window.onScreenOrder('Absent', items).map((x) => x.key), ['a', 'b', 'c', 'offscreen'],
+    'no grid on screen: the stored sequence stands');
+  ul.remove();
 });
 
 test('column-first packing adds rows rather than spilling past the columns', async () => {
@@ -3467,8 +3559,9 @@ test('in edit mode a placed widget is edited in place, the library is a palette'
     dashRoutes({ created: true })(u), (w) => w.localStorage.setItem('nav.layout', '5'));
   click(doc.getElementById('menu-btn'));
   click(menuItem(doc, 'Edit layout'));
-  await settle(window, () => doc.querySelector('#widget-lib .wl-type .wl-name'), 'library');
-  assert.equal(doc.querySelector('#widget-lib .wl-type button.wl-name'), null, 'palette only');
+  await settle(window, () => doc.querySelector('#widget-lib .wl-list .wl-name'), 'library');
+  assert.equal(doc.querySelector('#widget-lib .wl-list li:not(.wl-mine) button.wl-name'), null,
+               'library widgets: a palette to drag from, not edited here');
   const cell = doc.querySelector('.widget-cell[data-placement="11"]');
   click(cell.querySelector('.w-edit'));
   await settle(window, () => doc.querySelector('[data-field=warn]'), 'form');

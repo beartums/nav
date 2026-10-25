@@ -116,6 +116,8 @@ function renderWidget(el, payload, opts) {
     return;
   }
   el.classList.add('widget-' + payload.shape);
+  // The type too, for the rare rule one widget needs and its shape-mates don't.
+  if (payload.type) { el.dataset.wtype = payload.type; }
   r(el, payload.data || {}, opts || {});
 }
 

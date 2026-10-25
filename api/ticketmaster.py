@@ -18,6 +18,27 @@ from typing import Any
 DAYS = 56          # fetched ahead: this week and the next seven
 DEAD = {"cancelled", "canceled", "postponed", "rescheduled"}
 
+# What kind of event, for the day's colour: [label, series 1-8]. Fixed, so a
+# kind keeps its colour from week to week. Basketball is split out of Sports
+# because a venue's home team (Nets, Liberty) is most of its calendar.
+KINDS = {"basketball": ["Basketball", 1], "sports": ["Sports", 2], "music": ["Concert", 3],
+         "arts & theatre": ["Arts & theatre", 5], "film": ["Film", 7], "other": ["Other", 6]}
+ORDER = ["basketball", "sports", "music", "arts & theatre", "film", "other"]
+
+
+def kind_of(segment: str | None, genre: str | None) -> str:
+    """A KINDS key from Ticketmaster's segment/genre."""
+    seg, gen = (segment or "").strip().lower(), (genre or "").strip().lower()
+    if seg == "sports":
+        return "basketball" if gen == "basketball" else "sports"
+    return seg if seg in KINDS else "other"
+
+
+def legend(evs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The kinds present among live (not cancelled) events, in KINDS order."""
+    present = {e["kind_key"] for e in evs if not e.get("struck")}
+    return [{"label": KINDS[k][0], "series": KINDS[k][1]} for k in ORDER if k in present]
+
 
 def venue_id(venues_reply: dict[str, Any], keyword: str) -> str | None:
     """The venue a keyword names: an exact name match first, else the first."""
@@ -82,10 +103,12 @@ def events(events_reply: dict[str, Any], mode: str = "none", a: str = "", b: str
         status = (((e.get("dates") or {}).get("status") or {}).get("code") or "").lower()
         when = "" if start.get("timeTBA") or start.get("noSpecificTime") else _clock(start.get("localTime"))
         cls = (e.get("classifications") or [{}])[0] or {}
-        kind = " · ".join(x for x in ((cls.get("segment") or {}).get("name"), (cls.get("genre") or {}).get("name"))
-                          if x and x != "Undefined")
+        seg, gen = (cls.get("segment") or {}).get("name"), (cls.get("genre") or {}).get("name")
+        kind = " · ".join(x for x in (seg, gen) if x and x != "Undefined")
+        k = kind_of(seg, gen)
         ev: dict[str, Any] = {"date": day, "title": f"{when} {e.get('name') or 'Event'}".strip(),
-                              "sub": kind + (f" · {status}" if status in DEAD else "")}
+                              "sub": kind + (f" · {status}" if status in DEAD else ""),
+                              "series": KINDS[k][1], "kind_key": k}
         if status in DEAD:
             ev["struck"] = True
         out.append(ev)

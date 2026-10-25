@@ -33,6 +33,19 @@ class Ticketmaster(unittest.TestCase):
         self.assertTrue(out[2]["struck"] and out[2]["sub"].endswith("cancelled"))
         self.assertEqual(out[1]["date"], "2026-10-23")
 
+    def test_each_event_has_a_kind_and_colour_and_the_legend_lists_live_ones(self):
+        reply = {"_embedded": {"events": [
+            ev("Nets", "2026-10-21"),
+            ev("Hockey night", "2026-10-22", genre="Hockey"),
+            ev("Big Show", "2026-10-23", segment="Music", genre="Rock"),
+            ev("Gone", "2026-10-24", segment="Arts & Theatre", genre="Comedy", status="cancelled"),
+            ev("Mystery", "2026-10-25", segment="Undefined", genre="Undefined")]}}
+        out = tm.events(reply)
+        self.assertEqual([e["kind_key"] for e in out], ["basketball", "sports", "music", "arts & theatre", "other"])
+        self.assertEqual([e["series"] for e in out], [1, 2, 3, 5, 6])
+        # A cancelled show doesn't put its kind in the key.
+        self.assertEqual([l["label"] for l in tm.legend(out)], ["Basketball", "Sports", "Concert", "Other"])
+
     def test_time_filters(self):
         reply = {"_embedded": {"events": [ev("Matinee", "2026-10-21", time="14:00:00"),
                                           ev("Evening", "2026-10-21", time="19:30:00"),

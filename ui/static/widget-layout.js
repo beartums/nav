@@ -36,10 +36,20 @@ function widgetsIn(cat) {
     .sort(function (a, b) { return a.ord - b.ord || a.id - b.id; });
 }
 
+/** Whether a placement is on the page: a hidden one only while arranging, so
+ *  the one screen that can unhide it still shows it. */
+function widgetVisible(p) { return arranging() || !p.hidden; }
+
+/** A group's widgets as drawn: visible ones, and when the group is collapsed
+ *  only those marked above the fold -- the same rule as tiles. */
+function widgetsShown(cat, collapsed) {
+  return widgetsIn(cat).filter(function (p) { return widgetVisible(p) && (!collapsed || p.above_fold); });
+}
+
 /** Group names that hold a widget, so a widgets-only group still renders. */
 function widgetCats() {
   var seen = {};
-  WIDGETS.placements.forEach(function (p) { seen[p.category] = 1; });
+  WIDGETS.placements.forEach(function (p) { if (widgetVisible(p)) { seen[p.category] = 1; } });
   return Object.keys(seen);
 }
 
@@ -226,6 +236,28 @@ function widgetCell(p, tag, size) {
         .catch(function (e) { alert('Remove failed: ' + e.message); });
     });
     cell.appendChild(x);
+    // Hide / above the fold: the tile editor's two flags, for a widget.
+    [['hidden', 'w-hide', p.hidden ? '\u25cc' : '\u25c9',
+      p.hidden ? 'Hidden -- click to show it on the page' : 'Hide from the page (stays in this group)'],
+     ['above_fold', 'w-fold', '\ud83d\udccc',
+      p.above_fold ? 'Above the fold -- click to fold it away with its group'
+                   : 'Keep showing when its group is collapsed']].forEach(function (f) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = f[1] + (p[f[0]] ? ' on' : '');
+      b.textContent = f[2];
+      b.title = f[3];
+      b.setAttribute('aria-pressed', String(!!p[f[0]]));
+      b.addEventListener('click', function (ev) {
+        ev.stopPropagation(); ev.preventDefault();
+        var body = {}; body[f[0]] = !p[f[0]];
+        p[f[0]] = body[f[0]];
+        render();
+        editPlacement(p.id, body).catch(function (e) { alert('Save failed: ' + e.message); refresh(); });
+      });
+      cell.appendChild(b);
+    });
+    if (p.hidden) { cell.classList.add('w-is-hidden'); }
     if (EDIT_MODE && ownDashboard() && !def.missing) {
       var ed = document.createElement('button');
       ed.type = 'button';
@@ -387,31 +419,22 @@ function reloadWidgets() {
   });
 }
 
-// --- the admin sidebar library ---------------------------------------------
+// --- the widget palette ---------------------------------------------------------
+//
+// Opened from the mode bar's widgets icon. One flat list, not a collapsible
+// section per type: the TYPE is a filter chip across the top and a tag on each
+// widget. Drag a widget onto the page to place it; drag "New widget" onto the
+// page to make one there (the designer opens, and saving places it where it
+// was dropped).
 
-// Which sections are open is per DEVICE, like collapsed groups.
-var LIB_OPEN = {};
-try { LIB_OPEN = JSON.parse(localStorage.getItem('nav.widgetlib') || '{}') || {}; } catch (e) {}
-function saveLibOpen() {
-  try { localStorage.setItem('nav.widgetlib', JSON.stringify(LIB_OPEN)); } catch (e) {}
+// The chosen filter is per DEVICE, like collapsed groups.
+var LIB_FILTER = 'all';
+try { LIB_FILTER = (JSON.parse(localStorage.getItem('nav.widgetlib') || '{}') || {}).filter || 'all'; } catch (e) {}
+function saveLibFilter() {
+  try { localStorage.setItem('nav.widgetlib', JSON.stringify({ filter: LIB_FILTER })); } catch (e) {}
 }
 
-function libSection(key, summaryText, count) {
-  var d = document.createElement('details');
-  d.dataset.key = key;
-  d.open = LIB_OPEN[key] !== false;     // open unless someone closed it
-  var s = document.createElement('summary');
-  s.textContent = summaryText;
-  if (count != null) {
-    var n = document.createElement('span');
-    n.className = 'count';
-    n.textContent = count;
-    s.appendChild(n);
-  }
-  d.appendChild(s);
-  d.addEventListener('toggle', function () { LIB_OPEN[key] = d.open; saveLibOpen(); });
-  return d;
-}
+function typeTitle(t) { return WIDGET_TYPE_TITLES[t] || t; }
 
 function buildWidgetLibrary() {
   var host = document.getElementById('widget-lib');
@@ -419,52 +442,102 @@ function buildWidgetLibrary() {
   var all = Object.keys(WIDGETS.defs).map(function (k) { return WIDGETS.defs[k]; });
   // A template holds library widgets only (the server refuses a personal
   // one), so admin mode does not offer them; edit mode lists them first.
-  var lib = all.filter(function (d) { return !d.mine; });
-  var mine = all.filter(function (d) { return d.mine; });
-  if (!ADMIN_MODE) {
-    var own = libSection('__mine__', 'My widgets', mine.length);
-    own.className = 'wl-top wl-mine';
-    var ul = document.createElement('ul');
-    mine.forEach(function (d) { ul.appendChild(libItem(d, true)); });
-    own.appendChild(ul);
-    own.appendChild(newWidgetButton('widget-new-mine'));
-    host.appendChild(own);
-  }
-  var top = libSection('__all__', 'Available widgets', lib.length);
-  top.className = 'wl-top';
-  host.appendChild(top);
-
-  // Sections by widget TYPE, titled from the type list when we have it.
-  var byType = {};
-  lib.forEach(function (d) { (byType[d.type] = byType[d.type] || []).push(d); });
-  Object.keys(byType).sort().forEach(function (t) {
-    var title = (WIDGET_TYPE_TITLES[t] || t) + (byType[t][0].missing ? ' (type removed)' : '');
-    var sec = libSection(t, title, byType[t].length);
-    sec.className = 'wl-type';
-    var ul = document.createElement('ul');
-    // The library is the admin's to edit; in a user's edit mode it is a
-    // palette to drag from (a placed widget is edited on the page, by its ✎).
-    byType[t].forEach(function (d) { ul.appendChild(libItem(d, ADMIN_MODE)); });
-    sec.appendChild(ul);
-    top.appendChild(sec);
+  var shown = ADMIN_MODE ? all.filter(function (d) { return !d.mine; }) : all;
+  shown.sort(function (a, b) {
+    return (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || a.title.localeCompare(b.title);
   });
-  if (!lib.length) {
+
+  // Filter chips: All, Mine (your own, edit mode), then each type present.
+  var types = [];
+  shown.forEach(function (d) { if (types.indexOf(d.type) < 0) { types.push(d.type); } });
+  types.sort(function (a, b) { return typeTitle(a).localeCompare(typeTitle(b)); });
+  var chips = [['all', 'All']];
+  if (!ADMIN_MODE) { chips.push(['__mine__', 'Mine']); }
+  types.forEach(function (t) { chips.push([t, typeTitle(t)]); });
+  if (chips.map(function (c) { return c[0]; }).indexOf(LIB_FILTER) < 0) { LIB_FILTER = 'all'; }
+  var bar = document.createElement('div');
+  bar.className = 'wl-chips';
+  bar.setAttribute('role', 'group');
+  bar.setAttribute('aria-label', 'Show');
+  chips.forEach(function (c) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wl-chip' + (c[0] === LIB_FILTER ? ' on' : '');
+    b.dataset.filter = c[0];
+    b.textContent = c[1];
+    b.setAttribute('aria-pressed', String(c[0] === LIB_FILTER));
+    b.addEventListener('click', function () { LIB_FILTER = c[0]; saveLibFilter(); buildWidgetLibrary(); });
+    bar.appendChild(b);
+  });
+  host.appendChild(bar);
+
+  host.appendChild(newWidgetButton(ADMIN_MODE ? 'widget-new' : 'widget-new-mine'));
+
+  var ul = document.createElement('ul');
+  ul.className = 'wl-list';
+  shown.filter(function (d) {
+    return LIB_FILTER === 'all' || (LIB_FILTER === '__mine__' ? d.mine : d.type === LIB_FILTER);
+  }).forEach(function (d) {
+    // The library is the admin's to edit; in a user's edit mode it is a
+    // palette to drag from, and only their own widgets open the designer
+    // (a placed widget is edited on the page, by its ✎).
+    ul.appendChild(libItem(d, ADMIN_MODE || !!d.mine));
+  });
+  host.appendChild(ul);
+  if (!ul.children.length) {
     var none = document.createElement('div');
     none.className = 'note';
-    none.textContent = 'No saved widgets yet.';
-    top.appendChild(none);
+    none.textContent = shown.length ? 'Nothing of that type.' : 'No saved widgets yet.';
+    host.appendChild(none);
   }
-  if (ADMIN_MODE) { top.appendChild(newWidgetButton('widget-new')); }
 }
 
+/** "New widget": click to design one into the library, or DRAG it onto the
+ *  page to design one that is placed where it was dropped. */
 function newWidgetButton(id) {
   var nb = document.createElement('button');
   nb.type = 'button';
   nb.id = id;
-  nb.textContent = '+ New widget…';
+  nb.className = 'wl-new';
+  nb.textContent = '+ New widget';
+  nb.title = 'Click to make a widget, or drag onto the page to make one there';
+  nb.draggable = true;
   nb.addEventListener('click', function () { widgetDesigner(null); });
+  nb.addEventListener('dragstart', function (ev) {
+    DRAG.newWidget = true; DRAG.def = null; DRAG.slug = null; DRAG.widget = null; DRAG.group = null;
+    if (ev.dataTransfer) {
+      ev.dataTransfer.effectAllowed = 'copy';
+      ev.dataTransfer.setData('text/plain', 'new-widget');
+    }
+  });
+  nb.addEventListener('dragend', function () { DRAG.newWidget = false; clearDropMarks(); });
   return nb;
 }
+
+/** Open or close the palette; the bars' widgets icons say which. */
+function setPalette(open) {
+  var pal = document.getElementById('widget-palette');
+  if (!pal) { return; }
+  pal.hidden = !open;
+  document.body.classList.toggle('palette-open', !!open);
+  // The grid's column count follows the page width.
+  if (typeof render === 'function' && APPS.length) { render(); }
+  Array.prototype.forEach.call(document.querySelectorAll('.widgets-toggle'), function (b) {
+    b.setAttribute('aria-expanded', String(!!open));
+    b.classList.toggle('on', !!open);
+  });
+  try { localStorage.setItem('nav.palette', open ? '1' : '0'); } catch (e) {}
+}
+(function () {
+  Array.prototype.forEach.call(document.querySelectorAll('.widgets-toggle'), function (b) {
+    b.addEventListener('click', function () { setPalette(document.getElementById('widget-palette').hidden); });
+  });
+  var close = document.querySelector('#widget-palette .wp-close');
+  if (close) { close.addEventListener('click', function () { setPalette(false); }); }
+  var was = null;
+  try { was = localStorage.getItem('nav.palette'); } catch (e) {}
+  if (was === '1') { setPalette(true); }
+})();
 
 function libItem(d, editable) {
   var li = document.createElement('li');
@@ -477,13 +550,19 @@ function libItem(d, editable) {
     name.addEventListener('click', function () { widgetDesigner(d); });
   }
   li.appendChild(name);
+  var tag = document.createElement('span');
+  tag.className = 'wl-tag';
+  tag.textContent = d.mine ? 'Mine · ' + typeTitle(d.type) : typeTitle(d.type) + (d.missing ? ' (type removed)' : '');
+  li.appendChild(tag);
+  if (d.mine) { li.classList.add('wl-mine'); }
+  li.dataset.type = d.type;
   // Drag straight into a group (group-grid.js) or onto a group in the
-  // list above.
+  // sidebar.
   if (!d.missing) {
     li.draggable = true;
     li.classList.add('wl-drag');
     li.addEventListener('dragstart', function (ev) {
-      DRAG.def = d.id; DRAG.slug = null; DRAG.widget = null; DRAG.group = null;
+      DRAG.def = d.id; DRAG.slug = null; DRAG.widget = null; DRAG.group = null; DRAG.newWidget = false;
       if (ev.dataTransfer) {
         ev.dataTransfer.effectAllowed = 'copy';
         ev.dataTransfer.setData('text/plain', 'def:' + d.id);
