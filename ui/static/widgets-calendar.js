@@ -552,6 +552,14 @@ function calStrip(el, d, o) {
   });
   function redraw() { el.innerHTML = ''; calStrip(el, d, o); }
   el.classList.add('cal-strip-w');
+  // One row high: just the seven days, filled; the name and the key move to
+  // the hover title, and stepping weeks is the full view's job.
+  var thin = !!(o.span && o.span[1] <= 1);
+  el.classList.toggle('cal-strip-thin', thin);
+  if (thin && d.label) {
+    el.title = d.label + (Array.isArray(d.legend) && d.legend.length
+      ? ' — ' + d.legend.map(function (l) { return l.label; }).join(', ') : '');
+  }
   var head = div('cal-head');
   if (d.label) { head.appendChild(div('w-label', d.label)); }
   var nav = div('cal-nav');
@@ -569,7 +577,7 @@ function calStrip(el, d, o) {
     nav.appendChild(b);
   });
   head.appendChild(nav);
-  el.appendChild(head);
+  if (!thin) { el.appendChild(head); }
   var row = div('cal-strip');
   for (var i = 0; i < 7; i++) {
     var day = calAdd(start, i), evs = byDay[day] || [];
@@ -594,7 +602,7 @@ function calStrip(el, d, o) {
   }
   el.appendChild(row);
   // The key: the payload's kinds (only those on in some week it covers).
-  if (Array.isArray(d.legend) && d.legend.length) {
+  if (!thin && Array.isArray(d.legend) && d.legend.length) {
     var keyRow = div('cal-skey');
     d.legend.forEach(function (l) {
       var s = document.createElement('span');

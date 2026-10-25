@@ -362,6 +362,11 @@ class Layouts(unittest.TestCase):
                                     json={"x": 24}).status_code, 422)
         self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
                                     json={"tiles": {"plex": {"x": -1}}}).status_code, 422)
+        # A tile on a free dashboard may be any span; a nonsense size is still refused.
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
+                                    json={"tiles": {"plex": {"x": 4, "y": 2, "size": "5x1"}}}).status_code, 200)
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
+                                    json={"tiles": {"plex": {"size": "huge"}}}).status_code, 422)
         self.assertEqual(self.c.post(f"/api/layouts/{d}/revert", headers=F).status_code, 422)
         self.assertEqual(self.c.post("/api/layouts", headers=ADMIN,
                                      json={"kind": "template", "name": "T", "mode": "free"}).status_code, 422)

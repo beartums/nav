@@ -825,9 +825,11 @@ def layout_tile_fields(kind: str, raw: Any) -> dict[str, Any]:
         fields = layouts.tile_fields(kind, raw)
     except ValueError as exc:
         raise bad(exc) from None
-    if fields.get("size") is not None and fields["size"] not in widgets.TILE_SIZES:
-        raise HTTPException(422, f"tile size must be one of {list(widgets.TILE_SIZES)}, "
-                                 f"not {fields['size']!r}")
+    size = fields.get("size")
+    # Named, or (a tile on a free dashboard) any span "COLSxROWS".
+    if size is not None and size not in widgets.TILE_SIZES and not widgets.custom_ok(size):
+        raise HTTPException(422, f"tile size must be one of {list(widgets.TILE_SIZES)} or COLSxROWS, "
+                                 f"not {size!r}")
     return fields
 
 

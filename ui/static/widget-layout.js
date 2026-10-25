@@ -447,44 +447,38 @@ function buildWidgetLibrary() {
     return (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || a.title.localeCompare(b.title);
   });
 
-  // Filter chips: All, Mine (your own, edit mode), then each type present.
-  var types = [];
-  shown.forEach(function (d) { if (types.indexOf(d.type) < 0) { types.push(d.type); } });
-  types.sort(function (a, b) { return typeTitle(a).localeCompare(typeTitle(b)); });
-  var chips = [['all', 'All']];
-  // A free dashboard starts empty: its apps are placed from here too.
+  // Filter: All / Apps / Widgets on a free dashboard, where apps are placed
+  // from here too; a packed one places only widgets, so no filter at all.
+  // What TYPE a widget is, and whether it is yours, is its tag.
   var free = typeof freeMode === 'function' && freeMode();
-  if (free) { chips.push(['__apps__', 'Apps']); }
-  if (!ADMIN_MODE) { chips.push(['__mine__', 'Mine']); }
-  types.forEach(function (t) { chips.push([t, typeTitle(t)]); });
-  if (chips.map(function (c) { return c[0]; }).indexOf(LIB_FILTER) < 0) { LIB_FILTER = 'all'; }
-  var bar = document.createElement('div');
-  bar.className = 'wl-chips';
-  bar.setAttribute('role', 'group');
-  bar.setAttribute('aria-label', 'Show');
-  chips.forEach(function (c) {
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'wl-chip' + (c[0] === LIB_FILTER ? ' on' : '');
-    b.dataset.filter = c[0];
-    b.textContent = c[1];
-    b.setAttribute('aria-pressed', String(c[0] === LIB_FILTER));
-    b.addEventListener('click', function () { LIB_FILTER = c[0]; saveLibFilter(); buildWidgetLibrary(); });
-    bar.appendChild(b);
-  });
-  host.appendChild(bar);
+  var chips = free ? [['all', 'All'], ['apps', 'Apps'], ['widgets', 'Widgets']] : [];
+  var filt = free && ['all', 'apps', 'widgets'].indexOf(LIB_FILTER) >= 0 ? LIB_FILTER : 'all';
+  if (chips.length) {
+    var bar = document.createElement('div');
+    bar.className = 'wl-chips';
+    bar.setAttribute('role', 'group');
+    bar.setAttribute('aria-label', 'Show');
+    chips.forEach(function (c) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'wl-chip' + (c[0] === filt ? ' on' : '');
+      b.dataset.filter = c[0];
+      b.textContent = c[1];
+      b.setAttribute('aria-pressed', String(c[0] === filt));
+      b.addEventListener('click', function () { LIB_FILTER = c[0]; saveLibFilter(); buildWidgetLibrary(); });
+      bar.appendChild(b);
+    });
+    host.appendChild(bar);
+  }
 
-  host.appendChild(newWidgetButton(ADMIN_MODE ? 'widget-new' : 'widget-new-mine'));
+  if (filt !== 'apps') { host.appendChild(newWidgetButton(ADMIN_MODE ? 'widget-new' : 'widget-new-mine')); }
 
   var ul = document.createElement('ul');
   ul.className = 'wl-list';
-  if (free && (LIB_FILTER === 'all' || LIB_FILTER === '__apps__')) {
+  if (free && filt !== 'widgets') {
     freePaletteApps().forEach(function (a) { ul.appendChild(paletteAppItem(a)); });
   }
-  shown.filter(function (d) {
-    return LIB_FILTER === 'all' || (LIB_FILTER !== '__apps__' &&
-      (LIB_FILTER === '__mine__' ? d.mine : d.type === LIB_FILTER));
-  }).forEach(function (d) {
+  shown.filter(function () { return filt !== 'apps'; }).forEach(function (d) {
     // The library is the admin's to edit; in a user's edit mode it is a
     // palette to drag from, and only their own widgets open the designer
     // (a placed widget is edited on the page, by its ✎).
@@ -494,7 +488,8 @@ function buildWidgetLibrary() {
   if (!ul.children.length) {
     var none = document.createElement('div');
     none.className = 'note';
-    none.textContent = shown.length ? 'Nothing of that type.' : 'No saved widgets yet.';
+    none.textContent = filt === 'apps' ? 'Every app is on this page.'
+      : shown.length ? 'Nothing here.' : 'No saved widgets yet.';
     host.appendChild(none);
   }
 }
@@ -526,16 +521,73 @@ function setPalette(open) {
   var pal = document.getElementById('widget-palette');
   if (!pal) { return; }
   pal.hidden = !open;
-  document.body.classList.toggle('palette-open', !!open);
-  // The grid's column count follows the page width.
-  if (typeof render === 'function' && APPS.length) { render(); }
+  if (open) { placePalette(pal); }
   Array.prototype.forEach.call(document.querySelectorAll('.widgets-toggle'), function (b) {
     b.setAttribute('aria-expanded', String(!!open));
     b.classList.toggle('on', !!open);
   });
   try { localStorage.setItem('nav.palette', open ? '1' : '0'); } catch (e) {}
 }
+// Where the palette sits and how big it is, per device. Kept inside the window
+// on every open: a box saved on a big screen must not open off a small one.
+var PALETTE_BOX = null;
+try { PALETTE_BOX = JSON.parse(localStorage.getItem('nav.palette.box') || 'null'); } catch (e) {}
+function savePaletteBox(pal) {
+  var b = pal.getBoundingClientRect();
+  if (!b.width) { return; }
+  PALETTE_BOX = { left: Math.round(b.left), top: Math.round(b.top), width: Math.round(b.width), height: Math.round(b.height) };
+  try { localStorage.setItem('nav.palette.box', JSON.stringify(PALETTE_BOX)); } catch (e) {}
+}
+function placePalette(pal) {
+  var b = PALETTE_BOX;
+  if (!b) { return; }                       // the CSS default: down the right
+  var w = Math.min(b.width, window.innerWidth - 16), h = Math.min(b.height, window.innerHeight - 16);
+  pal.style.width = w + 'px';
+  pal.style.height = h + 'px';
+  pal.style.left = Math.max(8, Math.min(b.left, window.innerWidth - w - 8)) + 'px';
+  pal.style.top = Math.max(8, Math.min(b.top, window.innerHeight - h - 8)) + 'px';
+  pal.style.right = 'auto';
+  pal.style.bottom = 'auto';
+}
+
 (function () {
+  var pal = document.getElementById('widget-palette');
+  var head = pal && pal.querySelector('.wp-head');
+  if (head) {
+    head.addEventListener('pointerdown', function (ev) {
+      if (ev.target.closest('button')) { return; }
+      ev.preventDefault();
+      var b = pal.getBoundingClientRect(), sx = ev.clientX, sy = ev.clientY;
+      pal.style.left = b.left + 'px'; pal.style.top = b.top + 'px';
+      pal.style.width = b.width + 'px'; pal.style.height = b.height + 'px';
+      pal.style.right = 'auto'; pal.style.bottom = 'auto';
+      pal.classList.add('moving');
+      if (head.setPointerCapture) { try { head.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic */ } }
+      function move(e) {
+        pal.style.left = Math.max(0, Math.min(window.innerWidth - 60, b.left + e.clientX - sx)) + 'px';
+        pal.style.top = Math.max(0, Math.min(window.innerHeight - 40, b.top + e.clientY - sy)) + 'px';
+      }
+      function up() {
+        head.removeEventListener('pointermove', move);
+        head.removeEventListener('pointerup', up);
+        head.removeEventListener('pointercancel', up);
+        pal.classList.remove('moving');
+        savePaletteBox(pal);
+      }
+      head.addEventListener('pointermove', move);
+      head.addEventListener('pointerup', up);
+      head.addEventListener('pointercancel', up);
+    });
+  }
+  // A resize from the corner (CSS resize) is saved when it settles.
+  if (pal && window.ResizeObserver) {
+    var t = null;
+    new ResizeObserver(function () {
+      if (pal.hidden || pal.classList.contains('moving')) { return; }
+      clearTimeout(t);
+      t = setTimeout(function () { savePaletteBox(pal); }, 300);
+    }).observe(pal);
+  }
   Array.prototype.forEach.call(document.querySelectorAll('.widgets-toggle'), function (b) {
     b.addEventListener('click', function () { setPalette(document.getElementById('widget-palette').hidden); });
   });

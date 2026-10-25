@@ -99,6 +99,8 @@ function cellRoom(opts, fallback, el) {
   // The hover view: its own width when it is laid out already (it is), so a
   // row of faces is planned for the panel it is in, not a guess.
   if (!sp) { return { w: el && el.clientWidth > 60 ? el.clientWidth - 28 : 492, h: 320 }; }
+  // One row (a .thin cell) has almost no padding: the line is the room.
+  if (sp[1] === 1) { return { w: sp[0] * 63 - 10 - 16, h: 27 }; }
   return { w: sp[0] * 63 - 10 - 28, h: sp[1] * 43 - 10 - 24 };
 }
 
@@ -199,7 +201,7 @@ function renderClock(el, d, opts) {
     if (lay.stack) { timePx = fitTime(timeFmt(zones[0].tz, d, showSec).format(new Date()), room.w, 20); }
   } else {
     zones = d.zones.slice(0, 1);
-    showLabel = hasLabels && !tiny;
+    showLabel = hasLabels && !tiny && room.h >= 34;
     showDate = d.date && !tiny && room.h >= 70;
     showOffset = showDate;
     showTime = true;

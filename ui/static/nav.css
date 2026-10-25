@@ -132,9 +132,11 @@ body.side-collapsed.admin-mode .wrap, body.side-collapsed.edit-mode .wrap { marg
   flex-direction:column; background:var(--card); border:1px solid var(--line); border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,.18); }
 body.admin-mode #widget-palette:not([hidden]), body.edit-mode #widget-palette:not([hidden]) { display:flex; }
-/* Open, it takes its width from the page rather than covering the right columns. */
-body.palette-open.admin-mode .wrap, body.palette-open.edit-mode .wrap { margin-right:304px; }
-@media (max-width:900px) { body.palette-open.admin-mode .wrap, body.palette-open.edit-mode .wrap { margin-right:0; } }
+/* A floating window: drag its title to move it, its corner to resize it.
+   The page stays where it is (centred) underneath. */
+#widget-palette { resize:both; overflow:hidden; min-width:220px; min-height:200px; max-width:90vw; max-height:90vh; }
+#widget-palette .wp-head { cursor:move; user-select:none; touch-action:none; }
+#widget-palette.moving { opacity:.92; }
 .wp-head { display:flex; align-items:center; padding:10px 12px; border-bottom:1px solid var(--line); }
 .wp-head strong { flex:1; }
 .wp-close { border:0; background:none; font-size:18px; padding:0 4px; color:var(--muted); }
@@ -924,3 +926,25 @@ ul.ugrid.free > li > .w-remove { position:absolute; top:4px; right:6px; z-index:
 body.free-mode #groups, body.free-mode #side-grip, body.free-mode .side-toggle,
 body.free-mode #edit-revert { display:none !important; }
 body.free-mode.edit-mode .wrap { margin-left:auto; max-width:1100px; }
+
+/* One row high (.thin, set by applySpan): no card padding, one line. */
+ul.ugrid > li.widget-cell.thin > .widget-body { padding:3px 8px; display:flex; align-items:center; }
+ul.ugrid > li.widget-cell.thin .w-label { display:none; }
+.cal-strip-thin { width:100%; }
+.cal-strip-thin .cal-strip { gap:2px; width:100%; }
+.cal-strip-thin .cal-sday { flex-direction:row; justify-content:center; padding:0; height:24px; align-items:center; gap:3px; }
+.cal-strip-thin .cal-sdow { font-size:9px; }
+.cal-strip-thin .cal-sn { font-size:11px; }
+.cal-strip-thin .cal-sday.cal-today .cal-sn { min-width:16px; padding:0 3px; }
+/* A one-row tile wider than a cell (free layout): icon and name on a line,
+   not the icon-only XS look with its name hidden in a hover label. */
+ul.ugrid > li.thin.size-custom > a.app { flex-direction:row; justify-content:flex-start; gap:8px; padding:3px 10px; }
+ul.ugrid > li.thin.size-custom .text { display:block; position:static; transform:none; opacity:1; pointer-events:auto;
+  background:none; border:0; padding:0; box-shadow:none; min-width:0; }
+ul.ugrid > li.thin.size-custom .name { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+ul.ugrid > li.thin.size-custom .desc { display:none; }
+/* Arranging a one-row widget: its controls wait for the pointer, or they
+   would sit on top of the one line it has. */
+ul.ugrid > li.thin:not(:hover):not(:focus-within) > .w-fold,
+ul.ugrid > li.thin:not(:hover):not(:focus-within) > .w-hide,
+ul.ugrid > li.thin:not(:hover):not(:focus-within) > .w-edit { display:none; }

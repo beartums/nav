@@ -235,6 +235,7 @@ function paletteAppItem(a) {
   var li = document.createElement('li');
   li.className = 'wl-drag wl-app';
   li.draggable = true;
+  li.appendChild(tileIcon(a));
   var name = document.createElement('span');
   name.className = 'wl-name';
   name.textContent = a.name;

@@ -55,6 +55,12 @@ CUSTOM_MAX = (48, 32)
 CUSTOM = re.compile(r"^([1-9]\d?)x([1-9]\d?)$")
 
 
+def custom_ok(size: str | None) -> bool:
+    """A "COLSxROWS" span within CUSTOM_MAX."""
+    m = CUSTOM.match(str(size or ""))
+    return bool(m and int(m.group(1)) <= CUSTOM_MAX[0] and int(m.group(2)) <= CUSTOM_MAX[1])
+
+
 def size_ok(shape: str, size: str | None) -> bool:
     if size is None or size in SIZES.get(shape, ()):
         return True

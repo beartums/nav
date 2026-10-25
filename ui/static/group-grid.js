@@ -67,7 +67,7 @@ function gridCols() {
 
 function sizeOf(kind, size) {
   var spans = SIZE_SPANS[kind] || SIZE_SPANS.unknown;
-  if (spans[size] || (kind !== 'tile' && customSpan(size))) { return size; }
+  if (spans[size] || ((kind !== 'tile' || freeSizing()) && customSpan(size))) { return size; }
   return SIZE_DEFAULT[kind] || 'M';
 }
 
@@ -80,6 +80,20 @@ function sizeOf(kind, size) {
 // span (opts.span) to lay out into the room rather than stretch.
 
 var FREE_MIN = [2, 2], FREE_MAX = [48, 32];
+
+/** Tiles size by cells too on a free dashboard: there's no packer to keep
+ *  them in step, so a tile is whatever span it is given. */
+function freeSizing() { return typeof freeMode === 'function' && freeMode(); }
+
+/** The smallest span a kind may be resized to. One row high where something
+ *  useful fits in one line: a clock's time, a venue's week of days (a
+ *  calendar's strip), and on a free dashboard a 1x1 tile. */
+function minSpan(kind) {
+  if (kind === 'tile') { return freeSizing() ? [1, 1] : FREE_MIN; }
+  if (kind === 'clock') { return [2, 1]; }
+  if (kind === 'calendar') { return [4, 1]; }
+  return FREE_MIN;
+}
 
 function customSpan(size) {
   var m = /^(\d{1,2})x(\d{1,2})$/.exec(size || '');
@@ -128,6 +142,8 @@ function applySpan(el, kind, size, cols) {
   el.classList.toggle('size-custom', base !== size);
   el.dataset.size = size;
   el.dataset.base = base;
+  // One row high: the cell drops its padding so a line fits (see .thin).
+  el.classList.toggle('thin', span[1] === 1);
   return [Math.min(span[0], cols), span[1]];
 }
 
@@ -400,12 +416,12 @@ function resizeHandle(el, it, kind, cat) {
   h.setAttribute('role', 'slider');
   var names = Object.keys(SIZE_SPANS[kind] || SIZE_SPANS.unknown);
   function label() {
-    h.setAttribute('aria-label', kind === 'tile' ? 'Size ' + el.dataset.size + ' of ' + names.join(', ')
+    h.setAttribute('aria-label', kind === 'tile' && !freeSizing() ? 'Size ' + el.dataset.size + ' of ' + names.join(', ')
       : 'Size ' + spanOf(kind, el.dataset.size).map(function (v, i) { return i ? v : Math.min(v, gridCols()); }).join(' by '));
     h.title = 'Resize (' + el.dataset.size + ') — drag, or focus and use the arrow keys';
   }
   label();
-  if (kind === 'tile' && names.length < 2) { h.hidden = true; return h; }
+  if (kind === 'tile' && names.length < 2 && !freeSizing()) { h.hidden = true; return h; }
 
   function commit(size) {
     if (size === (it.kind === 'app' ? sizeOf('tile', it.a.size) : sizeOf(kind, it.p.size))) { return; }
@@ -416,14 +432,15 @@ function resizeHandle(el, it, kind, cat) {
     // A widget: the arrows move by cells -- Right/Left a column, Down/Up a
     // row. A tile: its named sizes, in order.
     var cur = el.dataset.size;
-    if (kind !== 'tile') {
+    if (kind !== 'tile' || freeSizing()) {
       var dc = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
       var dr = ev.key === 'ArrowDown' ? 1 : ev.key === 'ArrowUp' ? -1 : 0;
       if (!dc && !dr) { return; }
       ev.preventDefault();
       var cols = gridCols(), sp = spanOf(kind, cur);
       var nc = Math.min(sp[0], cols) + dc, nr = sp[1] + dr;
-      if (nc >= FREE_MIN[0] && nr >= FREE_MIN[1] && nc <= Math.min(FREE_MAX[0], cols) && nr <= FREE_MAX[1]) {
+      var mn = minSpan(kind);
+      if (nc >= mn[0] && nr >= mn[1] && nc <= Math.min(FREE_MAX[0], cols) && nr <= FREE_MAX[1]) {
         commit(sizeForSpan(kind, nc, nr, cols));
       }
       return;
@@ -449,7 +466,7 @@ function resizeHandle(el, it, kind, cat) {
       var wantC = (box.width + (e.clientX - sx) + GRID_GAP) / (colW + GRID_GAP);
       var wantR = (box.height + (e.clientY - sy) + GRID_GAP) / (GRID_ROW + GRID_GAP);
       var best;
-      if (kind === 'tile') {
+      if (kind === 'tile' && !freeSizing()) {
         // Nearest named size: a tile has nothing in between.
         var bestD = Infinity;
         names.forEach(function (n) {
@@ -459,8 +476,9 @@ function resizeHandle(el, it, kind, cat) {
         });
       } else {
         // A widget: by cells, named where the span is a named size's.
-        var fc = Math.max(FREE_MIN[0], Math.min(cols, FREE_MAX[0], Math.round(wantC)));
-        var fr = Math.max(FREE_MIN[1], Math.min(FREE_MAX[1], Math.round(wantR)));
+        var mn = minSpan(kind);
+        var fc = Math.max(mn[0], Math.min(cols, FREE_MAX[0], Math.round(wantC)));
+        var fr = Math.max(mn[1], Math.min(FREE_MAX[1], Math.round(wantR)));
         best = sizeForSpan(kind, fc, fr, cols);
       }
       if (best !== chosen) { chosen = best; applySpan(el, kind, best, cols); label(); }

@@ -2829,12 +2829,11 @@ test('tabs: a widget-only group gets a tab, and widgets sit above its tiles', as
   assert.equal(g.firstElementChild.dataset.key, 'w:10', 'the widget leads the tab');
 });
 
-test('the widget palette: one list, type as a filter chip and a tag, no add dropdown', async () => {
+test('the widget palette: one list, the type as a tag, no filter on a packed layout', async () => {
   const { window, doc, seen } = await boot(APPS, null, widgetRoutes);
   await enterAdmin(window, doc);
   await settle(window, () => doc.querySelectorAll('#widget-lib .wl-list li').length === 2, 'library');
-  const chips = [...doc.querySelectorAll('#widget-lib .wl-chip')].map((x) => x.textContent);
-  assert.deepEqual(chips, ['All', 'Metric chart', 'Metric value'], 'All, then each type; no Mine in admin mode');
+  assert.equal(doc.querySelectorAll('#widget-lib .wl-chip').length, 0, 'packed: only widgets to place, nothing to filter');
   assert.deepEqual([...doc.querySelectorAll('#widget-lib .wl-tag')].map((x) => x.textContent).sort(),
                    ['Metric chart', 'Metric value']);
   // The palette opens from the bar's widgets icon.
@@ -2865,15 +2864,6 @@ test('the sidebar folds away from the bar, remembered per device', async () => {
   assert.equal(window.localStorage.getItem('nav.side'), 'collapsed');
   click(t);
   assert.ok(!doc.body.classList.contains('side-collapsed'));
-});
-
-test('a type chip filters the palette, and is remembered per device', async () => {
-  const { window, doc } = await boot(APPS, null, widgetRoutes);
-  await enterAdmin(window, doc);
-  await settle(window, () => doc.querySelector('#widget-lib .wl-chip[data-filter="vm.stat"]'), 'library');
-  click(doc.querySelector('#widget-lib .wl-chip[data-filter="vm.stat"]'));
-  assert.deepEqual([...doc.querySelectorAll('#widget-lib .wl-list .wl-name')].map((x) => x.textContent), ['NAS used']);
-  assert.equal(JSON.parse(window.localStorage.getItem('nav.widgetlib')).filter, 'vm.stat');
 });
 
 test('"New widget" dragged onto the page designs one and places it where it was dropped', async () => {
@@ -3863,4 +3853,51 @@ test('arranging a free dashboard: drag an app from the panel to a cell; overlaps
   assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/layouts/7/tiles').body).tiles.books,
                    { ...(USER.apps.find((a) => a.slug === 'books').override), x: 0, y: 0 });
   await settle(window, () => doc.querySelector('ul.ugrid.free [data-key="app:books"]'), 'drawn at once');
+});
+
+test('on a free dashboard the panel shows All / Apps / Widgets, apps with their icons', async () => {
+  const { window, doc } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 0, y: 0 } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.querySelector('#widget-lib .wl-chip'), 'chips');
+  assert.deepEqual([...doc.querySelectorAll('#widget-lib .wl-chip')].map((x) => x.textContent), ['All', 'Apps', 'Widgets']);
+  assert.ok(doc.querySelector('#widget-lib .wl-app .icon'), 'an app shows its icon');
+  click(doc.querySelector('#widget-lib .wl-chip[data-filter="widgets"]'));
+  assert.equal(doc.querySelectorAll('#widget-lib .wl-app').length, 0);
+  assert.ok(doc.querySelectorAll('#widget-lib .wl-list li').length > 0, 'widgets only');
+  click(doc.querySelector('#widget-lib .wl-chip[data-filter="apps"]'));
+  assert.equal(doc.getElementById('widget-new-mine'), null, 'no New widget among the apps');
+  assert.equal(JSON.parse(window.localStorage.getItem('nav.widgetlib')).filter, 'apps');
+});
+
+test('on a free dashboard a tile resizes by cells, down to one cell', async () => {
+  const { window, doc, seen } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 0, y: 0 } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.querySelector('ul.ugrid.free [data-key="app:sonarr"] .resize-handle'), 'handle');
+  const h = () => doc.querySelector('ul.ugrid.free [data-key="app:sonarr"] .resize-handle');
+  h().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/tiles'), 'saved');
+  assert.equal(JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/tiles').pop().body).tiles.sonarr.size, '5x2',
+               'a span, not the next named size');
+  assert.equal(window.minSpan('tile').join('x'), '1x1');
+  assert.equal(window.minSpan('clock').join('x'), '2x1', 'a clock can be one row');
+  assert.equal(window.minSpan('calendar').join('x'), '4x1', 'so can a venue strip');
+});
+
+test('a one-row venue strip is just the seven days, the name on hover', async () => {
+  const { window, doc } = await boot();
+  const today = window.calDay(new window.Date());
+  const el = doc.createElement('div');
+  doc.body.appendChild(el);
+  window.renderWidget(el, { type: 'ticketmaster.venue', shape: 'calendar', data: { label: 'Barclays Center', view: 'week',
+    strip: true, week_start: 0, legend: [{ label: 'Concert', series: 3 }],
+    range: [window.calAdd(today, -10), window.calAdd(today, 30)],
+    events: [{ date: today, title: '8 PM Show', series: 3 }] } }, { key: 'thin1', span: [8, 1] });
+  assert.equal(el.querySelectorAll('.cal-sday').length, 7);
+  assert.equal(el.querySelector('.cal-head'), null, 'no header');
+  assert.equal(el.querySelector('.cal-skey'), null, 'no key');
+  assert.match(el.title, /Barclays Center — Concert/);
 });

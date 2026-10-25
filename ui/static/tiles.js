@@ -34,28 +34,9 @@ function sorted(list) {
   return copy;
 }
 
-function tile(a, o) {
-  o = o || {};
-  var li = document.createElement('li');
-  var link = document.createElement('a');
-  // `added` comes from the server: a tile the chosen groups grant that
-  // the chosen person does not already have. The delta is the answer.
-  link.className = a.added ? 'app added' : 'app';
-  link.href = a.url;
-  link.rel = 'noopener';
-  var mode = opts.target;
-
-  if (mode === 'window' || mode === 'split') {
-    link.addEventListener('click', function (ev) {
-      ev.preventDefault();
-      count(a.slug);
-      openWindow(a.url, mode === 'split');
-    });
-  } else {
-    link.target = mode;
-    link.addEventListener('click', function () { count(a.slug); });
-  }
-
+/** An app's icon element: its own icon (light or dark), else icons/<slug>.svg,
+ *  else its first letter. Shared by tiles and the widgets panel. */
+function tileIcon(a) {
   // meta_icon wins only when absolute: Authentik serves uploaded icons as
   // /media/... paths, which resolve against nav's origin and 404.
   // Dark is the stored `icon` -- every existing value is one -- and light
@@ -81,7 +62,32 @@ function tile(a, o) {
     f.textContent = (a.name || a.slug || '?').charAt(0);
     if (img.parentNode) { img.parentNode.replaceChild(f, img); }
   };
-  link.appendChild(img);
+  return img;
+}
+
+function tile(a, o) {
+  o = o || {};
+  var li = document.createElement('li');
+  var link = document.createElement('a');
+  // `added` comes from the server: a tile the chosen groups grant that
+  // the chosen person does not already have. The delta is the answer.
+  link.className = a.added ? 'app added' : 'app';
+  link.href = a.url;
+  link.rel = 'noopener';
+  var mode = opts.target;
+
+  if (mode === 'window' || mode === 'split') {
+    link.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      count(a.slug);
+      openWindow(a.url, mode === 'split');
+    });
+  } else {
+    link.target = mode;
+    link.addEventListener('click', function () { count(a.slug); });
+  }
+
+  link.appendChild(tileIcon(a));
 
   var text = document.createElement('div');
   text.className = 'text';
