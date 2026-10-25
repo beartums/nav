@@ -2597,8 +2597,14 @@ test('a signed-out session says so, instead of blaming nav-api', async () => {
 test('the calendar steps a week or a month, only as far as its range', async () => {
   const { window, doc } = await boot();
   const day = (n) => { const d = new window.Date(); d.setDate(d.getDate() + n); return window.calDay(d); };
+  // The range is whole months -- the start of last month to the end of next --
+  // so "two months on is past it" holds on any date. A fixed +-69 days reached
+  // into the month after next whenever today was late in a month (2026-10-24).
+  const now = new window.Date();
+  const range = [window.calDay(new window.Date(now.getFullYear(), now.getMonth() - 1, 1)),
+                 window.calDay(new window.Date(now.getFullYear(), now.getMonth() + 2, 0))];
   const cal = { type: 'arr.calendar', shape: 'calendar', data: { label: 'Coming up', view: 'week',
-    range: [day(-69), day(69)], warnings: [], events: [
+    range, warnings: [], events: [
       { kind: 'movie', date: day(8), title: 'Next week', sub: 'Digital', done: false }] } };
   const el = doc.createElement('div');
   window.renderWidget(el, cal, { key: 'nav1', size: 'L', span: [8, 4] });
