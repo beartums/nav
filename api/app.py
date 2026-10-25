@@ -63,7 +63,10 @@ DSN = os.environ["NAV_DSN"]
 IDENTITY_HEADER = os.environ.get("NAV_IDENTITY_HEADER", "x-authentik-email")
 REQUIRE_IDENTITY = os.environ.get("NAV_REQUIRE_IDENTITY", "true").lower() != "false"
 GROUPS_HEADER = os.environ.get("NAV_GROUPS_HEADER", "x-authentik-groups")
-ADMIN_GROUP = os.environ.get("NAV_ADMIN_GROUP", "nav-admins").strip().lower()
+# Comma-separated: membership of ANY of them makes an administrator, so a wider
+# "runs everything" group can imply nav admin without replacing the narrow one.
+ADMIN_GROUPS = {g.strip().lower() for g in os.environ.get("NAV_ADMIN_GROUP", "nav-admins").split(",") if g.strip()}
+ADMIN_GROUP = "' or '".join(sorted(ADMIN_GROUPS))   # for messages only
 # An explicit list, kept as a BOOTSTRAP AND BREAK-GLASS path rather than the
 # primary mechanism. If the groups claim stops arriving -- a Pomerium upgrade, a
 # changed scope mapping -- group-based admin fails closed and there would be no
@@ -159,7 +162,7 @@ def parse_groups(raw: str) -> set[str]:
 async def is_admin(request: Request, who: str) -> bool:
     if who in ADMINS:                       # break-glass list, see above
         return True
-    return ADMIN_GROUP in parse_groups(request.headers.get(GROUPS_HEADER, ""))
+    return bool(ADMIN_GROUPS & parse_groups(request.headers.get(GROUPS_HEADER, "")))
 
 
 async def may_impersonate(request: Request, who: str) -> bool:

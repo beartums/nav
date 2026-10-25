@@ -52,7 +52,7 @@ through Pomerium** — anyone who can reach it directly can name any user.
 | `NAV_IDENTITY_HEADER` | header carrying the user's email (default `x-authentik-email`) |
 | `NAV_GROUPS_HEADER` | header carrying their groups (default `x-authentik-groups`) |
 | `NAV_REQUIRE_IDENTITY` | refuse requests without the identity header (default `true`) |
-| `NAV_ADMIN_GROUP` | group whose members administer nav (default `nav-admins`) |
+| `NAV_ADMIN_GROUP` | group(s) whose members administer nav, comma-separated -- any one is enough (default `nav-admins`) |
 | `NAV_ADMINS` | comma-separated emails that are admins regardless (break-glass) |
 | `NAV_IMPERSONATE_GROUP` | group allowed to "view as" (default `staff`) |
 | `NAV_APP_DOMAIN` | apps' public links default to `https://<slug>.<this>` |
