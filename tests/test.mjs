@@ -3901,3 +3901,71 @@ test('a one-row venue strip is just the seven days, the name on hover', async ()
   assert.equal(el.querySelector('.cal-skey'), null, 'no key');
   assert.match(el.title, /Barclays Center — Concert/);
 });
+
+// --- groups on a free page ------------------------------------------------------------
+
+function freeWith(groups, apps) {
+  const lay = { ...FREE, free_groups: groups };
+  return (u) => {
+    if (u.startsWith('api/apps') && /layout=7/.test(u)) { return { ...USER, apps, layout: lay }; }
+    return freeRoutes(apps)(u);
+  };
+}
+
+test('a growing group packs its members and grows; a frame is drawn behind what sits in it', async () => {
+  const apps = placed({ sonarr: { category: 'fg:g1' }, books: { x: 13, y: 1 } });
+  const groups = [{ id: 'g1', name: 'Media', kind: 'dynamic', x: 0, y: 0, w: 8, h: 2 },
+                  { id: 'f1', name: 'Books', kind: 'static', x: 12, y: 0, w: 8, h: 4 }];
+  const { window, doc } = await boot(USER, null, freeWith(groups, apps), (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('li.fgroup[data-key="g:g1"] ul.fg-body [data-key="app:sonarr"]'), 'member');
+  const dyn = doc.querySelector('li.fgroup[data-key="g:g1"]');
+  assert.equal(dyn.querySelector('.fg-name').textContent, 'Media');
+  assert.equal(dyn.style.gridRow, '1 / span 3', 'title row + the member (M = 2 rows)');
+  assert.equal(dyn.querySelector('ul.fg-body').style.gridTemplateColumns, 'repeat(8, minmax(0, 1fr))', 'its own width');
+  const frame = doc.querySelector('li.fgroup[data-key="g:f1"]');
+  assert.equal(frame.style.gridColumn, '13 / span 8');
+  // The framed tile is a page item at its own cell, not inside the frame element.
+  assert.equal(frame.querySelector('[data-key="app:books"]'), null);
+  assert.equal(doc.querySelector('ul.ugrid.free > [data-key="app:books"]').style.gridColumn, '14 / span 4');
+});
+
+test('what may go where: items avoid items and growing groups; frames may hold items', async () => {
+  const apps = placed({ books: { x: 13, y: 1 } });
+  const groups = [{ id: 'g1', name: 'G', kind: 'dynamic', x: 0, y: 0, w: 8, h: 2 },
+                  { id: 'f1', name: 'F', kind: 'static', x: 12, y: 0, w: 8, h: 4 }];
+  const { window, doc } = await boot(USER, null, freeWith(groups, apps), (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('li.fgroup'), 'groups');
+  const fits = (r, what, skip) => window.freeFits(r, what, skip || '');
+  assert.equal(fits({ x: 2, y: 0, w: 4, h: 2 }, 'item'), false, 'not over a growing group');
+  assert.equal(fits({ x: 17, y: 2, w: 2, h: 2 }, 'item'), true, 'inside a frame is fine');
+  assert.equal(fits({ x: 13, y: 1, w: 4, h: 2 }, 'item'), false, 'not over another item');
+  assert.equal(fits({ x: 13, y: 1, w: 4, h: 2 }, 'item', 'app:books'), true, 'except itself');
+  assert.equal(fits({ x: 6, y: 0, w: 8, h: 2 }, 'static'), false, 'groups never overlap');
+  assert.equal(fits({ x: 0, y: 10, w: 8, h: 2 }, 'dynamic'), true);
+  assert.equal(fits({ x: 20, y: 0, w: 6, h: 2 }, 'item'), false, 'not past the last column');
+});
+
+test('arranging: drag "+ Group" onto the page; drop an app into a growing group', async () => {
+  const apps = placed({ books: { x: 12, y: 0 } });      // something on the page, so it paints
+  const groups = [{ id: 'g1', name: 'G', kind: 'dynamic', x: 0, y: 6, w: 8, h: 2 }];
+  const { window, doc, seen } = await boot(USER, null, freeWith(groups, apps), (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.getElementById('group-new'), 'the + Group button');
+  // jsdom: every pointer is cell 0,0 -- free, since the group sits at row 6.
+  drag(window, doc.getElementById('group-new'), doc.querySelector('ul.ugrid.free'));
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/free-groups'), 'groups saved');
+  const sent = JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/free-groups').pop().body).groups;
+  assert.equal(sent.length, 2);
+  assert.deepEqual({ ...sent[1], id: 'x' }, { id: 'x', name: 'New group', kind: 'static', x: 0, y: 0, w: 8, h: 4 });
+  // An app from the panel onto the growing group's own grid: it joins, in order.
+  const body = doc.querySelector('li.fgroup[data-key="g:g1"] ul.fg-body');
+  const app = [...doc.querySelectorAll('#widget-lib .wl-app')].find((li) => li.textContent.includes('Sonarr'));
+  drag(window, app, body);
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/order'), 'order saved');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/layouts/7/order').body),
+                   { category: 'fg:g1', items: [{ app: 'sonarr' }] });
+  await settle(window, () => doc.querySelector('li.fgroup[data-key="g:g1"] [data-key="app:sonarr"]'), 'drawn inside');
+  assert.ok(![...doc.querySelectorAll('#widget-lib .wl-app')].some((li) => li.textContent.includes('Sonarr')),
+            'no longer offered in the panel');
+});

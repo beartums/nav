@@ -388,7 +388,8 @@ async def tiles_of(conn: Any, lid: int) -> dict[str, dict[str, Any]]:
 
 def layout_info(row: dict[str, Any]) -> dict[str, Any]:
     return {k: row.get(k) for k in ("id", "kind", "name", "template_id", "is_default",
-                                    "group_order", "group_hidden")} | {"mode": row.get("mode") or "packed"}
+                                    "group_order", "group_hidden")} | {"mode": row.get("mode") or "packed",
+                                                                        "free_groups": row.get("free_groups") or []}
 
 
 @app.get("/api/apps")
@@ -927,6 +928,25 @@ async def set_layout_groups(lid: int, body: dict[str, Any], request: Request,
             await conn.execute(f"UPDATE layouts SET {', '.join(sets)} WHERE id = %s", (*args, lid))
         await touch(conn, lid, who)
     return {"ok": True}
+
+
+@app.put("/api/layouts/{lid}/free-groups")
+async def set_free_groups(lid: int, body: dict[str, Any], request: Request,
+                          who: str = Depends(whoami)) -> dict[str, Any]:
+    """{groups: [{id, name, kind, x, y, w, h}]}: a free layout's groups, the
+    whole list REPLACED. Members of a removed dynamic group are the page's to
+    move; this stores rectangles, nothing else."""
+    try:
+        groups = layouts.clean_free_groups(body.get("groups"))
+    except ValueError as exc:
+        raise bad(exc) from None
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        row = await writable_layout(conn, request, who, lid)
+        if row.get("mode") != "free":
+            raise HTTPException(422, "groups on the page grid are for free layouts")
+        await conn.execute("UPDATE layouts SET free_groups = %s WHERE id = %s", (json.dumps(groups), lid))
+        await touch(conn, lid, who)
+    return {"ok": True, "count": len(groups)}
 
 
 async def add_placement(conn: Any, lay: dict[str, Any], def_id: int, body: dict[str, Any],

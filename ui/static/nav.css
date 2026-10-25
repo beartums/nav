@@ -948,3 +948,18 @@ ul.ugrid > li.thin.size-custom .desc { display:none; }
 ul.ugrid > li.thin:not(:hover):not(:focus-within) > .w-fold,
 ul.ugrid > li.thin:not(:hover):not(:focus-within) > .w-hide,
 ul.ugrid > li.thin:not(:hover):not(:focus-within) > .w-edit { display:none; }
+
+/* Groups on a free page (free.js): a frame, or a box of packed members. */
+ul.ugrid.free > li.fgroup { display:flex; flex-direction:column; gap:10px; min-width:0; border-radius:12px;
+  background:color-mix(in srgb, var(--card) 55%, transparent); box-shadow:inset 0 0 0 1px var(--line); z-index:0; }
+ul.ugrid.free > li.fg-static { pointer-events:none; }
+ul.ugrid.free > li.fg-static > .fg-title, ul.ugrid.free > li.fg-static > .resize-handle { pointer-events:auto; }
+ul.ugrid.free > li:not(.fgroup):not(.free-ghost) { z-index:1; }
+.fg-title { height:33px; flex:0 0 33px; display:flex; align-items:center; gap:6px; padding:0 12px;
+  font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+.fg-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+body.edit-mode .fg-title { cursor:move; }
+body.edit-mode .fg-name { cursor:text; }
+.fg-btn { border:0; background:none; padding:0 4px; color:var(--muted); font-size:14px; line-height:1; }
+.fg-btn:hover { color:var(--fg); }
+ul.ugrid.fg-body { padding:0; }

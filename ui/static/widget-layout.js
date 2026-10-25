@@ -472,6 +472,7 @@ function buildWidgetLibrary() {
   }
 
   if (filt !== 'apps') { host.appendChild(newWidgetButton(ADMIN_MODE ? 'widget-new' : 'widget-new-mine')); }
+  if (free) { host.appendChild(newGroupButton()); }
 
   var ul = document.createElement('ul');
   ul.className = 'wl-list';

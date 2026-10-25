@@ -281,3 +281,6 @@ ALTER TABLE layouts ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'packed'
     CHECK (mode IN ('packed', 'free'));
 ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS x INTEGER;
 ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS y INTEGER;
+
+-- A free layout's groups (layouts.py clean_free_groups), as one list.
+ALTER TABLE layouts ADD COLUMN IF NOT EXISTS free_groups JSONB NOT NULL DEFAULT '[]'::jsonb;

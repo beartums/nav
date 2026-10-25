@@ -26,6 +26,7 @@ Standard library only, like widgets.py: CI runs these tests without pip.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # `order` is an integer position within a category, set by dragging. merge()
@@ -140,4 +141,39 @@ def clean_groups(raw: Any, what: str) -> list[str]:
         g = g.strip()
         if g and g not in out:
             out.append(g)
+    return out
+
+
+# Groups on a FREE layout: rectangles on the page grid. `static`: a titled
+# frame; what sits inside keeps its own cells and moves with the frame.
+# `dynamic`: a titled box of fixed width whose members (category "fg:<id>",
+# no cells of their own) are packed inside it, and which grows down to fit.
+FREE_GROUP_KINDS = ("static", "dynamic")
+FREE_GROUPS_MAX = 60
+GROUP_ID = re.compile(r"^[a-z0-9]{1,16}$")
+
+
+def clean_free_groups(raw: Any) -> list[dict[str, Any]]:
+    """The whole list, validated: ids unique, cells in range, kinds known."""
+    if not isinstance(raw, list) or len(raw) > FREE_GROUPS_MAX:
+        raise ValueError(f"groups must be a list of at most {FREE_GROUPS_MAX}")
+    out, seen = [], set()
+    for i, g in enumerate(raw):
+        if not isinstance(g, dict):
+            raise ValueError(f"group {i} is not an object")
+        gid = str(g.get("id") or "")
+        if not GROUP_ID.match(gid) or gid in seen:
+            raise ValueError(f"group {i}: id must be 1-16 lower-case letters or digits, unique")
+        seen.add(gid)
+        kind = g.get("kind") or "static"
+        if kind not in FREE_GROUP_KINDS:
+            raise ValueError(f"group {gid}: kind must be one of {list(FREE_GROUP_KINDS)}")
+        name = " ".join(str(g.get("name") or "").split())[:NAME_MAX]
+        x = clean_cell(g.get("x"), "x", FREE_COLS)
+        y = clean_cell(g.get("y"), "y", FREE_ROWS_MAX)
+        w = clean_cell(g.get("w"), "w", FREE_COLS + 1)
+        h = clean_cell(g.get("h"), "h", FREE_ROWS_MAX)
+        if x is None or y is None or not w or not h or x + w > FREE_COLS:
+            raise ValueError(f"group {gid}: needs x, y, w >= 1 and h >= 1 inside the {FREE_COLS} columns")
+        out.append({"id": gid, "name": name, "kind": kind, "x": x, "y": y, "w": w, "h": h})
     return out

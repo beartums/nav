@@ -1,10 +1,16 @@
 # Free layout — design (not built)
 
-Status: step 1 BUILT in v1.8.0 (2026-10-25) -- dashboards as tabs, free
-dashboards (empty at creation, explicit cells on a 24-column grid, drag from
-the panel with a snap ghost that turns red on overlap, reading order on a
-phone). Not yet: groups inside a free page (static/dynamic), backgrounds,
-keyboard moves, free templates.
+Status (2026-10-25):
+- v1.8.0: dashboards as tabs; free dashboards (empty at creation, explicit
+  cells on a 24-column grid, drag from the panel with a snap ghost that turns
+  red on overlap, reading order on a phone).
+- v1.9.0: tiles resize by cells; one-row clock and venue strip; the panel floats.
+- v1.10.0: groups on a free page -- `layouts.free_groups` (a list of
+  {id, name, kind, x, y, w, h}). A static group is a frame (membership = inside
+  the rectangle, nothing stored); a dynamic group's members carry category
+  `fg:<id>` and no cells, and are packed in order by the ordinary group grid
+  at the group's width. Resizes are refused where they would overlap.
+- Not yet: backgrounds, keyboard moves, free templates.
 
 ## The problem with today's grid
 

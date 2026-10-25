@@ -166,8 +166,9 @@ function groupItems(tiles, placements) {
 
 function shapeOf(p) { var d = WIDGETS.defs[p.def_id]; return (d && d.shape) || 'unknown'; }
 
-function groupGrid(cat, tiles, placements) {
-  var cols = gridCols();
+function groupGrid(cat, tiles, placements, colsOverride) {
+  // colsOverride: a growing group on a free page is exactly its width.
+  var cols = colsOverride || gridCols();
   var ul = document.createElement('ul');
   ul.className = 'ugrid';
   ul.dataset.cat = cat;
@@ -191,7 +192,7 @@ function groupGrid(cat, tiles, placements) {
     ul.appendChild(el);
   });
   if (arranging()) { acceptDrops(ul, cat); }
-  if (opts.flow === 'col') {
+  if (opts.flow === 'col' && !colsOverride && cat.indexOf('fg:') !== 0 && cat !== '__free__') {
     ul.classList.add('colfirst');
     var pack = packColumns(placed.map(function (x) { return x.span; }), cols);
     ul.dataset.rows = pack.rows;
@@ -394,9 +395,12 @@ function placeInGroup(cat, moved, before) {
     it.p.ord = i; it.p.category = cat;
     return { widget: it.p.id };
   });
-  if (arranging()) { buildGroups(); }
+  if (arranging() && !freeSizing()) { buildGroups(); }
+  // Into a growing group on a free page: it keeps no page cells.
+  var left = freeSizing() && cat.indexOf('fg:') === 0 ? freeJoined(item) : null;
   render();
-  saveOrder(cat, payload)
+  if (freeSizing() && arranging()) { buildWidgetLibrary(); }
+  Promise.resolve(left).then(function () { return saveOrder(cat, payload); })
     .catch(function (e) { alert('Reorder failed: ' + e.message); refresh(); });
 }
 
@@ -440,7 +444,8 @@ function resizeHandle(el, it, kind, cat) {
       var cols = gridCols(), sp = spanOf(kind, cur);
       var nc = Math.min(sp[0], cols) + dc, nr = sp[1] + dr;
       var mn = minSpan(kind);
-      if (nc >= mn[0] && nr >= mn[1] && nc <= Math.min(FREE_MAX[0], cols) && nr <= FREE_MAX[1]) {
+      var fits = !(freeSizing() && it.x != null) || freeFits({ x: it.x, y: it.y, w: nc, h: nr }, 'item', it.key);
+      if (fits && nc >= mn[0] && nr >= mn[1] && nc <= Math.min(FREE_MAX[0], cols) && nr <= FREE_MAX[1]) {
         commit(sizeForSpan(kind, nc, nr, cols));
       }
       return;
@@ -480,6 +485,11 @@ function resizeHandle(el, it, kind, cat) {
         var fc = Math.max(mn[0], Math.min(cols, FREE_MAX[0], Math.round(wantC)));
         var fr = Math.max(mn[1], Math.min(FREE_MAX[1], Math.round(wantR)));
         best = sizeForSpan(kind, fc, fr, cols);
+      }
+      // On a free page an item may not grow over another (free.js freeFits).
+      if (best !== chosen && freeSizing() && it.x != null) {
+        var bs = spanOf(kind, best);
+        if (!freeFits({ x: it.x, y: it.y, w: Math.min(bs[0], cols), h: bs[1] }, 'item', it.key)) { return; }
       }
       if (best !== chosen) { chosen = best; applySpan(el, kind, best, cols); label(); }
     }

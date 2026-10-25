@@ -84,3 +84,17 @@ class FreeLayout(unittest.TestCase):
         tpl = {"sonarr": {"category": "Media"}}
         self.assertEqual(layouts.tile_layer("sonarr", "dashboard", {}, tpl, "packed"), tpl["sonarr"])
         self.assertEqual(layouts.tile_layer("sonarr", "dashboard", {}, tpl, "free"), {})
+
+
+class FreeGroups(unittest.TestCase):
+    def test_a_valid_list_is_kept_and_tidied(self):
+        got = layouts.clean_free_groups([{"id": "a1", "name": "  Media  stuff ", "kind": "dynamic",
+                                          "x": 0, "y": 0, "w": 8, "h": 3}])
+        self.assertEqual(got, [{"id": "a1", "name": "Media stuff", "kind": "dynamic", "x": 0, "y": 0, "w": 8, "h": 3}])
+
+    def test_bad_lists_are_refused(self):
+        ok = {"id": "a", "x": 0, "y": 0, "w": 4, "h": 2}
+        for bad in ([{**ok, "id": "A!"}], [ok, ok], [{**ok, "kind": "odd"}], [{**ok, "x": 22, "w": 4}],
+                    [{**ok, "w": 0}], "nope"):
+            with self.assertRaises(ValueError):
+                layouts.clean_free_groups(bad)

@@ -372,6 +372,15 @@ class Layouts(unittest.TestCase):
                                      json={"kind": "template", "name": "T", "mode": "free"}).status_code, 422)
         self.assertEqual(self.c.post("/api/layouts", headers=F, json={"kind": "dashboard", "name": "F2",
                                      "mode": "free", "from_id": d}).status_code, 422)
+        # Groups on the page: stored whole, read back on the layout.
+        g = [{"id": "g1", "name": "Media", "kind": "dynamic", "x": 0, "y": 12, "w": 12, "h": 3}]
+        r = self.c.put(f"/api/layouts/{d}/free-groups", headers=F, json={"groups": g})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.apps(F, layout=d)["layout"]["free_groups"], g)
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/free-groups", headers=F,
+                                    json={"groups": [{"id": "x", "x": 30, "y": 0, "w": 2, "h": 2}]}).status_code, 422)
+        self.assertEqual(self.c.put(f"/api/layouts/{self.dash}/free-groups", headers=U,
+                                    json={"groups": []}).status_code, 422, "a packed layout has no page groups")
         listed = self.c.get("/api/layouts", headers=F).json()["dashboards"]
         self.assertEqual([(x["name"], x["mode"]) for x in listed], [("Free", "free")])
 
