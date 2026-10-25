@@ -10,7 +10,13 @@ Status (2026-10-25):
   the rectangle, nothing stored); a dynamic group's members carry category
   `fg:<id>` and no cells, and are packed in order by the ordinary group grid
   at the group's width. Resizes are refused where they would overlap.
-- Not yet: backgrounds, keyboard moves, free templates.
+- v1.11.0: backgrounds -- the page (`layouts.style.bg`, any layout), a group
+  (`bg` on its free_groups entry), a tile (`colour`). A colour is a theme name
+  (a series slot, so it follows light/dark) or #rrggbb, always mixed into its
+  surface; an image is an https URL hosted elsewhere, under a scrim. Also: the
+  "+ Group" drop (dropEffect must match effectAllowed), and the tile editor no
+  longer drops a free tile's cells, group or custom size on save.
+- Not yet: keyboard moves, free templates, uploaded images.
 
 ## The problem with today's grid
 

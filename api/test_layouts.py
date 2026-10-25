@@ -98,3 +98,28 @@ class FreeGroups(unittest.TestCase):
                     [{**ok, "w": 0}], "nope"):
             with self.assertRaises(ValueError):
                 layouts.clean_free_groups(bad)
+
+
+class Backgrounds(unittest.TestCase):
+    def test_colours_are_theme_names_or_hex(self):
+        self.assertEqual(layouts.clean_colour("blue"), "blue")
+        self.assertEqual(layouts.clean_colour("#A0B1C2"), "#a0b1c2")
+        self.assertIsNone(layouts.clean_colour(""))
+        for bad in ("puce", "#12345", "rgb(1,2,3)", 7):
+            with self.assertRaises(ValueError):
+                layouts.clean_colour(bad)
+
+    def test_a_background_is_a_colour_and_or_an_https_image(self):
+        self.assertEqual(layouts.clean_bg({"c": "green", "img": "https://x.example/a.jpg"}),
+                         {"c": "green", "img": "https://x.example/a.jpg"})
+        self.assertIsNone(layouts.clean_bg({"c": None, "img": ""}), "nothing set is no background")
+        for bad in ({"img": "http://x/a.jpg"}, {"img": "javascript:alert(1)"}, {"c": "blue", "x": 1}, "blue"):
+            with self.assertRaises(ValueError):
+                layouts.clean_bg(bad)
+
+    def test_tile_colour_is_checked_and_groups_keep_theirs(self):
+        self.assertEqual(layouts.tile_fields("dashboard", {"colour": "red"}), {"colour": "red"})
+        with self.assertRaises(ValueError):
+            layouts.tile_fields("dashboard", {"colour": "puce"})
+        g = layouts.clean_free_groups([{"id": "a", "x": 0, "y": 0, "w": 4, "h": 2, "bg": {"c": "violet"}}])
+        self.assertEqual(g[0]["bg"], {"c": "violet"})

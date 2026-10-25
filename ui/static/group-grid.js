@@ -294,7 +294,7 @@ function acceptDrops(ul, cat) {
   ul.addEventListener('dragover', function (ev) {
     if (!wanted()) { return; }
     ev.preventDefault();
-    if (ev.dataTransfer) { ev.dataTransfer.dropEffect = DRAG.def || DRAG.newWidget ? 'copy' : 'move'; }
+    if (ev.dataTransfer) { ev.dataTransfer.dropEffect = dropEffectFor(); }
     var t = target(ev);
     clearDropMarks();
     if (t && t.dataset.key !== dragKey()) { t.classList.add('dropbefore'); }

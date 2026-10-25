@@ -88,6 +88,9 @@ function tile(a, o) {
   }
 
   link.appendChild(tileIcon(a));
+  // Its colour (style.js), mixed into the card so the text stays readable.
+  var tint = colourMix(a.colour, 22, '--card');
+  if (tint) { link.style.background = tint; link.style.borderColor = colourMix(a.colour, 45, '--card'); }
 
   var text = document.createElement('div');
   text.className = 'text';

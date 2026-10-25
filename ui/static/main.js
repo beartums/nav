@@ -351,6 +351,7 @@ function refresh() {
       buildDashTabs();
       // Groups, their sidebar and Revert belong to packed layouts.
       document.body.classList.toggle('free-mode', freeMode());
+      applyPageBg();
       if (arranging()) { buildGroups(); buildWidgetLibrary(); }
       render();
       loadHealth();

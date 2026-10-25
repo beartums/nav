@@ -172,6 +172,13 @@ function openEditor(a, atX, atY) {
       opt.value = o[0]; opt.textContent = o[1];
       sizeSel.appendChild(opt);
     });
+  // A span from a free page ("5x2") is offered as itself, so saving the
+  // editor doesn't snap it back to a named size.
+  if (ov.size && !/^(XS|S|M|L)$/.test(ov.size)) {
+    var cust = document.createElement('option');
+    cust.value = ov.size; cust.textContent = 'As resized (' + ov.size.replace('x', ' \u00d7 ') + ')';
+    sizeSel.appendChild(cust);
+  }
   sizeSel.value = ov.size || 'M';
   var sizeLab = document.createElement('label');
   sizeLab.textContent = 'Size';
@@ -185,6 +192,30 @@ function openEditor(a, atX, atY) {
   flags.appendChild(hid.label); flags.appendChild(abv.label);
   editorBody.appendChild(flags);
 
+  // Colour (style.js): the theme colours or any; None is no colour.
+  var colour = ov.colour || '';
+  var cl = document.createElement('div');
+  cl.className = 'editor-colour';
+  var clLab = document.createElement('span');
+  clLab.textContent = 'Colour';
+  cl.appendChild(clLab);
+  var clBtn = document.createElement('button');
+  clBtn.type = 'button';
+  clBtn.id = 'editor-colour';
+  function showColour() {
+    clBtn.textContent = colour || 'None';
+    clBtn.style.background = colourMix(colour, 35, '--card') || '';
+  }
+  showColour();
+  clBtn.addEventListener('click', function () {
+    bgPicker(clBtn, colour ? { c: colour } : null, { title: 'Tile colour' }, function (bg) {
+      colour = (bg && bg.c) || '';
+      showColour();
+    });
+  });
+  cl.appendChild(clBtn);
+  editorBody.appendChild(cl);
+
   document.getElementById('editor-save').textContent = 'Save';
   document.getElementById('editor-save').onclick = function () {
     var fields = {};
@@ -194,6 +225,12 @@ function openEditor(a, atX, atY) {
     if (hid.input.checked) { fields.hidden = true; }
     if (abv.input.checked) { fields.above_fold = true; }
     if (ov.order != null) { fields.order = ov.order; }   // keep position
+    // ...and on a free page its cells and its group: the save REPLACES the
+    // row, so whatever isn't carried over is lost (the tile would leave the page).
+    if (ov.x != null) { fields.x = ov.x; }
+    if (ov.y != null) { fields.y = ov.y; }
+    if (/^fg:/.test(ov.category || '') && !fields.category) { fields.category = ov.category; }
+    if (colour) { fields.colour = colour; }
     // The default is stored as no size, so a later change of default reaches
     // every tile nobody deliberately sized.
     if (sizeSel.value !== 'M') { fields.size = sizeSel.value; }

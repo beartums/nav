@@ -389,7 +389,8 @@ async def tiles_of(conn: Any, lid: int) -> dict[str, dict[str, Any]]:
 def layout_info(row: dict[str, Any]) -> dict[str, Any]:
     return {k: row.get(k) for k in ("id", "kind", "name", "template_id", "is_default",
                                     "group_order", "group_hidden")} | {"mode": row.get("mode") or "packed",
-                                                                        "free_groups": row.get("free_groups") or []}
+                                                                        "free_groups": row.get("free_groups") or [],
+                                                                        "style": row.get("style") or {}}
 
 
 @app.get("/api/apps")
@@ -930,6 +931,22 @@ async def set_layout_groups(lid: int, body: dict[str, Any], request: Request,
     return {"ok": True}
 
 
+@app.put("/api/layouts/{lid}/style")
+async def set_layout_style(lid: int, body: dict[str, Any], request: Request,
+                           who: str = Depends(whoami)) -> dict[str, Any]:
+    """{bg: {c?, img?} | null}: the page's background, on any layout."""
+    try:
+        bg = layouts.clean_bg(body.get("bg"))
+    except ValueError as exc:
+        raise bad(exc) from None
+    style = {"bg": bg} if bg else {}
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        await writable_layout(conn, request, who, lid)
+        await conn.execute("UPDATE layouts SET style = %s WHERE id = %s", (json.dumps(style), lid))
+        await touch(conn, lid, who)
+    return {"ok": True, "style": style}
+
+
 @app.put("/api/layouts/{lid}/free-groups")
 async def set_free_groups(lid: int, body: dict[str, Any], request: Request,
                           who: str = Depends(whoami)) -> dict[str, Any]:
@@ -1120,6 +1137,11 @@ def presentation_fields(raw: Any) -> dict[str, Any]:
     if lay:
         raise HTTPException(422, f"{', '.join(sorted(lay))} belong(s) to a layout: "
                                  f"PUT /api/layouts/{{id}}/tiles")
+    if "colour" in raw:
+        try:
+            raw = {**raw, "colour": layouts.clean_colour(raw["colour"])}
+        except ValueError as exc:
+            raise bad(exc) from None
     return raw
 
 
@@ -1185,6 +1207,11 @@ def clean_fields(raw: dict[str, Any] | None) -> dict[str, Any]:
     if "size" in fields and fields["size"] not in widgets.TILE_SIZES:
         raise HTTPException(422, f"tile size must be one of {list(widgets.TILE_SIZES)}, "
                                  f"not {fields['size']!r}")
+    if "colour" in fields:
+        try:
+            fields["colour"] = layouts.clean_colour(fields["colour"])
+        except ValueError as exc:
+            raise bad(exc) from None
     return fields
 
 

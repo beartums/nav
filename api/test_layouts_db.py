@@ -381,6 +381,16 @@ class Layouts(unittest.TestCase):
                                     json={"groups": [{"id": "x", "x": 30, "y": 0, "w": 2, "h": 2}]}).status_code, 422)
         self.assertEqual(self.c.put(f"/api/layouts/{self.dash}/free-groups", headers=U,
                                     json={"groups": []}).status_code, 422, "a packed layout has no page groups")
+        # Backgrounds: the page's, a group's, a tile's colour.
+        r = self.c.put(f"/api/layouts/{d}/style", headers=F, json={"bg": {"c": "green", "img": "https://x.example/p.jpg"}})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.apps(F, layout=d)["layout"]["style"], {"bg": {"c": "green", "img": "https://x.example/p.jpg"}})
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/style", headers=F, json={"bg": {"img": "http://x/p.jpg"}}).status_code, 422)
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/style", headers=F, json={"bg": None}).status_code, 200)
+        self.assertEqual(self.apps(F, layout=d)["layout"]["style"], {})
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
+                                    json={"tiles": {"plex": {"x": 4, "y": 2, "colour": "violet"}}}).status_code, 200)
+        self.assertEqual(self.by_slug(self.apps(F, layout=d))["plex"]["colour"], "violet")
         listed = self.c.get("/api/layouts", headers=F).json()["dashboards"]
         self.assertEqual([(x["name"], x["mode"]) for x in listed], [("Free", "free")])
 

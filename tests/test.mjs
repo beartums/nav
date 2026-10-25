@@ -3953,7 +3953,11 @@ test('arranging: drag "+ Group" onto the page; drop an app into a growing group'
   click(menuItem(doc, 'Edit layout'));
   await settle(window, () => doc.getElementById('group-new'), 'the + Group button');
   // jsdom: every pointer is cell 0,0 -- free, since the group sits at row 6.
-  drag(window, doc.getElementById('group-new'), doc.querySelector('ul.ugrid.free'));
+  const g = drag(window, doc.getElementById('group-new'), doc.querySelector('ul.ugrid.free'));
+  // The v1.10.0 bug: the drag allowed 'copy', the page answered 'move', and
+  // Chrome refused the drop. jsdom doesn't enforce that -- so assert it.
+  assert.equal(g.dt.effectAllowed, 'copy');
+  assert.equal(g.dt.dropEffect, 'copy', 'the drop effect must be one the drag allowed');
   await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/free-groups'), 'groups saved');
   const sent = JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/free-groups').pop().body).groups;
   assert.equal(sent.length, 2);
@@ -3968,4 +3972,60 @@ test('arranging: drag "+ Group" onto the page; drop an app into a growing group'
   await settle(window, () => doc.querySelector('li.fgroup[data-key="g:g1"] [data-key="app:sonarr"]'), 'drawn inside');
   assert.ok(![...doc.querySelectorAll('#widget-lib .wl-app')].some((li) => li.textContent.includes('Sonarr')),
             'no longer offered in the panel');
+});
+
+// --- backgrounds --------------------------------------------------------------------
+
+test('page background: the bar\'s 🎨 picks a theme colour, saved on the layout and painted', async () => {
+  const { window, doc, seen } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 0, y: 0 } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.body.classList.contains('edit-mode'), 'edit mode');
+  click(doc.getElementById('edit-bg-btn'));
+  const sw = doc.querySelector('#bg-picker .bg-sw[data-c="green"]');
+  assert.ok(sw, 'the picker offers the theme colours');
+  click(sw);
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/style'), 'saved');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/layouts/7/style').body), { bg: { c: 'green' } });
+  assert.match(doc.body.style.background, /series-3/, 'mixed from the palette, so it follows the theme');
+  click(doc.querySelector('#bg-picker .bg-sw[data-c=""]'));
+  await settle(window, () => JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/style').pop().body).bg === null, 'cleared');
+});
+
+test('a tile is drawn in its colour; editing a tile on a free page keeps its place and colour', async () => {
+  const { window, doc, seen } = await boot(USER, null,
+    freeRoutes(placed({ sonarr: { x: 3, y: 1, colour: 'violet', override: { x: 3, y: 1, colour: 'violet' } } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('[data-key="app:sonarr"] a.app'), 'tile');
+  assert.match(doc.querySelector('[data-key="app:sonarr"] a.app').style.background, /series-7/);
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  // Edit mode's own redraw (after its fetches) replaces the tiles: click the
+  // one drawn for editing, once the panel says that redraw is done.
+  await settle(window, () => doc.body.classList.contains('edit-mode') &&
+                             doc.querySelector('#widget-lib .wl-chip') &&
+                             doc.querySelector('ul.ugrid.free [data-key="app:sonarr"] .resize-handle'), 'edit');
+  click(doc.querySelector('ul.ugrid.free [data-key="app:sonarr"] a.app'));
+  await settle(window, () => doc.getElementById('editor-colour'), 'editor');
+  assert.equal(doc.getElementById('editor-colour').textContent, 'violet');
+  doc.getElementById('editor-save').click();
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/tiles'), 'saved');
+  const f = JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/tiles').pop().body).tiles.sonarr;
+  assert.equal(f.x, 3); assert.equal(f.y, 1, 'still on the page');
+  assert.equal(f.colour, 'violet');
+});
+
+test('a group takes a background from its title\'s 🎨', async () => {
+  const apps = placed({ books: { x: 12, y: 0 } });
+  const groups = [{ id: 'g1', name: 'G', kind: 'static', x: 0, y: 4, w: 8, h: 3 }];
+  const { window, doc, seen } = await boot(USER, null, freeWith(groups, apps), (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.querySelector('li.fgroup .fg-btn[title="Background"]'), 'button');
+  click(doc.querySelector('li.fgroup .fg-btn[title="Background"]'));
+  click(doc.querySelector('#bg-picker .bg-sw[data-c="amber"]'));
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/free-groups'), 'saved');
+  assert.deepEqual(JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/free-groups').pop().body).groups[0].bg, { c: 'amber' });
+  assert.match(doc.querySelector('li.fgroup').style.background, /series-4/);
 });

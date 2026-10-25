@@ -202,6 +202,7 @@ function groupEl(g) {
   el.dataset.key = 'g:' + g.id;
   el.style.gridColumn = (g.x + 1) + ' / span ' + g.w;
   el.style.gridRow = (g.y + 1) + ' / span ' + groupHeight(g);
+  if (g.bg) { paintBg(el, g.bg, 16, '--card', 0.5); }
   var head = document.createElement('div');
   head.className = 'fg-title';
   var name = document.createElement('span');
@@ -242,6 +243,20 @@ function groupEl(g) {
     : 'Fixed frame: things inside keep their places and move with it. Click to make it a growing group.';
   kind.addEventListener('click', function (ev) { ev.stopPropagation(); toggleGroupKind(g); });
   head.appendChild(kind);
+  var paint = document.createElement('button');
+  paint.type = 'button';
+  paint.className = 'fg-btn';
+  paint.textContent = '\ud83c\udfa8';
+  paint.title = 'Background';
+  paint.addEventListener('click', function (ev) {
+    ev.stopPropagation();
+    bgPicker(paint, g.bg, { image: true, title: 'Group background' }, function (bg) {
+      if (bg) { g.bg = bg; } else { delete g.bg; }
+      paintBg(el, g.bg || null, 16, '--card', 0.5);
+      saveFreeGroups();
+    });
+  });
+  head.appendChild(paint);
   var x = document.createElement('button');
   x.type = 'button';
   x.className = 'fg-btn';
@@ -535,7 +550,10 @@ function acceptFreeDrops(ul) {
     at = target(ev);
     if (!at) { return; }
     ev.preventDefault();
-    if (ev.dataTransfer) { ev.dataTransfer.dropEffect = at.ok ? (DRAG.def || DRAG.newWidget ? 'copy' : 'move') : 'none'; }
+    // The drop effect MUST be one the drag allowed -- "+ Group" and "New
+    // widget" start as copy, the rest as move -- or Chrome silently refuses
+    // the drop with a normal cursor all the way (the v1.10.0 "+ Group" bug).
+    if (ev.dataTransfer) { ev.dataTransfer.dropEffect = at.ok ? dropEffectFor() : 'none'; }
     ghost.hidden = false;
     ghost.classList.toggle('bad', !at.ok);
     ghost.style.gridColumn = (at.x + 1) + ' / span ' + at.w;
@@ -606,6 +624,9 @@ function moveGroup(g, x, y) {
   render();
   Promise.all(writes).then(saveFreeGroups);
 }
+
+/** The effect a drop answers with: the one the current drag started with. */
+function dropEffectFor() { return DRAG.def || DRAG.newWidget || DRAG.newGroup ? 'copy' : 'move'; }
 
 function newGroupId() { return Math.random().toString(36).slice(2, 10) || 'g' + Date.now().toString(36); }
 

@@ -105,6 +105,8 @@ def tile_fields(kind: str, raw: dict[str, Any] | None) -> dict[str, Any]:
     if refused:
         raise ValueError(f"a template stores layout only ({', '.join(LAYOUT_KEYS)}); "
                          f"{', '.join(sorted(refused))} is site-wide -- edit it on the tile")
+    if "colour" in raw:
+        raw["colour"] = clean_colour(raw["colour"])
     if "x" in raw:
         raw["x"] = clean_cell(raw["x"], "x", FREE_COLS)
     if "y" in raw:
@@ -175,5 +177,40 @@ def clean_free_groups(raw: Any) -> list[dict[str, Any]]:
         h = clean_cell(g.get("h"), "h", FREE_ROWS_MAX)
         if x is None or y is None or not w or not h or x + w > FREE_COLS:
             raise ValueError(f"group {gid}: needs x, y, w >= 1 and h >= 1 inside the {FREE_COLS} columns")
-        out.append({"id": gid, "name": name, "kind": kind, "x": x, "y": y, "w": w, "h": h})
+        item = {"id": gid, "name": name, "kind": kind, "x": x, "y": y, "w": w, "h": h}
+        bg = clean_bg(g.get("bg"))
+        if bg:
+            item["bg"] = bg
+        out.append(item)
     return out
+
+
+# BACKGROUNDS. A colour is a THEME NAME (drawn from the palette, so it follows
+# light and dark mode) or "#rrggbb"; an image is an https URL to a picture
+# hosted elsewhere -- nav stores no images. Page and groups take both
+# ({"c": ..., "img": ...}); a tile takes a colour, in its `colour` field.
+COLOURS = ("blue", "orange", "green", "amber", "pink", "leaf", "violet", "red")
+HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+IMG_MAX = 500
+
+
+def clean_colour(v: Any) -> str | None:
+    if v in (None, ""):
+        return None
+    if isinstance(v, str) and (v in COLOURS or HEX.match(v)):
+        return v.lower() if v.startswith("#") else v
+    raise ValueError(f"a colour is one of {list(COLOURS)} or #rrggbb")
+
+
+def clean_bg(v: Any) -> dict[str, Any] | None:
+    """{c?, img?} or None. Nothing set is None, so "no background" is one value."""
+    if v in (None, {}, ""):
+        return None
+    if not isinstance(v, dict) or set(v) - {"c", "img"}:
+        raise ValueError("a background is {c, img}")
+    c = clean_colour(v.get("c"))
+    img = v.get("img") or None
+    if img is not None and (not isinstance(img, str) or len(img) > IMG_MAX or not img.startswith("https://")):
+        raise ValueError(f"a background image is an https:// URL of at most {IMG_MAX} characters")
+    out = {k: x for k, x in (("c", c), ("img", img)) if x}
+    return out or None

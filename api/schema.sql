@@ -284,3 +284,6 @@ ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS y INTEGER;
 
 -- A free layout's groups (layouts.py clean_free_groups), as one list.
 ALTER TABLE layouts ADD COLUMN IF NOT EXISTS free_groups JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- A layout's own look: {"bg": {c?, img?}} (layouts.py clean_bg).
+ALTER TABLE layouts ADD COLUMN IF NOT EXISTS style JSONB NOT NULL DEFAULT '{}'::jsonb;
