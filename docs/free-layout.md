@@ -16,7 +16,11 @@ Status (2026-10-25):
   surface; an image is an https URL hosted elsewhere, under a scrim. Also: the
   "+ Group" drop (dropEffect must match effectAllowed), and the tile editor no
   longer drops a free tile's cells, group or custom size on save.
-- Not yet: keyboard moves, free templates, uploaded images.
+- v1.12.0: uploaded images (api/images.py) -- shrunk in the browser (longest
+  side 2400px, JPEG), stored in Postgres named by SHA-256 (one picture, one
+  row, an immutable URL), raster types only by their bytes (no SVG), served
+  nosniff + CSP sandbox; 3 MB each, 200 or 100 MB per person.
+- Not yet: keyboard moves, free templates, deleting uploaded images.
 
 ## The problem with today's grid
 

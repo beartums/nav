@@ -192,6 +192,7 @@ def clean_free_groups(raw: Any) -> list[dict[str, Any]]:
 COLOURS = ("blue", "orange", "green", "amber", "pink", "leaf", "violet", "red")
 HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 IMG_MAX = 500
+UPLOADED = re.compile(r"^api/images/[0-9a-f]{64}$")     # images.URL
 
 
 def clean_colour(v: Any) -> str | None:
@@ -210,7 +211,10 @@ def clean_bg(v: Any) -> dict[str, Any] | None:
         raise ValueError("a background is {c, img}")
     c = clean_colour(v.get("c"))
     img = v.get("img") or None
-    if img is not None and (not isinstance(img, str) or len(img) > IMG_MAX or not img.startswith("https://")):
-        raise ValueError(f"a background image is an https:// URL of at most {IMG_MAX} characters")
+    # An https link to a picture elsewhere, or one uploaded to nav (images.py).
+    if img is not None and (not isinstance(img, str) or len(img) > IMG_MAX or
+                            not (img.startswith("https://") or UPLOADED.match(img))):
+        raise ValueError(f"a background image is an https:// URL of at most {IMG_MAX} characters, "
+                         f"or an uploaded one")
     out = {k: x for k, x in (("c", c), ("img", img)) if x}
     return out or None

@@ -4029,3 +4029,26 @@ test('a group takes a background from its title\'s 🎨', async () => {
   assert.deepEqual(JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/free-groups').pop().body).groups[0].bg, { c: 'amber' });
   assert.match(doc.querySelector('li.fgroup').style.background, /series-4/);
 });
+
+test('page background: upload a picture -- shrunk, sent, and used as the image', async () => {
+  const sha = 'ab'.repeat(32);
+  const base = freeRoutes(placed({ sonarr: { x: 0, y: 0 } }));
+  const { window, doc, seen } = await boot(USER, null,
+    (u) => (u === 'api/images' ? { ok: true, url: 'api/images/' + sha } : base(u)),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.body.classList.contains('edit-mode'), 'edit mode');
+  click(doc.getElementById('edit-bg-btn'));
+  // jsdom has no canvas: stand in for the shrinking, keep everything after it real.
+  window.shrinkImage = () => Promise.resolve(new window.Blob(['jpegbytes'], { type: 'image/jpeg' }));
+  const input = doc.querySelector('#bg-picker input[type=file]');
+  Object.defineProperty(input, 'files', { value: [new window.File(['x'], 'beach.heic')] });
+  input.dispatchEvent(new window.Event('change'));
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/style'), 'background saved');
+  const post = seen.find((r) => r.url === 'api/images');
+  assert.equal(post.method, 'POST');
+  assert.deepEqual(JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/style').pop().body),
+                   { bg: { img: 'api/images/' + sha } });
+  assert.match(doc.body.style.background, new RegExp('api/images/' + sha));
+});

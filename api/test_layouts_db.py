@@ -394,6 +394,31 @@ class Layouts(unittest.TestCase):
         listed = self.c.get("/api/layouts", headers=F).json()["dashboards"]
         self.assertEqual([(x["name"], x["mode"]) for x in listed], [("Free", "free")])
 
+    def test_40_uploaded_images(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"pixels" * 50
+        r = self.c.post("/api/images", headers={**U, "Content-Type": "image/png"}, content=png)
+        self.assertEqual(r.status_code, 200, r.text)
+        url = r.json()["url"]
+        self.assertRegex(url, r"^api/images/[0-9a-f]{64}$")
+        again = self.c.post("/api/images", headers=OTHER, content=png).json()["url"]
+        self.assertEqual(again, url, "the same picture is the same URL, stored once")
+        self.assertEqual(self.sql("SELECT count(*) FROM images")[0][0], 1)
+        g = self.c.get("/" + url, headers=OTHER)
+        self.assertEqual(g.status_code, 200)
+        self.assertEqual(g.content, png)
+        self.assertEqual(g.headers["content-type"], "image/png")
+        self.assertEqual(g.headers["x-content-type-options"], "nosniff")
+        self.assertIn("sandbox", g.headers["content-security-policy"])
+        # Not a picture, whatever it says it is.
+        svg = b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+        self.assertEqual(self.c.post("/api/images", headers={**U, "Content-Type": "image/png"},
+                                     content=svg).status_code, 422)
+        self.assertEqual(self.c.get("/api/images/" + "0" * 64, headers=U).status_code, 404)
+        self.assertEqual(self.c.get("/api/images/../etc", headers=U).status_code, 404)
+        # And it can be a page background.
+        r = self.c.put(f"/api/layouts/{self.dash}/style", headers=U, json={"bg": {"img": url}})
+        self.assertEqual(r.status_code, 200, r.text)
+
     def test_23_presentation_route_is_presentation_only(self):
         r = self.c.put("/api/admin/presentation", headers=ADMIN,
                        json={"tiles": {"plex": {"name": "Plex!", "icon": "p.svg"}}})

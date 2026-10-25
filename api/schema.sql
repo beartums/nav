@@ -287,3 +287,15 @@ ALTER TABLE layouts ADD COLUMN IF NOT EXISTS free_groups JSONB NOT NULL DEFAULT 
 
 -- A layout's own look: {"bg": {c?, img?}} (layouts.py clean_bg).
 ALTER TABLE layouts ADD COLUMN IF NOT EXISTS style JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Uploaded background images (images.py): named by the SHA-256 of their
+-- bytes, so one picture is one row and its URL never changes.
+CREATE TABLE IF NOT EXISTS images (
+    sha        TEXT        PRIMARY KEY,
+    owner      TEXT        NOT NULL,
+    mime       TEXT        NOT NULL,
+    bytes      INTEGER     NOT NULL,
+    data       BYTEA       NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS images_owner ON images (owner);

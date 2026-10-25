@@ -43,13 +43,14 @@ from typing import Any
 import httpx
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from urls import group_can_see, launchable, offered_to, pick_account, valid_slug
 import creds
 import health
+import images
 import layouts
 from layouts import OVERRIDABLE, merge
 import widgets
@@ -929,6 +930,51 @@ async def set_layout_groups(lid: int, body: dict[str, Any], request: Request,
             await conn.execute(f"UPDATE layouts SET {', '.join(sets)} WHERE id = %s", (*args, lid))
         await touch(conn, lid, who)
     return {"ok": True}
+
+
+@app.post("/api/images")
+async def upload_image(request: Request, who: str = Depends(whoami)) -> dict[str, Any]:
+    """The raw image bytes as the body. Returns {url}: a path to put in a
+    background. The same picture again is the same URL, stored once."""
+    data = await request.body()
+    try:
+        mime = images.check(data)
+    except ValueError as exc:
+        raise bad(exc) from None
+    sha = images.name(data)
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        async with conn.transaction():
+            have = await (await conn.execute("SELECT 1 FROM images WHERE sha = %s", (sha,))).fetchone()
+            if have is None:
+                used = await (await conn.execute(
+                    "SELECT count(*) AS n, COALESCE(sum(bytes), 0) AS b FROM images WHERE owner = %s",
+                    (who,))).fetchone()
+                if used["n"] >= images.PER_OWNER_COUNT or used["b"] + len(data) > images.PER_OWNER_BYTES:
+                    raise HTTPException(413, f"you have uploaded {used['n']} images "
+                                             f"({used['b'] // (1024 * 1024)} MB); the limit is "
+                                             f"{images.PER_OWNER_COUNT} or {images.PER_OWNER_BYTES // (1024 * 1024)} MB")
+                await conn.execute(
+                    "INSERT INTO images (sha, owner, mime, bytes, data) VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (sha) DO NOTHING", (sha, who, mime, len(data), data))
+    return {"ok": True, "url": f"api/images/{sha}", "bytes": len(data), "mime": mime}
+
+
+@app.get("/api/images/{sha}")
+async def get_image(sha: str, who: str = Depends(whoami)) -> Response:
+    """One image, to anyone signed in (it is a background, not a secret).
+    Named by its hash, so cached for good; served so the browser can only
+    ever treat it as a picture."""
+    if not images.SHA.match(sha):
+        raise HTTPException(404, "no such image")
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        row = await (await conn.execute("SELECT mime, data FROM images WHERE sha = %s", (sha,))).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such image")
+    return Response(content=bytes(row["data"]), media_type=row["mime"], headers={
+        "Cache-Control": "private, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+    })
 
 
 @app.put("/api/layouts/{lid}/style")

@@ -31,13 +31,53 @@ function paintBg(el, bg, pct, surface, scrim) {
   el.style.background = '';
   if (!bg) { return; }
   var base = colourMix(bg.c, pct, surface) || '';
-  if (bg.img && /^https:\/\//.test(bg.img)) {
+  if (bg.img && imageUrlOk(bg.img)) {
     var veil = 'color-mix(in srgb, var(' + surface + ') ' + Math.round(scrim * 100) + '%, transparent)';
     el.style.background = 'linear-gradient(' + veil + ', ' + veil + '), url("' + bg.img.replace(/"/g, '%22') +
                           '") center / cover no-repeat' + (base ? ', ' + base : '');
   } else if (base) {
     el.style.background = base;
   }
+}
+
+/** An image a background may use: an https link, or one uploaded to nav. */
+function imageUrlOk(u) { return /^https:\/\//.test(u || '') || /^api\/images\/[0-9a-f]{64}$/.test(u || ''); }
+
+var IMG_LONG_SIDE = 2400;       // px: plenty for a background on a big screen
+
+/** A picture made small enough to send: its longest side at most
+ *  IMG_LONG_SIDE, re-encoded as JPEG. A phone photo is several MB and
+ *  4000px; this makes it a few hundred KB, and the server's 3 MB cap is
+ *  then a guard rather than a wall. Rejects what the browser can't decode. */
+function shrinkImage(file) {
+  var load = window.createImageBitmap ? createImageBitmap(file) : new Promise(function (ok, fail) {
+    var img = new Image();
+    img.onload = function () { ok(img); };
+    img.onerror = function () { fail(new Error('this browser cannot read that picture')); };
+    img.src = URL.createObjectURL(file);
+  });
+  return load.then(function (img) {
+    var w = img.width, h = img.height, k = Math.min(1, IMG_LONG_SIDE / Math.max(w, h));
+    var c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return new Promise(function (ok, fail) {
+      c.toBlob(function (b) { if (b) { ok(b); } else { fail(new Error('could not encode the picture')); } },
+               'image/jpeg', 0.85);
+    });
+  }, function () { throw new Error('this browser cannot read that picture (HEIC? save it as JPEG first)'); });
+}
+
+/** Upload a picture; resolves to its URL (api/images/<sha>). */
+function uploadImage(file) {
+  return shrinkImage(file).then(function (blob) {
+    return fetch('api/images', { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
+  }).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (b) {
+      if (!r.ok) { throw new Error((b && typeof b.detail === 'string' && b.detail) || 'upload failed: ' + r.status); }
+      return b.url;
+    });
+  });
 }
 
 /** The page's own background, from the layout on screen. */
@@ -99,18 +139,47 @@ function bgPicker(anchor, cur, opts, onPick) {
   if (opts.image) {
     var lab = document.createElement('label');
     lab.className = 'bg-img';
-    lab.textContent = 'Image (https:// link)';
+    lab.textContent = 'Image — upload one, or an https:// link';
     var url = document.createElement('input');
-    url.type = 'url';
+    url.type = 'text';
     url.placeholder = 'https://…';
     url.value = cur.img || '';
-    url.addEventListener('change', function () {
-      var v = url.value.trim();
-      if (v && !/^https:\/\//.test(v)) { url.setCustomValidity('An https:// link'); url.reportValidity(); return; }
-      url.setCustomValidity('');
+    function setImg(v) {
       cur = Object.assign({}, cur, { img: v || undefined });
       if (!cur.img) { delete cur.img; }
       onPick(cur.c || cur.img ? cur : null);
+    }
+    var up = document.createElement('button');
+    up.type = 'button';
+    up.className = 'bg-upload';
+    up.textContent = 'Upload image…';
+    var file = document.createElement('input');
+    file.type = 'file';
+    file.accept = 'image/*';
+    file.hidden = true;
+    var note = document.createElement('span');
+    note.className = 'bg-note';
+    up.addEventListener('click', function () { file.click(); });
+    file.addEventListener('change', function () {
+      var f = file.files && file.files[0];
+      if (!f) { return; }
+      up.disabled = true;
+      note.textContent = 'Uploading…';
+      uploadImage(f).then(function (u) {
+        url.value = u;
+        note.textContent = '';
+        setImg(u);
+      }).catch(function (e) { note.textContent = e.message; })
+        .then(function () { up.disabled = false; file.value = ''; });
+    });
+    box.appendChild(up);
+    box.appendChild(file);
+    box.appendChild(note);
+    url.addEventListener('change', function () {
+      var v = url.value.trim();
+      if (v && !imageUrlOk(v)) { url.setCustomValidity('An https:// link'); url.reportValidity(); return; }
+      url.setCustomValidity('');
+      setImg(v);
     });
     lab.appendChild(url);
     box.appendChild(lab);

@@ -977,3 +977,5 @@ ul.ugrid.fg-body { padding:0; }
 .bg-img input { font:inherit; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
 .editor-colour { display:flex; align-items:center; gap:10px; font-size:12px; }
 #editor-colour { padding:3px 10px; font-size:12px; min-width:70px; }
+.bg-upload { font-size:12px; padding:5px 10px; }
+.bg-note { font-size:11px; color:var(--muted); min-height:13px; }
