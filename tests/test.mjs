@@ -4046,9 +4046,38 @@ test('page background: upload a picture -- shrunk, sent, and used as the image',
   Object.defineProperty(input, 'files', { value: [new window.File(['x'], 'beach.heic')] });
   input.dispatchEvent(new window.Event('change'));
   await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/style'), 'background saved');
-  const post = seen.find((r) => r.url === 'api/images');
-  assert.equal(post.method, 'POST');
+  assert.ok(seen.some((r) => r.url === 'api/images' && r.method === 'GET'), 'your uploads are listed');
+  assert.ok(seen.some((r) => r.url === 'api/images' && r.method === 'POST'), 'the picture is sent');
   assert.deepEqual(JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/style').pop().body),
                    { bg: { img: 'api/images/' + sha } });
   assert.match(doc.body.style.background, new RegExp('api/images/' + sha));
+});
+
+test('the picker lists your uploads: click one to use it, x to delete it; a tile can take a picture', async () => {
+  const sha = 'cd'.repeat(32);
+  const base = freeRoutes(placed({ sonarr: { x: 0, y: 0, override: { x: 0, y: 0 } } }));
+  const { window, doc, seen } = await boot(USER, null,
+    (u) => (u === 'api/images' ? { images: [{ url: 'api/images/' + sha, bytes: 1000, used: 0 }] }
+          : u === 'api/images/' + sha ? { ok: true, gone: true } : base(u)),
+    (w) => { w.localStorage.setItem('nav.layout', '7'); w.confirm = () => true; });
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.body.classList.contains('edit-mode') && doc.querySelector('#widget-lib .wl-chip') &&
+                             doc.querySelector('ul.ugrid.free [data-key="app:sonarr"] .resize-handle'), 'edit');
+  // A tile's Background takes a picture from your uploads.
+  click(doc.querySelector('ul.ugrid.free [data-key="app:sonarr"] a.app'));
+  await settle(window, () => doc.getElementById('editor-colour'), 'editor');
+  click(doc.getElementById('editor-colour'));
+  await settle(window, () => doc.querySelector('#bg-picker .bg-thumb-use'), 'your images');
+  click(doc.querySelector('#bg-picker .bg-thumb-use'));
+  assert.equal(doc.getElementById('editor-colour').textContent, 'picture');
+  doc.getElementById('editor-save').click();
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/tiles'), 'saved');
+  assert.equal(JSON.parse(seen.filter((r) => r.url === 'api/layouts/7/tiles').pop().body).tiles.sonarr.image,
+               'api/images/' + sha);
+  // Deleting goes to the server, which decides.
+  click(doc.getElementById('edit-bg-btn'));
+  await settle(window, () => doc.querySelector('#bg-picker .bg-thumb-del'), 'thumb');
+  click(doc.querySelector('#bg-picker .bg-thumb-del'));
+  await settle(window, () => seen.some((r) => r.method === 'DELETE' && r.url === 'api/images/' + sha), 'DELETE');
 });

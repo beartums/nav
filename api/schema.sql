@@ -299,3 +299,18 @@ CREATE TABLE IF NOT EXISTS images (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS images_owner ON images (owner);
+
+-- Who uploaded each image: the SAME picture from two people is one image row
+-- (named by its hash) and two claims. Deleting removes your claim; the image
+-- goes when no claim and no background is left. Backfilled from images.owner.
+CREATE TABLE IF NOT EXISTS image_uploads (
+    sha        TEXT        NOT NULL REFERENCES images(sha) ON DELETE CASCADE,
+    owner      TEXT        NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (sha, owner)
+);
+-- ONCE: while there are no claims at all. Every start runs this file, and an
+-- unconditional backfill would hand back a claim its owner had deleted.
+INSERT INTO image_uploads (sha, owner, created_at)
+    SELECT sha, owner, created_at FROM images
+     WHERE NOT EXISTS (SELECT 1 FROM image_uploads) ON CONFLICT DO NOTHING;

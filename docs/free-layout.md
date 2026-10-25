@@ -20,7 +20,11 @@ Status (2026-10-25):
   side 2400px, JPEG), stored in Postgres named by SHA-256 (one picture, one
   row, an immutable URL), raster types only by their bytes (no SVG), served
   nosniff + CSP sandbox; 3 MB each, 200 or 100 MB per person.
-- Not yet: keyboard moves, free templates, deleting uploaded images.
+- v1.13.0: your uploads in the picker (use again, delete); deleting is per
+  CLAIM (`image_uploads`: the same picture from two people is one image, two
+  claims) and refused while the picture is a background anywhere, saying
+  where. Tiles take a picture too (`image`, under a veil of the card).
+- Dropped for now: keyboard moves. Later, maybe: free templates.
 
 ## The problem with today's grid
 

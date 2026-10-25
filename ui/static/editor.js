@@ -192,24 +192,27 @@ function openEditor(a, atX, atY) {
   flags.appendChild(hid.label); flags.appendChild(abv.label);
   editorBody.appendChild(flags);
 
-  // Colour (style.js): the theme colours or any; None is no colour.
-  var colour = ov.colour || '';
+  // Background (style.js): a colour and/or a picture; None is neither.
+  var colour = ov.colour || '', image = ov.image || '';
   var cl = document.createElement('div');
   cl.className = 'editor-colour';
   var clLab = document.createElement('span');
-  clLab.textContent = 'Colour';
+  clLab.textContent = 'Background';
   cl.appendChild(clLab);
   var clBtn = document.createElement('button');
   clBtn.type = 'button';
   clBtn.id = 'editor-colour';
   function showColour() {
-    clBtn.textContent = colour || 'None';
-    clBtn.style.background = colourMix(colour, 35, '--card') || '';
+    clBtn.textContent = [colour, image ? 'picture' : ''].filter(Boolean).join(' + ') || 'None';
+    clBtn.style.background = '';
+    paintBg(clBtn, colour || image ? { c: colour, img: image } : null, 35, '--card', 0.5);
   }
   showColour();
   clBtn.addEventListener('click', function () {
-    bgPicker(clBtn, colour ? { c: colour } : null, { title: 'Tile colour' }, function (bg) {
+    bgPicker(clBtn, colour || image ? { c: colour || undefined, img: image || undefined } : null,
+             { title: 'Tile background', image: true }, function (bg) {
       colour = (bg && bg.c) || '';
+      image = (bg && bg.img) || '';
       showColour();
     });
   });
@@ -231,6 +234,7 @@ function openEditor(a, atX, atY) {
     if (ov.y != null) { fields.y = ov.y; }
     if (/^fg:/.test(ov.category || '') && !fields.category) { fields.category = ov.category; }
     if (colour) { fields.colour = colour; }
+    if (image) { fields.image = image; }
     // The default is stored as no size, so a later change of default reaches
     // every tile nobody deliberately sized.
     if (sizeSel.value !== 'M') { fields.size = sizeSel.value; }

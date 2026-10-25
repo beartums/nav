@@ -41,7 +41,10 @@ from typing import Any
 # `x`, `y` place a tile on a FREE layout's grid (FREE_COLS wide, rows grow
 # down); a tile without them is not on a free layout at all. Packed layouts
 # ignore them.
-OVERRIDABLE = ("name", "description", "category", "icon", "icon_light", "colour",
+#
+# `image` is a tile's background picture (an https link or an uploaded one,
+# clean_image), drawn under a veil of the card so the name stays readable.
+OVERRIDABLE = ("name", "description", "category", "icon", "icon_light", "colour", "image",
                "hidden", "size", "frameable", "order", "above_fold", "x", "y")
 LAYOUT_KEYS = ("category", "order", "size", "hidden", "above_fold", "x", "y")
 PRESENTATION_KEYS = tuple(k for k in OVERRIDABLE if k not in LAYOUT_KEYS)
@@ -107,6 +110,8 @@ def tile_fields(kind: str, raw: dict[str, Any] | None) -> dict[str, Any]:
                          f"{', '.join(sorted(refused))} is site-wide -- edit it on the tile")
     if "colour" in raw:
         raw["colour"] = clean_colour(raw["colour"])
+    if "image" in raw:
+        raw["image"] = clean_image(raw["image"])
     if "x" in raw:
         raw["x"] = clean_cell(raw["x"], "x", FREE_COLS)
     if "y" in raw:
@@ -203,6 +208,17 @@ def clean_colour(v: Any) -> str | None:
     raise ValueError(f"a colour is one of {list(COLOURS)} or #rrggbb")
 
 
+def clean_image(img: Any) -> str | None:
+    """A background picture: an https link elsewhere, or one uploaded to nav."""
+    if img in (None, ""):
+        return None
+    if (not isinstance(img, str) or len(img) > IMG_MAX or
+            not (img.startswith("https://") or UPLOADED.match(img))):
+        raise ValueError(f"a background image is an https:// URL of at most {IMG_MAX} characters, "
+                         f"or an uploaded one")
+    return img
+
+
 def clean_bg(v: Any) -> dict[str, Any] | None:
     """{c?, img?} or None. Nothing set is None, so "no background" is one value."""
     if v in (None, {}, ""):
@@ -210,11 +226,6 @@ def clean_bg(v: Any) -> dict[str, Any] | None:
     if not isinstance(v, dict) or set(v) - {"c", "img"}:
         raise ValueError("a background is {c, img}")
     c = clean_colour(v.get("c"))
-    img = v.get("img") or None
-    # An https link to a picture elsewhere, or one uploaded to nav (images.py).
-    if img is not None and (not isinstance(img, str) or len(img) > IMG_MAX or
-                            not (img.startswith("https://") or UPLOADED.match(img))):
-        raise ValueError(f"a background image is an https:// URL of at most {IMG_MAX} characters, "
-                         f"or an uploaded one")
+    img = clean_image(v.get("img"))
     out = {k: x for k, x in (("c", c), ("img", img)) if x}
     return out or None

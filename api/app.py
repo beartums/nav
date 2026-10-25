@@ -944,11 +944,14 @@ async def upload_image(request: Request, who: str = Depends(whoami)) -> dict[str
     sha = images.name(data)
     async with pool.connection() as conn:  # type: ignore[union-attr]
         async with conn.transaction():
-            have = await (await conn.execute("SELECT 1 FROM images WHERE sha = %s", (sha,))).fetchone()
-            if have is None:
+            mine = await (await conn.execute(
+                "SELECT 1 FROM image_uploads WHERE sha = %s AND owner = %s", (sha, who))).fetchone()
+            if mine is None:
+                # Your uploads count against you, even a picture someone else
+                # sent first: deleting is per claim, so the quota is too.
                 used = await (await conn.execute(
-                    "SELECT count(*) AS n, COALESCE(sum(bytes), 0) AS b FROM images WHERE owner = %s",
-                    (who,))).fetchone()
+                    "SELECT count(*) AS n, COALESCE(sum(i.bytes), 0) AS b FROM image_uploads u "
+                    "JOIN images i ON i.sha = u.sha WHERE u.owner = %s", (who,))).fetchone()
                 if used["n"] >= images.PER_OWNER_COUNT or used["b"] + len(data) > images.PER_OWNER_BYTES:
                     raise HTTPException(413, f"you have uploaded {used['n']} images "
                                              f"({used['b'] // (1024 * 1024)} MB); the limit is "
@@ -956,7 +959,69 @@ async def upload_image(request: Request, who: str = Depends(whoami)) -> dict[str
                 await conn.execute(
                     "INSERT INTO images (sha, owner, mime, bytes, data) VALUES (%s, %s, %s, %s, %s) "
                     "ON CONFLICT (sha) DO NOTHING", (sha, who, mime, len(data), data))
+                await conn.execute("INSERT INTO image_uploads (sha, owner) VALUES (%s, %s) "
+                                   "ON CONFLICT DO NOTHING", (sha, who))
     return {"ok": True, "url": f"api/images/{sha}", "bytes": len(data), "mime": mime}
+
+
+async def image_uses(conn: Any, sha: str) -> list[str]:
+    """Where a picture is a background, as names a person can act on: "your
+    dashboard 'Kitchen'", "a template", "the tile 'plex'". Text search on the
+    stored JSON -- the hash is 64 hex characters, so a match is the picture."""
+    out: list[str] = []
+    rows = await (await conn.execute(
+        "SELECT name, kind FROM layouts WHERE style::text LIKE %s OR free_groups::text LIKE %s",
+        (f"%{sha}%", f"%{sha}%"))).fetchall()
+    out += [f"the {r['kind']} '{r['name']}'" for r in rows]
+    rows = await (await conn.execute(
+        "SELECT DISTINCT l.name, t.slug FROM layout_tiles t JOIN layouts l ON l.id = t.layout_id "
+        "WHERE t.fields::text LIKE %s", (f"%{sha}%",))).fetchall()
+    out += [f"the tile '{r['slug']}' on '{r['name']}'" for r in rows]
+    rows = await (await conn.execute(
+        "SELECT slug FROM admin_overrides WHERE fields::text LIKE %s", (f"%{sha}%",))).fetchall()
+    out += [f"the tile '{r['slug']}' (site-wide)" for r in rows]
+    return out
+
+
+@app.get("/api/images")
+async def my_images(who: str = Depends(whoami)) -> dict[str, Any]:
+    """The pictures you uploaded, newest first, each with how much it is used."""
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        rows = await (await conn.execute(
+            "SELECT u.sha, i.bytes, i.mime, u.created_at FROM image_uploads u JOIN images i ON i.sha = u.sha "
+            "WHERE u.owner = %s ORDER BY u.created_at DESC", (who,))).fetchall()
+        out = []
+        for r in rows:
+            out.append({"url": f"api/images/{r['sha']}", "bytes": r["bytes"], "mime": r["mime"],
+                        "uploaded": r["created_at"].isoformat(), "used": len(await image_uses(conn, r["sha"]))})
+    return {"images": out, "limit": {"count": images.PER_OWNER_COUNT, "bytes": images.PER_OWNER_BYTES}}
+
+
+@app.delete("/api/images/{sha}")
+async def delete_image(sha: str, who: str = Depends(whoami)) -> dict[str, Any]:
+    """Withdraw your upload. Refused while the picture is a background
+    anywhere -- a deleted image would leave a hole where it was -- and the
+    reply says where, so it can be changed first. The bytes go when nobody's
+    claim is left."""
+    if not images.SHA.match(sha):
+        raise HTTPException(404, "no such image")
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        async with conn.transaction():
+            mine = await (await conn.execute(
+                "SELECT 1 FROM image_uploads WHERE sha = %s AND owner = %s", (sha, who))).fetchone()
+            if mine is None:
+                raise HTTPException(404, "not one of your uploads")
+            uses = await image_uses(conn, sha)
+            if uses:
+                raise HTTPException(409, "still a background on " + "; ".join(uses[:5]) +
+                                         (f" and {len(uses) - 5} more" if len(uses) > 5 else "") +
+                                         " -- change those first")
+            await conn.execute("DELETE FROM image_uploads WHERE sha = %s AND owner = %s", (sha, who))
+            left = await (await conn.execute(
+                "SELECT 1 FROM image_uploads WHERE sha = %s LIMIT 1", (sha,))).fetchone()
+            if left is None:
+                await conn.execute("DELETE FROM images WHERE sha = %s", (sha,))
+    return {"ok": True, "gone": left is None}
 
 
 @app.get("/api/images/{sha}")
@@ -1183,11 +1248,13 @@ def presentation_fields(raw: Any) -> dict[str, Any]:
     if lay:
         raise HTTPException(422, f"{', '.join(sorted(lay))} belong(s) to a layout: "
                                  f"PUT /api/layouts/{{id}}/tiles")
-    if "colour" in raw:
-        try:
+    try:
+        if "colour" in raw:
             raw = {**raw, "colour": layouts.clean_colour(raw["colour"])}
-        except ValueError as exc:
-            raise bad(exc) from None
+        if "image" in raw:
+            raw = {**raw, "image": layouts.clean_image(raw["image"])}
+    except ValueError as exc:
+        raise bad(exc) from None
     return raw
 
 
@@ -1253,11 +1320,13 @@ def clean_fields(raw: dict[str, Any] | None) -> dict[str, Any]:
     if "size" in fields and fields["size"] not in widgets.TILE_SIZES:
         raise HTTPException(422, f"tile size must be one of {list(widgets.TILE_SIZES)}, "
                                  f"not {fields['size']!r}")
-    if "colour" in fields:
-        try:
+    try:
+        if "colour" in fields:
             fields["colour"] = layouts.clean_colour(fields["colour"])
-        except ValueError as exc:
-            raise bad(exc) from None
+        if "image" in fields:
+            fields["image"] = layouts.clean_image(fields["image"])
+    except ValueError as exc:
+        raise bad(exc) from None
     return fields
 
 

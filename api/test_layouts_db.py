@@ -418,6 +418,31 @@ class Layouts(unittest.TestCase):
         # And it can be a page background.
         r = self.c.put(f"/api/layouts/{self.dash}/style", headers=U, json={"bg": {"img": url}})
         self.assertEqual(r.status_code, 200, r.text)
+        sha = url.rsplit("/", 1)[1]
+        # Yours, listed with how much it is used; someone else's claim is theirs.
+        mine = self.c.get("/api/images", headers=U).json()["images"]
+        self.assertEqual([(i["url"], i["used"]) for i in mine], [(url, 1)])
+        self.assertEqual(len(self.c.get("/api/images", headers=OTHER).json()["images"]), 1, "OTHER uploaded it too")
+        # In use: refused, saying where.
+        r = self.c.delete(f"/api/images/{sha}", headers=U)
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("Mine", r.json()["detail"])
+        # A tile can carry it too -- and that counts as a use.
+        self.c.put(f"/api/layouts/{self.dash}/style", headers=U, json={"bg": None})
+        r = self.c.put(f"/api/layouts/{self.dash}/tiles", headers=U, json={"tiles": {"plex": {"image": url}}})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.c.delete(f"/api/images/{sha}", headers=U).status_code, 409)
+        self.c.put(f"/api/layouts/{self.dash}/tiles", headers=U, json={"tiles": {"plex": {}}})
+        # Free: U's claim goes, the picture stays (OTHER still has it).
+        r = self.c.delete(f"/api/images/{sha}", headers=U)
+        self.assertEqual((r.status_code, r.json()["gone"]), (200, False))
+        self.assertEqual(self.c.get("/" + url, headers=U).status_code, 200)
+        self.assertEqual(self.c.delete(f"/api/images/{sha}", headers=U).status_code, 404, "not yours any more")
+        r = self.c.delete(f"/api/images/{sha}", headers=OTHER)
+        self.assertEqual((r.status_code, r.json()["gone"]), (200, True))
+        self.assertEqual(self.c.get("/" + url, headers=U).status_code, 404)
+        self.assertEqual(self.c.put(f"/api/layouts/{self.dash}/tiles", headers=U,
+                                    json={"tiles": {"plex": {"image": "javascript:x"}}}).status_code, 422)
 
     def test_23_presentation_route_is_presentation_only(self):
         r = self.c.put("/api/admin/presentation", headers=ADMIN,

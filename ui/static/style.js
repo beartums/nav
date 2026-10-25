@@ -169,12 +169,54 @@ function bgPicker(anchor, cur, opts, onPick) {
         url.value = u;
         note.textContent = '';
         setImg(u);
+        loadMine();
       }).catch(function (e) { note.textContent = e.message; })
         .then(function () { up.disabled = false; file.value = ''; });
     });
     box.appendChild(up);
     box.appendChild(file);
     box.appendChild(note);
+
+    // Your uploads: click one to use it again, x to delete it. A picture
+    // still in use is refused by the server, which says where.
+    var mineHead = document.createElement('div');
+    mineHead.className = 'bg-picker-h';
+    var mine = document.createElement('div');
+    mine.className = 'bg-mine';
+    box.appendChild(mineHead);
+    box.appendChild(mine);
+    function loadMine() {
+      fetch('api/images').then(function (r) { return r.ok ? r.json() : { images: [] }; })
+        .catch(function () { return { images: [] }; })
+        .then(function (b) {
+          var list = (b && b.images) || [];
+          mineHead.textContent = list.length ? 'Your images' : '';
+          mine.innerHTML = '';
+          list.forEach(function (im) {
+            var cell = document.createElement('div');
+            cell.className = 'bg-thumb' + (cur.img === im.url ? ' on' : '');
+            var use = document.createElement('button');
+            use.type = 'button';
+            use.className = 'bg-thumb-use';
+            use.title = 'Use this' + (im.used ? ' (in use in ' + im.used + ' place' + (im.used === 1 ? '' : 's') + ')' : '');
+            use.style.backgroundImage = 'url("' + im.url + '")';
+            use.addEventListener('click', function () { url.value = im.url; setImg(im.url); loadMine(); });
+            var del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'bg-thumb-del';
+            del.textContent = '\u00d7';
+            del.title = im.used ? 'In use -- remove it from those backgrounds first' : 'Delete this upload';
+            del.addEventListener('click', function () {
+              if (!confirm('Delete this picture?')) { return; }
+              api('DELETE', im.url).then(loadMine).catch(function (e) { note.textContent = e.message; });
+            });
+            cell.appendChild(use);
+            cell.appendChild(del);
+            mine.appendChild(cell);
+          });
+        });
+    }
+    loadMine();
     url.addEventListener('change', function () {
       var v = url.value.trim();
       if (v && !imageUrlOk(v)) { url.setCustomValidity('An https:// link'); url.reportValidity(); return; }
