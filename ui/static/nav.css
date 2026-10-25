@@ -894,3 +894,33 @@ ul.wx-days li { display:flex; align-items:center; gap:6px; padding:2px 0; }
 .wk-pop-wx { display:flex; align-items:center; gap:4px; font-size:12px; }
 .wk-pop-h { font-size:11px; color:var(--muted); margin-top:4px; display:flex; justify-content:space-between; }
 .wk-pop-link { font-size:11px; }
+
+/* --- dashboard tabs --------------------------------------------------- */
+#dashtabs { display:flex; flex-wrap:wrap; gap:4px; margin:-6px 0 16px; border-bottom:1px solid var(--line); }
+#dashtabs[hidden] { display:none; }
+.dtab { border:0; border-bottom:2px solid transparent; border-radius:6px 6px 0 0; background:none;
+        padding:6px 12px; color:var(--muted); }
+.dtab:hover { color:var(--fg); background:var(--line); }
+.dtab.on { color:var(--fg); font-weight:600; border-bottom-color:var(--accent); }
+.dtab-add { font-weight:700; }
+
+/* --- the free layout: explicit cells (free.js) ----------------------------- */
+ul.ugrid.free { grid-auto-flow:row; }
+body.admin-mode ul.ugrid.free-cells, body.edit-mode ul.ugrid.free-cells {
+  /* The cells, faintly, so a drop has something to snap to by eye. */
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--line) 70%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--line) 70%, transparent) 1px, transparent 1px);
+  background-size:calc((100% + 10px) / 24) 43px;
+  border-radius:8px; outline:1px dashed var(--line); outline-offset:4px; }
+ul.ugrid.free > li.free-ghost { border:2px dashed var(--accent); border-radius:10px; pointer-events:none;
+  background:color-mix(in srgb, var(--accent) 12%, transparent); z-index:4; }
+ul.ugrid.free > li.free-ghost.bad { border-color:var(--danger, #e34948);
+  background:color-mix(in srgb, var(--danger, #e34948) 12%, transparent); }
+ul.ugrid.free > li.free-ghost[hidden] { display:none; }
+ul.ugrid.free > li > .w-remove { position:absolute; top:4px; right:6px; z-index:3; border:0; background:none;
+  color:var(--muted); font-size:16px; line-height:1; cursor:pointer; padding:2px 4px; border-radius:4px; }
+/* A free dashboard has no groups and no template: no sidebar, no Revert. */
+body.free-mode #groups, body.free-mode #side-grip, body.free-mode .side-toggle,
+body.free-mode #edit-revert { display:none !important; }
+body.free-mode.edit-mode .wrap { margin-left:auto; max-width:1100px; }

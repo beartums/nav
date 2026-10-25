@@ -3793,3 +3793,74 @@ test('the page knows its own version and nav-api\'s, separately', async () => {
   window.eval("versionNote('page')");
   assert.equal(window.document.getElementById('new-version').textContent, 'New page — reload');
 });
+
+// --- free layout and dashboard tabs (2026-10-25) ----------------------------------
+
+const FREE = { id: 7, kind: 'dashboard', name: 'Free one', template_id: null, mode: 'free',
+               is_default: false, group_order: [], group_hidden: [] };
+function freeRoutes(apps, list) {
+  return (u) => {
+    if (u.startsWith('api/apps') && /layout=7/.test(u)) { return { ...USER, apps, layout: FREE }; }
+    if (u === 'api/layouts') {
+      return list || { ...LAYOUT_LIST, dashboards: [{ id: 5, name: 'My dashboard', mode: 'packed' },
+                                                    { id: 7, name: 'Free one', mode: 'free' }] };
+    }
+    if (u.startsWith('api/widgets?') || u === 'api/widgets') { return { defs: SAVED.defs, placements: [], layout_id: 7 }; }
+    return dashRoutes({ created: true })(u);
+  };
+}
+const placed = (over) => USER.apps.map((a) => ({ ...a, x: null, y: null, ...(over[a.slug] || {}) }));
+
+test('dashboards are tabs: the shared one, yours, and + for a new (free by default)', async () => {
+  const { window, doc, seen } = await boot(USER, null, freeRoutes(placed({})));
+  await settle(window, () => doc.querySelectorAll('#dashtabs .dtab').length === 4, 'tabs');
+  const tabs = [...doc.querySelectorAll('#dashtabs .dtab')].map((b) => b.textContent);
+  assert.deepEqual(tabs, ['Default', 'My dashboard', 'Free one', '+']);
+  assert.equal(doc.querySelector('#dashtabs .dtab.on').textContent, 'Default');
+  click([...doc.querySelectorAll('#dashtabs .dtab')].find((b) => b.textContent === 'Free one'));
+  await settle(window, () => seen.some((r) => /api\/apps\?layout=7/.test(r.url)), 'switched');
+  assert.equal(window.localStorage.getItem('nav.layout'), '7');
+  // An empty free dashboard says so, rather than showing nothing.
+  await settle(window, () => /This dashboard is empty/.test(doc.getElementById('out').textContent), 'empty');
+  click(doc.getElementById('dashtab-add'));
+  await settle(window, () => doc.getElementById('dash-name'), 'dialog');
+  assert.ok(doc.getElementById('dash-mode-free').checked, 'free by default from +');
+  doc.getElementById('dash-name').value = 'Another';
+  click(doc.getElementById('dash-create'));
+  await settle(window, () => seen.some((r) => r.method === 'POST' && r.url === 'api/layouts'), 'created');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'POST' && r.url === 'api/layouts').body),
+                   { kind: 'dashboard', name: 'Another', mode: 'free' }, 'free copies nothing');
+});
+
+test('a free dashboard draws placed things at their cells, and only those', async () => {
+  const { window, doc } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 4, y: 2 } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('ul.ugrid.free'), 'free grid');
+  const g = doc.querySelector('ul.ugrid.free');
+  assert.equal(g.style.gridTemplateColumns, 'repeat(24, minmax(0, 1fr))');
+  const keys = [...g.querySelectorAll('[data-key]')].map((li) => li.dataset.key);
+  assert.deepEqual(keys, ['app:sonarr'], 'Calibre-Web has no cell: not on the page');
+  const li = g.querySelector('[data-key="app:sonarr"]');
+  assert.equal(li.style.gridColumn, '5 / span 4');
+  assert.equal(li.style.gridRow, '3 / span 2');
+});
+
+test('arranging a free dashboard: drag an app from the panel to a cell; overlaps are refused', async () => {
+  const { window, doc, seen } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 0, y: 0 } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.querySelector('#widget-lib .wl-app'), 'the panel lists unplaced apps');
+  assert.deepEqual([...doc.querySelectorAll('#widget-lib .wl-app .wl-name')].map((x) => x.textContent), ['Calibre-Web']);
+  const g = doc.querySelector('ul.ugrid.free');
+  // jsdom has no layout: every pointer is cell 0,0 -- where Sonarr already sits.
+  drag(window, doc.querySelector('#widget-lib .wl-app'), g);
+  assert.equal(seen.filter((r) => r.url === 'api/layouts/7/tiles').length, 0, 'refused: the cells are taken');
+  // Move Sonarr off 0,0 by hand, then the drop lands.
+  window.eval("APPS.filter(function (a) { return a.slug === 'sonarr'; })[0].x = 10; render();");
+  drag(window, doc.querySelector('#widget-lib .wl-app'), doc.querySelector('ul.ugrid.free'));
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/7/tiles'), 'placed');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/layouts/7/tiles').body).tiles.books,
+                   { ...(USER.apps.find((a) => a.slug === 'books').override), x: 0, y: 0 });
+  await settle(window, () => doc.querySelector('ul.ugrid.free [data-key="app:books"]'), 'drawn at once');
+});

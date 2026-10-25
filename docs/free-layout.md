@@ -1,6 +1,10 @@
 # Free layout — design (not built)
 
-Status: investigation, 2026-10-25. Nothing here is implemented.
+Status: step 1 BUILT in v1.8.0 (2026-10-25) -- dashboards as tabs, free
+dashboards (empty at creation, explicit cells on a 24-column grid, drag from
+the panel with a snap ghost that turns red on overlap, reading order on a
+phone). Not yet: groups inside a free page (static/dynamic), backgrounds,
+keyboard moves, free templates.
 
 ## The problem with today's grid
 

@@ -15,7 +15,7 @@ var LAYOUT = null;                    // the reply's `layout`: on screen now
 var LAYOUTS = { templates: [], dashboards: [] };
 // The fields that belong to a layout; the rest of an override is presentation.
 // Mirrors layouts.py LAYOUT_KEYS.
-var LAYOUT_KEYS = ['category', 'order', 'size', 'hidden', 'above_fold'];
+var LAYOUT_KEYS = ['category', 'order', 'size', 'hidden', 'above_fold', 'x', 'y'];
 
 // The template the admin is editing, per device like the tab. Null: the default.
 var ADMIN_TEMPLATE = null;
@@ -273,6 +273,52 @@ function dashboardMenu(menuList) {
   }
 }
 
+/** Your dashboards as tabs: the shared default first, then yours in the
+ *  order you made them, and + for another. Click to switch (this device);
+ *  double-click your own to rename it. Not while impersonating or editing a
+ *  template -- those show one layout chosen elsewhere. */
+function buildDashTabs() {
+  var bar = document.getElementById('dashtabs');
+  if (!bar) { return; }
+  bar.innerHTML = '';
+  bar.hidden = !!IMPERSONATING || ADMIN_MODE || !LAYOUT;
+  if (bar.hidden) { return; }
+  bar.setAttribute('role', 'tablist');
+  var shared = LAYOUTS.templates.filter(function (t) { return t.is_default; })[0];
+  var tabs = [];
+  if (shared) { tabs.push({ id: null, name: shared.name, shared: true }); }
+  LAYOUTS.dashboards.forEach(function (d) { tabs.push({ id: d.id, name: d.name, mode: d.mode }); });
+  tabs.forEach(function (t) {
+    var on = t.shared ? !ownDashboard() : (ownDashboard() && LAYOUT.id === t.id);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dtab' + (on ? ' on' : '');
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(on));
+    b.textContent = t.name;
+    if (t.shared) { b.title = 'The shared dashboard'; }
+    else if (t.mode === 'free') { b.title = 'Free layout -- double-click to rename'; }
+    else { b.title = 'Double-click to rename'; }
+    b.addEventListener('click', function () {
+      if (on) { return; }
+      if (EDIT_MODE) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
+      setUserLayout(t.id);
+      refresh();
+    });
+    if (!t.shared) { b.addEventListener('dblclick', function () { if (on) { renameDashboard(); } }); }
+    bar.appendChild(b);
+  });
+  var add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'dtab dtab-add';
+  add.id = 'dashtab-add';
+  add.textContent = '+';
+  add.title = 'New dashboard (a free layout starts empty)';
+  add.setAttribute('aria-label', 'New dashboard');
+  add.addEventListener('click', function () { newDashboardDialog(null, null, 'free'); });
+  bar.appendChild(add);
+}
+
 function renameDashboard() {
   var nn = prompt('Rename “' + LAYOUT.name + '” to', LAYOUT.name);
   if (!nn || !nn.trim() || nn.trim() === LAYOUT.name) { return; }
@@ -303,7 +349,7 @@ function deleteDashboard() {
 
 /** Name it and pick what it starts as: the dashboard on screen, or any
  *  template. `lead` explains why it opened, `then` runs once it is shown. */
-function newDashboardDialog(lead, then) {
+function newDashboardDialog(lead, then, startMode) {
   var back = document.createElement('div');
   back.className = 'icondlg-back';
   var box = document.createElement('div');
@@ -331,6 +377,24 @@ function newDashboardDialog(lead, then) {
   nl.appendChild(name);
   box.appendChild(nl);
 
+  // Free: an empty grid you place things on. Packed: a copy, arranged in groups.
+  var ml = document.createElement('fieldset');
+  ml.style.cssText = 'border:0; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:4px; font-size:12px;';
+  var modeIn = {};
+  [['free', 'Free layout: starts empty, put things anywhere'],
+   ['packed', 'Groups: a copy of a dashboard, arranged automatically']].forEach(function (m, i) {
+    var lab = document.createElement('label');
+    lab.style.cssText = 'display:flex; gap:6px; align-items:center;';
+    var r = document.createElement('input');
+    r.type = 'radio'; r.name = 'dash-mode'; r.value = m[0]; r.id = 'dash-mode-' + m[0];
+    r.checked = m[0] === (startMode || 'packed');
+    modeIn[m[0]] = r;
+    lab.appendChild(r);
+    lab.appendChild(document.createTextNode(m[1]));
+    ml.appendChild(lab);
+  });
+  box.appendChild(ml);
+
   var sl = document.createElement('label');
   sl.textContent = 'Start from';
   sl.style.cssText = 'display:flex; flex-direction:column; gap:3px; font-size:12px; margin-top:8px;';
@@ -350,6 +414,10 @@ function newDashboardDialog(lead, then) {
   from.value = String(LAYOUT ? LAYOUT.id : '');
   sl.appendChild(from);
   box.appendChild(sl);
+  function syncMode() { sl.hidden = modeIn.free.checked; }
+  modeIn.free.addEventListener('change', syncMode);
+  modeIn.packed.addEventListener('change', syncMode);
+  syncMode();
 
   var note = document.createElement('div');
   note.className = 'note';
@@ -376,8 +444,10 @@ function newDashboardDialog(lead, then) {
   go.addEventListener('click', function () {
     if (!name.value.trim()) { note.textContent = 'It needs a name.'; name.focus(); return; }
     go.disabled = true;
-    api('POST', 'api/layouts', { kind: 'dashboard', name: name.value.trim(),
-                                 from_id: Number(from.value) || null })
+    var free = modeIn.free.checked;
+    api('POST', 'api/layouts', free ? { kind: 'dashboard', name: name.value.trim(), mode: 'free' }
+                                    : { kind: 'dashboard', name: name.value.trim(),
+                                        from_id: Number(from.value) || null })
       .then(function (r) {
         close();
         setUserLayout(r.id);

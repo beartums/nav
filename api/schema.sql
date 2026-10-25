@@ -274,3 +274,10 @@ CREATE TABLE IF NOT EXISTS app_connections (
 ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS label TEXT;
 ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS auth TEXT;
 ALTER TABLE app_connections ADD COLUMN IF NOT EXISTS custom BOOLEAN NOT NULL DEFAULT false;
+
+-- A layout's mode (layouts.py MODES): packed groups, or free placement at
+-- explicit cells. And a widget's cell on a free layout. 2026-10-25.
+ALTER TABLE layouts ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'packed'
+    CHECK (mode IN ('packed', 'free'));
+ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS x INTEGER;
+ALTER TABLE widget_placements ADD COLUMN IF NOT EXISTS y INTEGER;

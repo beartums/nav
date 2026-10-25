@@ -452,6 +452,9 @@ function buildWidgetLibrary() {
   shown.forEach(function (d) { if (types.indexOf(d.type) < 0) { types.push(d.type); } });
   types.sort(function (a, b) { return typeTitle(a).localeCompare(typeTitle(b)); });
   var chips = [['all', 'All']];
+  // A free dashboard starts empty: its apps are placed from here too.
+  var free = typeof freeMode === 'function' && freeMode();
+  if (free) { chips.push(['__apps__', 'Apps']); }
   if (!ADMIN_MODE) { chips.push(['__mine__', 'Mine']); }
   types.forEach(function (t) { chips.push([t, typeTitle(t)]); });
   if (chips.map(function (c) { return c[0]; }).indexOf(LIB_FILTER) < 0) { LIB_FILTER = 'all'; }
@@ -475,8 +478,12 @@ function buildWidgetLibrary() {
 
   var ul = document.createElement('ul');
   ul.className = 'wl-list';
+  if (free && (LIB_FILTER === 'all' || LIB_FILTER === '__apps__')) {
+    freePaletteApps().forEach(function (a) { ul.appendChild(paletteAppItem(a)); });
+  }
   shown.filter(function (d) {
-    return LIB_FILTER === 'all' || (LIB_FILTER === '__mine__' ? d.mine : d.type === LIB_FILTER);
+    return LIB_FILTER === 'all' || (LIB_FILTER !== '__apps__' &&
+      (LIB_FILTER === '__mine__' ? d.mine : d.type === LIB_FILTER));
   }).forEach(function (d) {
     // The library is the admin's to edit; in a user's edit mode it is a
     // palette to drag from, and only their own widgets open the designer
@@ -576,7 +583,9 @@ function libItem(d, editable) {
   if (n) {
     var where = document.createElement('span');
     where.className = 'wl-where';
-    where.textContent = 'in ' + n + ' group' + (n === 1 ? '' : 's');
+    where.textContent = typeof freeMode === 'function' && freeMode()
+      ? (n === 1 ? 'on this page' : 'on this page ' + n + ' times')
+      : 'in ' + n + ' group' + (n === 1 ? '' : 's');
     li.appendChild(where);
   }
   if (!d.missing) { peekOnHover(li, d.id); }

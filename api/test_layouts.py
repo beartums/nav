@@ -1,6 +1,8 @@
 """layouts.py: the template/dashboard rules, without a database."""
 import unittest
 
+import layouts
+
 from layouts import (LAYOUT_KEYS, PRESENTATION_KEYS, clean_groups, clean_name, merge, split,
                      tile_fields, tile_layer)
 
@@ -63,3 +65,22 @@ class Names(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreeLayout(unittest.TestCase):
+    def test_cells_are_whole_numbers_in_range_or_null(self):
+        self.assertEqual(layouts.clean_cell(0, "x", 24), 0)
+        self.assertIsNone(layouts.clean_cell(None, "x", 24))
+        for bad in (24, -1, 1.5, True, "3"):
+            with self.assertRaises(ValueError):
+                layouts.clean_cell(bad, "x", 24)
+
+    def test_tile_fields_take_and_check_x_y(self):
+        self.assertEqual(layouts.tile_fields("dashboard", {"x": 3, "y": 10}), {"x": 3, "y": 10})
+        with self.assertRaises(ValueError):
+            layouts.tile_fields("dashboard", {"x": 99})
+
+    def test_a_free_dashboard_never_falls_back_to_its_template(self):
+        tpl = {"sonarr": {"category": "Media"}}
+        self.assertEqual(layouts.tile_layer("sonarr", "dashboard", {}, tpl, "packed"), tpl["sonarr"])
+        self.assertEqual(layouts.tile_layer("sonarr", "dashboard", {}, tpl, "free"), {})

@@ -56,6 +56,11 @@ function useGroupGrid() { return opts.collapse !== 'on'; }
 
 /** Columns that fit the page now. jsdom has no layout (width 0): 24. */
 function gridCols() {
+  // A free layout's grid is a fixed width in columns (free.js), however wide
+  // the page; reading order on a phone uses the fitted count below.
+  if (typeof freeMode === 'function' && freeMode() && !(out.clientWidth > 0 && out.clientWidth < FREE_NARROW && !arranging())) {
+    return FREE_COLS;
+  }
   var w = out.clientWidth;
   return w > 0 ? Math.max(4, Math.floor((w + GRID_GAP) / (GRID_COL_MIN + GRID_GAP))) : 24;
 }

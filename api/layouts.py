@@ -36,12 +36,33 @@ from typing import Any
 # stored value is one. `icon_light` is optional and falls back to `icon`.
 #
 # `above_fold` keeps a tile visible when its category is collapsed.
+#
+# `x`, `y` place a tile on a FREE layout's grid (FREE_COLS wide, rows grow
+# down); a tile without them is not on a free layout at all. Packed layouts
+# ignore them.
 OVERRIDABLE = ("name", "description", "category", "icon", "icon_light", "colour",
-               "hidden", "size", "frameable", "order", "above_fold")
-LAYOUT_KEYS = ("category", "order", "size", "hidden", "above_fold")
+               "hidden", "size", "frameable", "order", "above_fold", "x", "y")
+LAYOUT_KEYS = ("category", "order", "size", "hidden", "above_fold", "x", "y")
 PRESENTATION_KEYS = tuple(k for k in OVERRIDABLE if k not in LAYOUT_KEYS)
 KINDS = ("template", "dashboard")
 NAME_MAX = 60
+
+# A layout's MODE. `packed`: groups of tiles in a sequence, placed by the
+# packer (everything until 2026-10-25). `free`: everything at explicit cells
+# on one FREE_COLS-wide grid, and nothing on it until someone puts it there --
+# a new free dashboard is empty. Dashboards only, for now.
+MODES = ("packed", "free")
+FREE_COLS = 24
+FREE_ROWS_MAX = 500
+
+
+def clean_cell(v: Any, what: str, hi: int) -> int | None:
+    """A grid coordinate: an integer in [0, hi), or None for "not placed"."""
+    if v is None:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < hi:
+        raise ValueError(f"{what} must be a whole number from 0 to {hi - 1}, or null")
+    return v
 
 
 def merge(base: dict[str, Any], *layers: dict[str, Any]) -> dict[str, Any]:
@@ -83,16 +104,22 @@ def tile_fields(kind: str, raw: dict[str, Any] | None) -> dict[str, Any]:
     if refused:
         raise ValueError(f"a template stores layout only ({', '.join(LAYOUT_KEYS)}); "
                          f"{', '.join(sorted(refused))} is site-wide -- edit it on the tile")
+    if "x" in raw:
+        raw["x"] = clean_cell(raw["x"], "x", FREE_COLS)
+    if "y" in raw:
+        raw["y"] = clean_cell(raw["y"], "y", FREE_ROWS_MAX)
     return raw
 
 
 def tile_layer(slug: str, kind: str, own: dict[str, dict[str, Any]],
-               template: dict[str, dict[str, Any]]) -> dict[str, Any]:
+               template: dict[str, dict[str, Any]], mode: str = "packed") -> dict[str, Any]:
     """The layout row that applies to `slug`: the layout's own, else -- for a
-    dashboard only -- its template's whole row (see the module docstring)."""
+    PACKED dashboard only -- its template's whole row (see the module
+    docstring). A free dashboard never falls back: it starts empty, and an app
+    gained later waits in the palette rather than landing somewhere."""
     if slug in own:
         return own[slug]
-    return template.get(slug, {}) if kind == "dashboard" else {}
+    return template.get(slug, {}) if kind == "dashboard" and mode == "packed" else {}
 
 
 def clean_name(raw: Any) -> str:

@@ -387,8 +387,8 @@ async def tiles_of(conn: Any, lid: int) -> dict[str, dict[str, Any]]:
 
 
 def layout_info(row: dict[str, Any]) -> dict[str, Any]:
-    return {k: row[k] for k in ("id", "kind", "name", "template_id", "is_default",
-                                "group_order", "group_hidden")}
+    return {k: row.get(k) for k in ("id", "kind", "name", "template_id", "is_default",
+                                    "group_order", "group_hidden")} | {"mode": row.get("mode") or "packed"}
 
 
 @app.get("/api/apps")
@@ -529,7 +529,8 @@ async def list_apps(request: Request, who: str = Depends(whoami), layout: int | 
     show_hidden = want_hidden and (include_hidden or own_dash)
 
     def layered(slug: str, base: dict[str, Any]) -> dict[str, Any]:
-        return merge(base, pres.get(slug, {}), layouts.tile_layer(slug, lay["kind"], own, tpl))
+        return merge(base, pres.get(slug, {}),
+                     layouts.tile_layer(slug, lay["kind"], own, tpl, lay.get("mode") or "packed"))
 
     def editor_fields(slug: str, base: dict[str, Any]) -> dict[str, Any]:
         """What the editor needs to show what a field would revert to."""
@@ -686,8 +687,8 @@ async def copy_layout(conn: Any, src: dict[str, Any], dst: int, who: str) -> Non
         "INSERT INTO layout_tiles (layout_id, slug, fields) "
         "SELECT %s, slug, fields FROM layout_tiles WHERE layout_id = %s", (dst, src["id"]))
     await conn.execute(
-        "INSERT INTO widget_placements (layout_id, def_id, category, ord, size, hidden, above_fold, created_by) "
-        "SELECT %s, def_id, category, ord, size, hidden, above_fold, %s FROM widget_placements "
+        "INSERT INTO widget_placements (layout_id, def_id, category, ord, size, hidden, above_fold, x, y, created_by) "
+        "SELECT %s, def_id, category, ord, size, hidden, above_fold, x, y, %s FROM widget_placements "
         "WHERE layout_id = %s",
         (dst, who, src["id"]))
 
@@ -700,20 +701,28 @@ async def list_layouts(who: str = Depends(whoami)) -> dict[str, Any]:
             "SELECT id, name, is_default, updated_at FROM layouts WHERE kind = 'template' "
             "ORDER BY is_default DESC, lower(name)")).fetchall()
         dash = await (await conn.execute(
-            "SELECT id, name, template_id, updated_at FROM layouts "
-            "WHERE kind = 'dashboard' AND owner = %s ORDER BY lower(name)", (who,))).fetchall()
+            "SELECT id, name, template_id, mode, updated_at FROM layouts "
+            "WHERE kind = 'dashboard' AND owner = %s ORDER BY created_at, id", (who,))).fetchall()
     return {"templates": tpls, "dashboards": dash}
 
 
 @app.post("/api/layouts")
 async def create_layout(body: dict[str, Any], request: Request,
                         who: str = Depends(whoami)) -> dict[str, Any]:
-    """{kind, name, from_id?}. A dashboard is a full copy of `from_id` -- a
-    template, or one of the caller's dashboards -- defaulting to the default
-    template. A template is empty, or a copy of another template."""
+    """{kind, name, from_id?, mode?}. A dashboard is a full copy of `from_id` --
+    a template, or one of the caller's dashboards -- defaulting to the default
+    template. A template is empty, or a copy of another template. mode `free`
+    (dashboards only) is EMPTY: nothing is copied, so no from_id."""
     kind = body.get("kind")
     if kind not in layouts.KINDS:
         raise HTTPException(422, f"kind must be one of {list(layouts.KINDS)}")
+    mode = body.get("mode") or "packed"
+    if mode not in layouts.MODES:
+        raise HTTPException(422, f"mode must be one of {list(layouts.MODES)}")
+    if mode == "free" and kind != "dashboard":
+        raise HTTPException(422, "only a dashboard can be free -- templates stay packed")
+    if mode == "free" and body.get("from_id") is not None:
+        raise HTTPException(422, "a free dashboard starts empty; it copies nothing")
     try:
         name = layouts.clean_name(body.get("name"))
     except ValueError as exc:
@@ -728,7 +737,7 @@ async def create_layout(body: dict[str, Any], request: Request,
                 src = await viewable_layout(conn, int(src_id), who)
                 if kind == "template" and src["kind"] != "template":
                     raise HTTPException(422, "a template is copied from another template")
-            elif kind == "dashboard":
+            elif kind == "dashboard" and mode == "packed":
                 src = await default_template(conn)
             # The template a dashboard reverts to: the one copied, or the one
             # the copied dashboard came from.
@@ -737,9 +746,9 @@ async def create_layout(body: dict[str, Any], request: Request,
                 tpl_id = src["id"] if src["kind"] == "template" else src["template_id"]
             try:
                 row = await (await conn.execute(
-                    "INSERT INTO layouts (kind, owner, name, template_id, updated_by) "
-                    "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                    (kind, who if kind == "dashboard" else None, name, tpl_id, who))).fetchone()
+                    "INSERT INTO layouts (kind, owner, name, template_id, mode, updated_by) "
+                    "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                    (kind, who if kind == "dashboard" else None, name, tpl_id, mode, who))).fetchone()
             except psycopg.errors.UniqueViolation:
                 raise HTTPException(409, f"there is already a {kind} called {name!r}") from None
             if src is not None:
@@ -794,6 +803,8 @@ async def revert_layout(lid: int, request: Request, who: str = Depends(whoami)) 
             row = await writable_layout(conn, request, who, lid)
             if row["kind"] != "dashboard":
                 raise HTTPException(422, "only a dashboard reverts to its template")
+            if row.get("mode") == "free":
+                raise HTTPException(422, "a free dashboard has no template to revert to")
             src = None
             if row["template_id"] is not None:
                 src = await (await conn.execute(
@@ -930,21 +941,26 @@ async def add_placement(conn: Any, lay: dict[str, Any], def_id: int, body: dict[
     category = str(body.get("category") or "").strip()
     if not category:
         raise HTTPException(422, "a placement needs a group")
+    try:
+        x = layouts.clean_cell(body.get("x"), "x", layouts.FREE_COLS)
+        y = layouts.clean_cell(body.get("y"), "y", layouts.FREE_ROWS_MAX)
+    except ValueError as exc:
+        raise bad(exc) from None
     ord_ = body.get("ord")
     if isinstance(ord_, int) and not isinstance(ord_, bool):
         # The page knows the group's shared tile+widget sequence; the
         # server only knows the widget half of it.
         r = await (await conn.execute(
-            "INSERT INTO widget_placements (layout_id, def_id, category, ord, created_by) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (lay["id"], def_id, category, ord_, who))).fetchone()
+            "INSERT INTO widget_placements (layout_id, def_id, category, ord, x, y, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (lay["id"], def_id, category, ord_, x, y, who))).fetchone()
     else:
         # Appended: after the widgets already in the group.
         r = await (await conn.execute(
-            "INSERT INTO widget_placements (layout_id, def_id, category, ord, created_by) "
-            "SELECT %s, %s, %s, COALESCE(MAX(ord) + 1, 0), %s FROM widget_placements "
+            "INSERT INTO widget_placements (layout_id, def_id, category, ord, x, y, created_by) "
+            "SELECT %s, %s, %s, COALESCE(MAX(ord) + 1, 0), %s, %s, %s FROM widget_placements "
             "WHERE layout_id = %s AND category = %s RETURNING id",
-            (lay["id"], def_id, category, who, lay["id"], category))).fetchone()
+            (lay["id"], def_id, category, x, y, who, lay["id"], category))).fetchone()
     return r["id"]
 
 
@@ -973,6 +989,13 @@ async def edit_placement(conn: Any, lid: int | None, pid: int, body: dict[str, A
         if not cat:
             raise HTTPException(422, "a placement needs a group")
         sets.append("category = %s"); args.append(cat)
+    for k, hi in (("x", layouts.FREE_COLS), ("y", layouts.FREE_ROWS_MAX)):
+        if k in body:
+            try:
+                v = layouts.clean_cell(body[k], k, hi)
+            except ValueError as exc:
+                raise bad(exc) from None
+            sets.append(f"{k} = %s"); args.append(v)
     for flag in ("hidden", "above_fold"):
         if flag in body:
             if not isinstance(body[flag], bool):
@@ -1558,7 +1581,7 @@ async def list_widgets(request: Request, who: str = Depends(whoami),
             "SELECT id, type, title, config, owner, audience FROM widget_defs "
             "WHERE owner IS NULL OR owner = %s ORDER BY title, id", (who,))).fetchall()
         places = await (await conn.execute(
-            "SELECT id, def_id, category, ord, size, hidden, above_fold FROM widget_placements "
+            "SELECT id, def_id, category, ord, size, hidden, above_fold, x, y FROM widget_placements "
             "WHERE layout_id = %s ORDER BY category, ord, id", (lay["id"],))).fetchall()
     keep = []
     for r in defs:

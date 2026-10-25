@@ -189,6 +189,9 @@ function render() {
                       'not an error — it means no policy binding grants you one.';
     return;
   }
+  // A free dashboard draws its own cells; groups, tabs and sorting are
+  // packed-layout options.
+  if (freeMode()) { renderFree(); return; }
   if (opts.group === 'tabs') { renderTabs(); return; }
   if (opts.group === 'on') {
     var byCat = {};
@@ -345,6 +348,9 @@ function refresh() {
       if (EDIT_MODE && !ownDashboard()) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
       if (ADMIN_MODE) { buildTemplatePicker(); }
       if (EDIT_MODE) { buildEditBar(); }
+      buildDashTabs();
+      // Groups, their sidebar and Revert belong to packed layouts.
+      document.body.classList.toggle('free-mode', freeMode());
       if (arranging()) { buildGroups(); buildWidgetLibrary(); }
       render();
       loadHealth();

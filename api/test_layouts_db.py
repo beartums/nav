@@ -323,6 +323,53 @@ class Layouts(unittest.TestCase):
         self.assertEqual(self.c.put(f"/api/layouts/{self.default()}/placements/{tpid}/widget",
                                     headers=ADMIN, json={"title": "x", "config": {}}).status_code, 422)
 
+    def test_26_widget_hidden_and_above_fold(self):
+        d = self.dash
+        pid = self.c.get("/api/widgets", headers=U, params={"layout": d}).json()["placements"][0]["id"]
+        r = self.c.put(f"/api/layouts/{d}/placements/{pid}", headers=U, json={"hidden": True, "above_fold": True})
+        self.assertEqual(r.status_code, 200, r.text)
+        p = self.c.get("/api/widgets", headers=U, params={"layout": d}).json()["placements"][0]
+        self.assertEqual((p["hidden"], p["above_fold"]), (True, True))
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/placements/{pid}", headers=U,
+                                    json={"hidden": "yes"}).status_code, 422)
+
+    def test_30_a_free_dashboard_starts_empty_and_places_by_cell(self):
+        F = as_("f@x")
+        r = self.c.post("/api/layouts", headers=F, json={"kind": "dashboard", "name": "Free", "mode": "free"})
+        self.assertEqual(r.status_code, 200, r.text)
+        d = r.json()["id"]
+        reply = self.apps(F, layout=d)
+        self.assertEqual(reply["layout"]["mode"], "free")
+        # Every app is still listed (the palette needs them) but none is placed.
+        self.assertTrue(reply["apps"])
+        self.assertTrue(all(a.get("x") is None for a in reply["apps"]), "nothing copied in")
+        self.assertEqual(self.c.get("/api/widgets", headers=F, params={"layout": d}).json()["placements"], [])
+        # Place a tile and a widget at cells.
+        r = self.c.put(f"/api/layouts/{d}/tiles", headers=F, json={"tiles": {"plex": {"x": 4, "y": 2, "size": "M"}}})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((self.by_slug(self.apps(F, layout=d))["plex"]["x"], 
+                          self.by_slug(self.apps(F, layout=d))["plex"]["y"]), (4, 2))
+        r = self.c.post(f"/api/layouts/{d}/placements", headers=F,
+                        json={"def_id": 1, "category": "Page", "x": 0, "y": 0})
+        self.assertEqual(r.status_code, 200, r.text)
+        pid = r.json()["id"]
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/placements/{pid}", headers=F,
+                                    json={"x": 8, "y": 6}).status_code, 200)
+        p = self.c.get("/api/widgets", headers=F, params={"layout": d}).json()["placements"][0]
+        self.assertEqual((p["x"], p["y"]), (8, 6))
+        # Out of range, and the things a free dashboard can't be.
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/placements/{pid}", headers=F,
+                                    json={"x": 24}).status_code, 422)
+        self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
+                                    json={"tiles": {"plex": {"x": -1}}}).status_code, 422)
+        self.assertEqual(self.c.post(f"/api/layouts/{d}/revert", headers=F).status_code, 422)
+        self.assertEqual(self.c.post("/api/layouts", headers=ADMIN,
+                                     json={"kind": "template", "name": "T", "mode": "free"}).status_code, 422)
+        self.assertEqual(self.c.post("/api/layouts", headers=F, json={"kind": "dashboard", "name": "F2",
+                                     "mode": "free", "from_id": d}).status_code, 422)
+        listed = self.c.get("/api/layouts", headers=F).json()["dashboards"]
+        self.assertEqual([(x["name"], x["mode"]) for x in listed], [("Free", "free")])
+
     def test_23_presentation_route_is_presentation_only(self):
         r = self.c.put("/api/admin/presentation", headers=ADMIN,
                        json={"tiles": {"plex": {"name": "Plex!", "icon": "p.svg"}}})
