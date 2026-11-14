@@ -2610,14 +2610,15 @@ test('the calendar steps a week or a month, only as far as its range', async () 
   const now = new window.Date();
   const range = [window.calDay(new window.Date(now.getFullYear(), now.getMonth() - 1, 1)),
                  window.calDay(new window.Date(now.getFullYear(), now.getMonth() + 2, 0))];
+  // Next week's Monday, not today + 8: on a Saturday that is two weeks on (2026-11-14).
+  const sunday = window.calWeekOf(day(0));
   const cal = { type: 'arr.calendar', shape: 'calendar', data: { label: 'Coming up', view: 'week',
     range, warnings: [], events: [
-      { kind: 'movie', date: day(8), title: 'Next week', sub: 'Digital', done: false }] } };
+      { kind: 'movie', date: window.calAdd(sunday, 8), title: 'Next week', sub: 'Digital', done: false }] } };
   const el = doc.createElement('div');
   window.renderWidget(el, cal, { key: 'nav1', size: 'L', span: [8, 4] });
   const nav = () => [...el.querySelectorAll('.cal-nav button')];
   const first = () => el.querySelector('.cal-col .cal-h').textContent;
-  const sunday = window.calWeekOf(day(0));
   assert.equal(first(), window.calName(sunday, day(0), false), 'the week from its Sunday');
   assert.equal(nav().length, 2, 'no Today button at today');
   nav()[1].click();
