@@ -75,6 +75,14 @@ APPS: dict[str, dict[str, Any]] = {
     # No API keys in Navidrome: the "key" is an admin's username:password.
     "navidrome": {"label": "Navidrome", "auth": "bearer", "test": "",
                   "url": "http://navidrome.tools.svc.cluster.local:4533"},
+    "music-assistant": {"label": "Music Assistant", "auth": "bearer", "test": "",
+                        "url": "http://music-assistant.media.svc.cluster.local:8095"},
+    "memos": {"label": "Memos", "auth": "bearer", "test": "", "url": "http://memos.memos.svc.cluster.local:5230"},
+    "aurral": {"label": "Aurral", "auth": "x-api-key", "test": "", "url": "http://aurral.media.svc.cluster.local:3001"},
+    # No API tokens in AFFiNE or Pingvin: the "key" is an admin's login:password.
+    "affine": {"label": "AFFiNE", "auth": "bearer", "test": "", "url": "http://affine.affine.svc.cluster.local:3010"},
+    "pingvin": {"label": "Pingvin Share", "auth": "bearer", "test": "",
+                "url": "http://pingvin-share.tools.svc.cluster.local:3000"},
     "immich": {"label": "Immich", "auth": "x-api-key", "test": "/api/users/me",
                "url": "http://immich-server.immich.svc.cluster.local:2283"},
     "filebrowser": {"label": "FileBrowser", "auth": "bearer", "test": "/api/users",
@@ -96,7 +104,7 @@ APPS: dict[str, dict[str, Any]] = {
 # Connections no widget uses: only read for their accounts (appaccounts.py),
 # so they're on the User management page and not Integrations.
 ACCOUNTS_ONLY = {"jellyseerr", "jellyfin", "plex", "audiobookshelf", "navidrome", "immich",
-                 "filebrowser", "grafana", "paperless"}
+                 "filebrowser", "grafana", "paperless", "music-assistant", "memos", "aurral", "affine", "pingvin"}
 
 STORED: dict[str, dict[str, Any]] = {}
 
@@ -238,7 +246,7 @@ def resolve(slug: str) -> tuple[str, str, str]:
         url = (row.get("url") or "").rstrip("/")
         return url, key, (row.get("public_url") or url).rstrip("/")
     app = APPS[slug]
-    up = slug.upper()
+    up = slug.upper().replace("-", "_")
     url = row.get("url") or os.environ.get(f"NAV_{up}_URL") or app["url"]
     public = (row.get("public_url") or os.environ.get(f"NAV_{up}_PUBLIC")
               or (f"https://{slug}.{APP_DOMAIN}" if APP_DOMAIN else url))
@@ -278,7 +286,7 @@ def describe(slug: str) -> dict[str, Any]:
 
 
 def _describe(slug: str) -> dict[str, Any]:
-    row, up = STORED.get(slug) or {}, slug.upper()
+    row, up = STORED.get(slug) or {}, slug.upper().replace("-", "_")
     if slug not in APPS:
         state = ("stored" if unseal(row["secret"]) is not None else "unreadable") \
             if row.get("secret") else "none"

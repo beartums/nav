@@ -58,6 +58,10 @@ def account(login: Any = None, email: Any = None, name: Any = None, admin: bool 
     def s(v: Any) -> str | None:
         v = str(v).strip() if v not in (None, "") else ""
         return v or None
+    # An app that names its users by email (FileBrowser behind a proxy) and has no
+    # email field: the login IS the email, so let it match as one.
+    if not s(email) and "@" in (s(login) or ""):
+        email = login
     return {"login": s(login), "email": (s(email) or "").lower() or None, "name": s(name),
             "role": "admin" if admin else "user", "disabled": bool(disabled), "last_seen": s(last_seen)}
 
@@ -280,6 +284,92 @@ async def _paperless(client: Any, base: str, key: str) -> list[dict[str, Any]]:
             for u in r.json()["results"]]
 
 
+async def _music_assistant(client: Any, base: str, key: str) -> list[dict[str, Any]]:
+    # controllers/webserver/auth.py: command auth/users over POST /api; a long-lived
+    # token (Bearer) of an admin. Service accounts aren't people: left out.
+    r = await client.post(base + "/api", json={"command": "auth/users", "args": {}},
+                          headers={"Authorization": f"Bearer {key}"})
+    r.raise_for_status()
+    return [account(login=u.get("username"), name=u.get("display_name"), admin=u.get("role") == "admin",
+                    disabled=not u.get("enabled", True))
+            for u in r.json() if u.get("role") != "service"]
+
+
+async def _memos(client: Any, base: str, key: str) -> list[dict[str, Any]]:
+    # user_service.proto: GET /api/users (26.x; /api/v1 is gone), admins only, paged.
+    out: list[dict[str, Any]] = []
+    token = ""
+    for _ in range(50):
+        params = {"pageSize": 1000, **({"pageToken": token} if token else {})}
+        r = await client.get(base + "/api/users", params=params, headers={"Authorization": f"Bearer {key}"})
+        r.raise_for_status()
+        body = r.json()
+        out += [account(login=u.get("username") or (u.get("name") or "").split("/")[-1], email=u.get("email"),
+                        name=u.get("displayName"), admin=u.get("role") in ("ADMIN", "HOST"),
+                        disabled=u.get("state") == "ARCHIVED") for u in body.get("users") or []]
+        token = body.get("nextPageToken") or ""
+        if not token:
+            break
+    return out
+
+
+async def _aurral(client: Any, base: str, key: str) -> list[dict[str, Any]]:
+    # routes/users.ts: GET /api/users (admin); the global API key acts as an admin.
+    r = await client.get(base + "/api/users", headers={"X-Api-Key": key})
+    r.raise_for_status()
+    return [account(login=u.get("username"), admin=u.get("role") == "admin",
+                    disabled=(u.get("status") or "active") != "active") for u in r.json()]
+
+
+def _login(key: str, app: str) -> tuple[str, str]:
+    user, _, password = key.partition(":")
+    if not user or not password:
+        raise ValueError(f"the {app} key is an admin's login:password ({app} has no API keys)")
+    return user, password
+
+
+AFFINE_USERS = ("query($skip:Int!){users(filter:{first:100,skip:$skip}){name email disabled features}}")
+
+
+async def _affine(client: Any, base: str, key: str) -> list[dict[str, Any]]:
+    # No API tokens: sign in (core/auth/controller.ts) and use the session cookie on
+    # the admin-only GraphQL users query (core/user/resolver.ts).
+    email, password = _login(key, "AFFiNE")
+    lg = await client.post(base + "/api/auth/sign-in", json={"email": email, "password": password})
+    lg.raise_for_status()
+    cookie = "; ".join(f"{k}={v}" for k, v in lg.cookies.items())
+    out: list[dict[str, Any]] = []
+    for page in range(50):
+        r = await client.post(base + "/graphql", json={"query": AFFINE_USERS, "variables": {"skip": page * 100}},
+                              headers={"Cookie": cookie})
+        r.raise_for_status()
+        body = r.json()
+        if body.get("errors"):
+            raise ValueError("AFFiNE: " + str(body["errors"][0].get("message", "query refused")))
+        users = (body.get("data") or {}).get("users") or []
+        out += [account(login=u.get("email"), email=u.get("email"), name=u.get("name"),
+                        admin="administrator" in (u.get("features") or []), disabled=bool(u.get("disabled")))
+                for u in users]
+        if len(users) < 100:
+            break
+    return out
+
+
+async def _pingvin(client: Any, base: str, key: str) -> list[dict[str, Any]]:
+    # No API tokens, and the JWT is read from the access_token cookie only
+    # (auth/strategy/jwt.strategy.ts); GET /api/users is admin-only.
+    user, password = _login(key, "Pingvin")
+    lg = await client.post(base + "/api/auth/signIn",
+                           json={("email" if "@" in user else "username"): user, "password": password})
+    lg.raise_for_status()
+    tok = (lg.json() or {}).get("accessToken")
+    if not tok:
+        raise ValueError("Pingvin: no access token (is TOTP on for this admin?)")
+    r = await client.get(base + "/api/users", headers={"Cookie": f"access_token={tok}"})
+    r.raise_for_status()
+    return [account(login=u.get("username"), email=u.get("email"), admin=bool(u.get("isAdmin"))) for u in r.json()]
+
+
 adapter(Adapter("mealie", "Mealie", "mealie", ("mealie",), "first", _mealie,
                 "an admin's API token (profile → API Tokens)"))
 adapter(Adapter("seerr", "Seerr", "seerr", ("seerr",), "first", _seerr, "the API key (Settings → General)"))
@@ -301,3 +391,13 @@ adapter(Adapter("grafana", "Grafana", "grafana", ("grafana",), "first", _grafana
                 "a service account token with org role Admin"))
 adapter(Adapter("paperless", "Paperless", "paperless", ("paperless-ngx",), "first", _paperless,
                 "a superuser's API token"))
+adapter(Adapter("music-assistant", "Music Assistant", "music-assistant", ("speakers",), "manual", _music_assistant,
+                "an admin's long-lived token (profile → long-lived tokens; it lasts a year)"))
+adapter(Adapter("memos", "Memos", "memos", ("memos",), "first", _memos,
+                "an admin's access token (Settings → Access Tokens)"))
+adapter(Adapter("aurral", "Aurral", "aurral", ("aurral",), "first", _aurral,
+                "the API key (Settings → General → API access)"))
+adapter(Adapter("affine", "AFFiNE", "affine", ("affine",), "first", _affine,
+                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)"))
+adapter(Adapter("pingvin", "Pingvin Share", "pingvin", ("share",), "manual", _pingvin,
+                "an admin's username:password (Pingvin has no API tokens; no TOTP)"))
