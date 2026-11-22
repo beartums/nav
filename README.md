@@ -20,6 +20,10 @@ people in and tells nav who is asking.
   HTTP service that speaks a shape. The contract is [docs/widgets.md](docs/widgets.md).
 - **Health**: a red dot on a tile whose app isn't answering.
 - **Impersonation** ("view as") for staff, to see someone else's tiles.
+- **Access** (Manage → Access…): people × groups, with the apps each person
+  reaches. For labs that keep Authentik group membership in Terraform, a click
+  stages a change and **Open PR** turns the staged changes into one pull request
+  on the GitOps repo; nothing changes until it is merged and applied.
 
 ## Layout
 
@@ -55,6 +59,9 @@ through Pomerium** — anyone who can reach it directly can name any user.
 | `NAV_ADMIN_GROUP` | group(s) whose members administer nav, comma-separated -- any one is enough (default `nav-admins`) |
 | `NAV_ADMINS` | comma-separated emails that are admins regardless (break-glass) |
 | `NAV_IMPERSONATE_GROUP` | group allowed to "view as" (default `staff`) |
+| `NAV_ACCESS_GROUP` | group(s) allowed to use Access (default: the admin groups) |
+| `NAV_GITOPS_REPO`, `NAV_GITOPS_TOKEN` | `owner/name` of the repo holding the Authentik Terraform, and a token that may push branches and open PRs there (both unset: Access is off) |
+| `NAV_GITOPS_BASE`, `NAV_GITOPS_TF_DIR` | the branch to read and target (default `main`), and the `.tf` directory (default `terraform/authentik`) |
 | `NAV_APP_DOMAIN` | apps' public links default to `https://<slug>.<this>` |
 | `NAV_<APP>_URL`, `_KEY`, `_PUBLIC` | per-app upstream URL, API key and public link (or set them in the UI) |
 | `NAV_SECRET_KEY` | encrypts API keys stored from the UI |

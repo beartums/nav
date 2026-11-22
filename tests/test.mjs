@@ -4082,3 +4082,35 @@ test('the picker lists your uploads: click one to use it, x to delete it; a tile
   click(doc.querySelector('#bg-picker .bg-thumb-del'));
   await settle(window, () => seen.some((r) => r.method === 'DELETE' && r.url === 'api/images/' + sha), 'DELETE');
 });
+
+test('access: a click stages a change, and Open PR sends them', async () => {
+  let pending = [];
+  const view = () => ({
+    enabled: true, repo: 'o/lab', base: 'main', last_pr: null,
+    groups: [{ name: 'family', managed: true, path: 'tf/a.tf' }, { name: 'nav-admins', managed: false, path: 'tf/a.tf' }],
+    users: [{ pk: 9, username: 'carol', name: 'Carol', email: 'c@example.com', groups: [], live: [], drift: [],
+              apps: [{ slug: 'books', name: 'Calibre-Web' }],
+              gains: pending.length ? ['Jotty'] : [], losses: [], unknown: [] }],
+    pending });
+  const { window, doc, seen } = await boot(APPS, null, (u, o) => {
+    if (u === 'api/admin/access') { return view(); }
+    if (u === 'api/admin/access/changes') { pending = [{ id: 1, pk: 9, name: 'carol', group: 'family', action: 'add' }]; return { pending }; }
+    if (u === 'api/admin/access/pr') { pending = []; return { url: 'https://github.com/o/lab/pull/7' }; }
+    return null;
+  });
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-access-btn').click();
+  await settle(window, () => doc.querySelectorAll('.acc-cell').length === 2, 'matrix');
+  const [fam, admins] = doc.querySelectorAll('.acc-cell');
+  assert.ok(admins.disabled, 'a group whose membership is not in Terraform is read-only');
+  assert.equal(doc.getElementById('editor-save').disabled, true);
+  fam.click();
+  await settle(window, () => doc.querySelector('.acc-staged'), 'staged cell');
+  const post = seen.find((r) => r.url === 'api/admin/access/changes' && r.method === 'POST');
+  assert.deepEqual(JSON.parse(post.body), { pk: 9, group: 'family', add: true, name: 'carol' });
+  assert.equal(doc.querySelector('.acc-gain').textContent, '+ Jotty');
+  assert.equal(doc.getElementById('editor-save').textContent, 'Open PR (1)');
+  doc.getElementById('editor-save').click();
+  await settle(window, () => /Pull request opened/.test(doc.getElementById('editor-note').textContent), 'pr link');
+  assert.ok(seen.some((r) => r.url === 'api/admin/access/pr' && r.method === 'POST'));
+});

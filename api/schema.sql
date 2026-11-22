@@ -314,3 +314,22 @@ CREATE TABLE IF NOT EXISTS image_uploads (
 INSERT INTO image_uploads (sha, owner, created_at)
     SELECT sha, owner, created_at FROM images
      WHERE NOT EXISTS (SELECT 1 FROM image_uploads) ON CONFLICT DO NOTHING;
+
+-- Access panel (access.py): group-membership changes staged until someone
+-- opens them as one pull request, and the pull requests opened.
+CREATE TABLE IF NOT EXISTS access_changes (
+    id         SERIAL      PRIMARY KEY,
+    user_pk    INTEGER     NOT NULL,
+    user_name  TEXT        NOT NULL,
+    group_name TEXT        NOT NULL,
+    action     TEXT        NOT NULL CHECK (action IN ('add', 'remove')),
+    by_whom    TEXT        NOT NULL,
+    at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_pk, group_name)
+);
+CREATE TABLE IF NOT EXISTS access_prs (
+    id      SERIAL      PRIMARY KEY,
+    url     TEXT        NOT NULL,
+    by_whom TEXT        NOT NULL,
+    at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
