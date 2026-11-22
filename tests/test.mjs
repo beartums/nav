@@ -4176,3 +4176,26 @@ test('a tile whose address is /?dashboard=<id> switches dashboards in place', as
   await settle(window, () => seen.some((r) => /api\/apps\?.*layout=7/.test(r.url)), 'reload with layout 7');
   assert.equal(window.localStorage.getItem('nav.layout'), '7', 'this device now shows dashboard 7');
 });
+
+test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
+  const APPV = {
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', error: null, count: 2 },
+           { key: 'grafana', label: 'Grafana', apps: ['grafana'], provision: 'first', error: 'no key -- add one in Connections → Grafana', count: 0 }],
+    people: [{ pk: 5, name: 'Bear', email: 'b@x', cells: { jellyfin: { status: 'account', role: 'admin', disabled: false, last_seen: null, login: 'bear' } } },
+             { pk: 8, name: 'Mum', email: 'm@x', cells: { jellyfin: { status: 'stale', role: 'user', disabled: true, login: 'mum' } } },
+             { pk: 9, name: 'Kid', email: 'k@x', cells: { jellyfin: { status: 'missing', provision: 'manual' } } }],
+    orphans: { jellyfin: [{ login: 'ghost', role: 'user' }] }
+  };
+  const { window, doc } = await boot(APPS, null, (u) =>
+    u === 'api/admin/access' ? { enabled: false } : u.startsWith('api/admin/access/apps') ? APPV : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-switch [data-view="apps"]'), 'switch');
+  doc.querySelector('.acc-switch [data-view="apps"]').click();
+  await settle(window, () => doc.querySelector('.acc-apps-table'), 'app accounts table');
+  const cells = [...doc.querySelectorAll('.acc-apps-table tbody tr')].map((r) => [...r.querySelectorAll('td')].slice(1).map((c) => c.textContent));
+  assert.deepEqual(cells, [['admin', ''], ['⚠ user (disabled)', ''], ['no account', '']]);
+  assert.match(doc.querySelector('.acc-app-err').textContent, /no key/);
+  assert.match(doc.querySelector('.acc-orphans').textContent, /Jellyfin: ghost/);
+  assert.equal(doc.getElementById('adminpage-save').hidden, true, 'nothing to open a PR for here');
+});

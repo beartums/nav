@@ -50,6 +50,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from urls import group_can_see, launchable, offered_to, pick_account, valid_slug
 import access
+import appaccounts
 import creds
 import health
 import images
@@ -1916,8 +1917,10 @@ def known_app(slug: str) -> str:
 
 @app.get("/api/admin/connections")
 async def list_connections(_: str = Depends(require_admin)) -> dict[str, Any]:
+    # An app read for its accounts says what its key must be (often: an admin's).
+    notes = {a.conn: a.note for a in appaccounts.ADAPTERS.values() if a.note}
     return {"can_store": creds.can_store(),
-            "connections": [creds.describe(s) for s in creds.slugs()]}
+            "connections": [creds.describe(s) | ({"note": notes[s]} if s in notes else {}) for s in creds.slugs()]}
 
 
 @app.post("/api/admin/connections")
@@ -2010,6 +2013,13 @@ async def test_connection(slug: str, _: str = Depends(require_admin)) -> dict[st
     url, key, _pub = creds.resolve(slug)
     if not key:
         return {"ok": False, "detail": "no key set"}
+    ad = next((a for a in appaccounts.ADAPTERS.values() if a.conn == slug), None)
+    if ad is not None:
+        # An app read for its accounts: the test is that read.
+        got = await _read_app(ad, url, key)
+        if got["error"]:
+            return {"ok": False, "detail": got["error"]}
+        return {"ok": True, "detail": f"connected to {url}: {len(got['accounts'])} account(s) listed"}
     try:
         async with httpx.AsyncClient(timeout=6) as client:
             test = creds.APPS[slug]["test"] if slug in creds.APPS else ""
@@ -2466,6 +2476,62 @@ async def get_access(_: str = Depends(require_access_admin), fresh: bool = False
         last = await cur.fetchone()
     view["last_pr"] = last and {"url": last["url"], "by": last["by_whom"], "at": last["at"].isoformat()}
     return view
+
+
+# --- app accounts: who has an account in each app (appaccounts.py) --------------
+
+_APPS_CACHE: dict[str, Any] = {"at": 0.0, "data": None}
+
+
+async def _read_app(ad: Any, url: str, key: str) -> dict[str, Any]:
+    """One app's accounts, or why not -- never raises."""
+    if not url:
+        return {"accounts": [], "error": f"no address -- set it in Connections → {ad.label}"}
+    if not key:
+        return {"accounts": [], "error": f"no key -- add one in Connections → {ad.label}"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            return {"accounts": await ad.fetch(client, url, key), "error": None}
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        why = "the key was refused (does it belong to an admin?)" if code in (401, 403) else f"HTTP {code}"
+        return {"accounts": [], "error": why}
+    except httpx.HTTPError as exc:
+        return {"accounts": [], "error": f"{type(exc).__name__}: cannot reach {url}"}
+    except (ValueError, KeyError, TypeError) as exc:
+        return {"accounts": [], "error": f"unexpected reply ({type(exc).__name__}: {exc})"[:200]}
+
+
+async def _read_apps(fresh: bool) -> dict[str, dict[str, Any]]:
+    if not fresh and _APPS_CACHE["data"] is not None and time.monotonic() - _APPS_CACHE["at"] < ACCESS_TTL:
+        return _APPS_CACHE["data"]
+
+    async def one(ad: Any) -> tuple[str, dict[str, Any]]:
+        url, key, _ = creds.resolve(ad.conn)
+        return ad.key, await _read_app(ad, url, key)
+
+    data = dict(await asyncio.gather(*(one(a) for a in appaccounts.ADAPTERS.values())))
+    _APPS_CACHE.update(at=time.monotonic(), data=data)
+    return data
+
+
+@app.get("/api/admin/access/apps")
+async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool = False) -> dict[str, Any]:
+    """Each app's own accounts, lined up against the people in Authentik.
+    Read-only; reused for a minute (?fresh=1 reads again)."""
+    ak, got = await asyncio.gather(_authentik_access(fresh), _read_apps(fresh))
+    m = appaccounts.match(ak["users"], {k: v["accounts"] for k, v in got.items() if not v["error"]},
+                          ak["reach"])
+    print(f"access: {who} read app accounts", flush=True)
+    return {
+        "apps": [{"key": a.key, "label": a.label, "conn": a.conn, "apps": list(a.apps), "provision": a.provision,
+                  "error": got[a.key]["error"], "count": len(got[a.key]["accounts"])}
+                 for a in appaccounts.ADAPTERS.values()],
+        "people": sorted(({"pk": u["pk"], "name": u.get("name") or u.get("username"), "email": u.get("email"),
+                           "cells": m["people"].get(u["pk"], {})} for u in ak["users"]),
+                         key=lambda x: (x["name"] or "").lower()),
+        "orphans": {k: v for k, v in m["orphans"].items() if v},
+    }
 
 
 @app.post("/api/admin/access/changes")

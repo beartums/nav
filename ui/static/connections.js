@@ -45,6 +45,8 @@ function connectionsPage(h) {
     box.appendChild(legend);
     var state = div('note conn-state' + (c.key === 'unreadable' ? ' conn-bad' : ''), CONN_KEY_WORDS[c.key](c));
     box.appendChild(state);
+    // What the key must be, for an app read for its accounts (Access → App accounts).
+    if (c.note) { box.appendChild(div('note conn-need', 'Key: ' + c.note)); }
     var url = field(c.custom ? 'Base URL (its key is sent only under this)' : 'Address nav uses',
                     c.url_set ? c.url : '', c.default_url);
     var pub = field('Link address for people', c.public_set ? c.public_url : '', c.public_url);

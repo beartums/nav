@@ -44,8 +44,108 @@ function accessPage(h) {
     return td;
   }
 
+  // Two views: group membership (staged as a PR), and each app's own accounts (read-only).
+  var mode = 'groups', apps = null;
+  function switcher() {
+    var sw = div('acc-switch');
+    [['groups', 'Groups'], ['apps', 'App accounts']].forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.textContent = m[1]; b.dataset.view = m[0];
+      b.setAttribute('aria-pressed', String(mode === m[0]));
+      b.addEventListener('click', function () {
+        if (mode === m[0]) { return; }
+        mode = m[0];
+        if (mode === 'apps' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
+      });
+      sw.appendChild(b);
+    });
+    h.body.appendChild(sw);
+  }
+
+  function renderApps() {
+    save.hidden = true;
+    note.textContent = '';
+    var intro = div('note', "Each app's own accounts, read from the app with its key in Connections, matched to " +
+      'Authentik people by email, then username. Read-only. Up to a minute old. ');
+    var again = document.createElement('button');
+    again.type = 'button'; again.className = 'linkish'; again.textContent = 'Refresh';
+    again.addEventListener('click', function () { note.textContent = 'Reading each app…'; loadApps(true); });
+    intro.appendChild(again);
+    h.body.appendChild(intro);
+    var t = document.createElement('table');
+    t.className = 'acc-table acc-apps-table';
+    var hr = document.createElement('tr');
+    var th0 = document.createElement('th'); th0.textContent = 'Person'; hr.appendChild(th0);
+    apps.apps.forEach(function (a) {
+      var th = document.createElement('th');
+      th.textContent = a.label;
+      if (a.error) {
+        th.className = 'acc-app-err';
+        th.appendChild(div('acc-err', '\u26a0 ' + a.error));
+      } else {
+        th.title = a.count + ' account(s) · Authentik app: ' + a.apps.join(', ') +
+          (a.provision === 'first' ? ' · accounts are made at first sign-in' : ' · an admin makes the accounts');
+      }
+      hr.appendChild(th);
+    });
+    t.appendChild(document.createElement('thead')).appendChild(hr);
+    var tb = document.createElement('tbody');
+    apps.people.forEach(function (p) {
+      var tr = document.createElement('tr');
+      var who = document.createElement('td');
+      who.className = 'acc-who';
+      who.textContent = p.name;
+      who.appendChild(div('note', p.email || ''));
+      tr.appendChild(who);
+      apps.apps.forEach(function (a) {
+        var td = document.createElement('td');
+        var c = p.cells[a.key];
+        if (a.error) { td.className = 'acc-na'; }
+        else if (!c) { td.textContent = ''; }
+        else if (c.status === 'missing') {
+          td.className = c.provision === 'first' ? 'acc-notyet' : 'acc-missing';
+          td.textContent = c.provision === 'first' ? 'not signed in' : 'no account';
+          td.title = c.provision === 'first'
+            ? 'Authentik lets them open ' + a.label + '; the account appears at their first sign-in'
+            : 'Authentik lets them open ' + a.label + ', but nobody has made them an account';
+        } else {
+          td.className = c.status === 'stale' ? 'acc-stale' : (c.role === 'admin' ? 'acc-admin' : 'acc-user');
+          td.textContent = (c.status === 'stale' ? '\u26a0 ' : '') + c.role + (c.disabled ? ' (disabled)' : '');
+          td.title = (c.login ? 'Account: ' + c.login : 'Account') +
+            (c.last_seen ? ' · last seen ' + c.last_seen : '') +
+            (c.status === 'stale' ? ' · Authentik no longer lets them open ' + a.label + ': a leftover account' : '');
+          if (c.disabled) { td.classList.add('acc-disabled'); }
+        }
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    h.body.appendChild(t);
+    var keys = Object.keys(apps.orphans || {});
+    if (keys.length) {
+      var box = div('acc-orphans');
+      box.appendChild(div('ts-lab', 'Accounts that match nobody in Authentik'));
+      keys.forEach(function (k) {
+        var a = apps.apps.filter(function (x) { return x.key === k; })[0];
+        box.appendChild(div('note', (a ? a.label : k) + ': ' + apps.orphans[k].map(function (o) {
+          return (o.login || o.email || '?') + (o.role === 'admin' ? ' (admin)' : '') + (o.disabled ? ' (disabled)' : '');
+        }).join(', ')));
+      });
+      h.body.appendChild(box);
+    }
+  }
+
+  function loadApps(fresh) {
+    return connSend('GET', 'api/admin/access/apps' + (fresh ? '?fresh=1' : ''))
+      .then(function (v) { apps = v; note.textContent = ''; render(); })
+      .catch(function (e) { note.textContent = 'Could not read the apps: ' + e.message; });
+  }
+
   function render() {
     h.body.innerHTML = '';
+    switcher();
+    if (mode === 'apps') { renderApps(); return; }
     if (!view.enabled) {
       h.body.appendChild(div('note', 'The Access panel is off: nav-api needs NAV_GITOPS_REPO and NAV_GITOPS_TOKEN.'));
       save.disabled = true;
