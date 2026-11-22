@@ -1919,8 +1919,16 @@ def known_app(slug: str) -> str:
 async def list_connections(_: str = Depends(require_admin)) -> dict[str, Any]:
     # An app read for its accounts says what its key must be (often: an admin's).
     notes = {a.conn: a.note for a in appaccounts.ADAPTERS.values() if a.note}
+
+    # Which admin page shows it: Integrations (widgets read it), User
+    # management (its accounts are read), or both -- one key either way.
+    def uses(s: str) -> list[str]:
+        out = [] if s in creds.ACCOUNTS_ONLY else ["widgets"]
+        return out + (["accounts"] if s in notes else [])
+
     return {"can_store": creds.can_store(),
-            "connections": [creds.describe(s) | ({"note": notes[s]} if s in notes else {}) for s in creds.slugs()]}
+            "connections": [creds.describe(s) | {"uses": uses(s)} | ({"note": notes[s]} if s in notes else {})
+                            for s in creds.slugs()]}
 
 
 @app.post("/api/admin/connections")
@@ -2006,17 +2014,34 @@ async def save_connection(slug: str, body: dict[str, Any],
 
 
 @app.post("/api/admin/connections/{slug}/test")
-async def test_connection(slug: str, _: str = Depends(require_admin)) -> dict[str, Any]:
-    """One cheap authenticated call with what is saved. The answer is a
-    result, not a status code: a refused key is a 200 saying so."""
+async def test_connection(slug: str, body: dict[str, Any] | None = None,
+                          _: str = Depends(require_admin)) -> dict[str, Any]:
+    """One cheap authenticated call. {url?, key?} tests what is typed, before
+    saving; a field left out is the saved value. The answer is a result, not
+    a status code: a refused key is a 200 saying so."""
     known_app(slug)
     url, key, _pub = creds.resolve(slug)
+    body = body or {}
+    try:
+        new_url = creds.clean_url(body.get("url"), "url") if body.get("url") else None
+        new_key = creds.clean_key(body["key"]) if body.get("key") else None
+    except creds.CredError as exc:
+        return {"ok": False, "detail": str(exc)}
+    if new_url and new_url.rstrip("/") != url and not new_key:
+        # The saved key only ever goes where it was saved for.
+        return {"ok": False, "detail": "testing a new address needs the key typed too"}
+    url, key = (new_url or url).rstrip("/"), new_key or key
+    if not url:
+        return {"ok": False, "detail": "no address set"}
     if not key:
         return {"ok": False, "detail": "no key set"}
+    saved = not new_url and not new_key       # a try of what is stored, worth remembering
     ad = next((a for a in appaccounts.ADAPTERS.values() if a.conn == slug), None)
     if ad is not None:
         # An app read for its accounts: the test is that read.
         got = await _read_app(ad, url, key)
+        if saved:
+            creds.note(slug, not got["error"], got["error"] or "")
         if got["error"]:
             return {"ok": False, "detail": got["error"]}
         return {"ok": True, "detail": f"connected to {url}: {len(got['accounts'])} account(s) listed"}
@@ -2025,12 +2050,14 @@ async def test_connection(slug: str, _: str = Depends(require_admin)) -> dict[st
             test = creds.APPS[slug]["test"] if slug in creds.APPS else ""
             r = await client.get(url + test, headers=creds.headers(slug, key), params=creds.params(slug, key))
     except httpx.HTTPError as exc:
-        return {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
-    if r.status_code in (401, 403):
-        return {"ok": False, "detail": f"HTTP {r.status_code}: the key was refused"}
-    if r.status_code >= 400:
-        return {"ok": False, "detail": f"HTTP {r.status_code} from {url}"}
-    return {"ok": True, "detail": f"connected to {url}"}
+        out = {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
+    else:
+        out = ({"ok": False, "detail": f"HTTP {r.status_code}: the key was refused"} if r.status_code in (401, 403)
+               else {"ok": False, "detail": f"HTTP {r.status_code} from {url}"} if r.status_code >= 400
+               else {"ok": True, "detail": f"connected to {url}"})
+    if saved:
+        creds.note(slug, out["ok"], "" if out["ok"] else out["detail"])
+    return out
 
 
 @app.post("/api/admin/widgets")
@@ -2372,16 +2399,18 @@ def _shown(a: dict[str, Any]) -> bool:
     return not a.get("meta_hide") and launchable(a.get("launch_url") or a.get("meta_launch_url"))
 
 
-# Authentik's answer is reused for a minute: every click in the panel redraws
-# it, and the per-person checks are the slow part (~1.5 s each). ?fresh=1
-# (the panel's Refresh) reads again.
-ACCESS_TTL = 60
+# The Access panel's reads (Authentik, and each app's accounts) are reused for
+# ten minutes: who has what changes rarely, the per-person checks are the slow
+# part (~1.5 s each), and the page shows how old they are. ?fresh=1 (the
+# panel's Refresh, and after opening a PR) reads again. NOT ACCESS_TTL above:
+# that one bounds how long a revoked app's widgets keep loading.
+PANEL_TTL = 600
 _AK_CACHE: dict[str, Any] = {"at": 0.0, "data": None}
 
 
 async def _authentik_access(fresh: bool = False) -> dict[str, Any]:
     """Users, groups, applications and their bindings: one round of reads, in parallel."""
-    if not fresh and _AK_CACHE["data"] is not None and time.monotonic() - _AK_CACHE["at"] < ACCESS_TTL:
+    if not fresh and _AK_CACHE["data"] is not None and time.monotonic() - _AK_CACHE["at"] < PANEL_TTL:
         return _AK_CACHE["data"]
     if not AUTHENTIK_TOKEN:
         raise HTTPException(503, "AUTHENTIK_TOKEN is not set")
@@ -2409,7 +2438,7 @@ async def _authentik_access(fresh: bool = False) -> dict[str, Any]:
         if x.get("target") in uuids:
             by_target.setdefault(x["target"], []).append(x)
     data = {"users": users, "apps": [x for x in apps if _shown(x)], "by_target": by_target, "reach": reach}
-    _AK_CACHE.update(at=time.monotonic(), data=data)
+    _AK_CACHE.update(at=time.monotonic(), data=data, wall=time.time())
     return data
 
 
@@ -2475,6 +2504,7 @@ async def get_access(_: str = Depends(require_access_admin), fresh: bool = False
         cur = await conn.execute("SELECT url, by_whom, at FROM access_prs ORDER BY at DESC LIMIT 1")
         last = await cur.fetchone()
     view["last_pr"] = last and {"url": last["url"], "by": last["by_whom"], "at": last["at"].isoformat()}
+    view["as_of"] = _AK_CACHE.get("wall") or time.time()
     return view
 
 
@@ -2495,6 +2525,9 @@ async def _read_app(ad: Any, url: str, key: str) -> dict[str, Any]:
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         why = "the key was refused (does it belong to an admin?)" if code in (401, 403) else f"HTTP {code}"
+        if code == 400 and "Bad Request (400)" in exc.response.text:
+            # Django's answer to a Host it doesn't list, before the key is read.
+            why = "HTTP 400: the app refused the address nav uses (a Django app's ALLOWED_HOSTS), not the key"
         return {"accounts": [], "error": why}
     except httpx.HTTPError as exc:
         return {"accounts": [], "error": f"{type(exc).__name__}: cannot reach {url}"}
@@ -2503,15 +2536,18 @@ async def _read_app(ad: Any, url: str, key: str) -> dict[str, Any]:
 
 
 async def _read_apps(fresh: bool) -> dict[str, dict[str, Any]]:
-    if not fresh and _APPS_CACHE["data"] is not None and time.monotonic() - _APPS_CACHE["at"] < ACCESS_TTL:
+    if not fresh and _APPS_CACHE["data"] is not None and time.monotonic() - _APPS_CACHE["at"] < PANEL_TTL:
         return _APPS_CACHE["data"]
 
     async def one(ad: Any) -> tuple[str, dict[str, Any]]:
         url, key, _ = creds.resolve(ad.conn)
-        return ad.key, await _read_app(ad, url, key)
+        got = await _read_app(ad, url, key)
+        if url and key:              # a missing key isn't a failed try
+            creds.note(ad.conn, not got["error"], got["error"] or "")
+        return ad.key, got
 
     data = dict(await asyncio.gather(*(one(a) for a in appaccounts.ADAPTERS.values())))
-    _APPS_CACHE.update(at=time.monotonic(), data=data)
+    _APPS_CACHE.update(at=time.monotonic(), data=data, wall=time.time())
     return data
 
 
@@ -2531,6 +2567,7 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
                            "cells": m["people"].get(u["pk"], {})} for u in ak["users"]),
                          key=lambda x: (x["name"] or "").lower()),
         "orphans": {k: v for k, v in m["orphans"].items() if v},
+        "as_of": min(_AK_CACHE.get("wall") or time.time(), _APPS_CACHE.get("wall") or time.time()),
     }
 
 

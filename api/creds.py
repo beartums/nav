@@ -67,8 +67,9 @@ APPS: dict[str, dict[str, Any]] = {
     "jellyseerr": {"label": "Jellyseerr", "auth": "x-api-key", "test": "/api/v1/request/count",
                    "url": "http://jellyseerr.media.svc.cluster.local:5055"},
     "jellyfin": {"label": "Jellyfin", "auth": "query:ApiKey", "test": "/System/Info", "url": ""},
-    "plex": {"label": "Plex (plex.tv)", "auth": "header:X-Plex-Token", "test": "/users/account.json",
-             "url": "https://plex.tv"},
+    # The local Plex server (its machine id picks out who it is shared with);
+    # the shared users themselves come from plex.tv with the same token.
+    "plex": {"label": "Plex", "auth": "header:X-Plex-Token", "test": "/identity", "url": ""},
     "audiobookshelf": {"label": "Audiobookshelf", "auth": "bearer", "test": "/api/me",
                        "url": "http://audiobookshelf.audiobooks.svc.cluster.local"},
     # No API keys in Navidrome: the "key" is an admin's username:password.
@@ -92,7 +93,35 @@ APPS: dict[str, dict[str, Any]] = {
 
 # slug -> {url, public_url, secret (sealed), hint, label, auth, custom}; loaded from the database
 # at start and after every write (app.py). One replica, so one copy.
+# Connections no widget uses: only read for their accounts (appaccounts.py),
+# so they're on the User management page and not Integrations.
+ACCOUNTS_ONLY = {"jellyseerr", "jellyfin", "plex", "audiobookshelf", "navidrome", "immich",
+                 "filebrowser", "grafana", "paperless"}
+
 STORED: dict[str, dict[str, Any]] = {}
+
+# HOW EACH CONNECTION HAS BEEN DOING: the last few uses (widget fetches,
+# account reads, Test), newest last, so the Connections pages can show green
+# for "working" and a red dot for "failed lately". In memory, per pod: a
+# restart forgets, which is fine for "lately". Only failures that are the
+# CONNECTION's (unreachable, key refused, server error) are noted as errors --
+# not, say, choreboard refusing one person an action.
+RECENT = 10
+_HEALTH: dict[str, Any] = {}
+
+
+def note(slug: str, ok: bool, detail: str = "") -> None:
+    import collections
+    import time
+    q = _HEALTH.setdefault(slug, collections.deque(maxlen=RECENT))
+    q.append({"at": time.time(), "ok": bool(ok), "detail": str(detail)[:200]})
+
+
+def health(slug: str) -> dict[str, Any]:
+    q = list(_HEALTH.get(slug) or [])
+    errs = [x for x in q if not x["ok"]]
+    return {"tries": len(q), "errors": len(errs), "last_error": errs[-1] if errs else None,
+            "last_ok": next((x["at"] for x in reversed(q) if x["ok"]), None)}
 
 KEY_MAX = 512
 AUTH_STYLES = ("bearer", "x-api-key")   # or "header:<Name>"
@@ -244,7 +273,11 @@ def headers(slug: str, key: str) -> dict[str, str]:
 
 
 def describe(slug: str) -> dict[str, Any]:
-    """What the admin UI shows. NEVER the key."""
+    """What the admin UI shows, with how it has been doing. NEVER the key."""
+    return _describe(slug) | {"health": health(slug)}
+
+
+def _describe(slug: str) -> dict[str, Any]:
     row, up = STORED.get(slug) or {}, slug.upper()
     if slug not in APPS:
         state = ("stored" if unseal(row["secret"]) is not None else "unreadable") \

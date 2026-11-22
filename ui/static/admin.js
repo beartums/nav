@@ -392,4 +392,6 @@ function setAdminMode(on) {
   showAdminTab('templates');
   refresh();
 }
-document.getElementById('admin-done').addEventListener('click', function () { setAdminMode(false); });
+document.getElementById('admin-done').addEventListener('click', function () {
+  if (adminLeaveOk()) { setAdminMode(false); }
+});

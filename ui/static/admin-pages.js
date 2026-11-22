@@ -10,10 +10,23 @@
 'use strict';
 
 var ADMIN_TAB = 'templates';
+// A page with changes not yet saved: leaving it (another tab, Done, closing
+// the window) asks first. Pages report it through their host's setDirty().
+var ADMIN_DIRTY = false;
+function adminLeaveOk() {
+  if (!ADMIN_DIRTY) { return true; }
+  if (!confirm('You have unsaved changes on this page. Leave without saving them?')) { return false; }
+  ADMIN_DIRTY = false;
+  return true;
+}
+window.addEventListener('beforeunload', function (e) {
+  if (ADMIN_DIRTY && ADMIN_MODE) { e.preventDefault(); e.returnValue = ''; }
+});
 var ADMIN_PAGES = {
   access: { title: 'Access', draw: function (h) { accessPage(h); } },
   site: { title: 'Site settings', draw: function (h) { sitePage(h); } },
-  connections: { title: 'Connections', draw: function (h) { connectionsPage(h); } }
+  integrations: { title: 'Integrations', draw: function (h) { connectionsPage(h, 'integrations'); } },
+  users: { title: 'User management', draw: function (h) { connectionsPage(h, 'users'); } }
 };
 
 function adminHost() {
@@ -28,7 +41,9 @@ function adminHost() {
   fresh.onclick = null;
   var note = document.getElementById('adminpage-note');
   note.textContent = '';
-  return { body: document.getElementById('adminpage-body'), note: note, save: fresh };
+  ADMIN_DIRTY = false;
+  return { body: document.getElementById('adminpage-body'), note: note, save: fresh,
+           setDirty: function (on) { ADMIN_DIRTY = !!on; } };
 }
 
 function showAdminTab(tab) {
@@ -49,5 +64,5 @@ function showAdminTab(tab) {
 
 document.getElementById('admintabs').addEventListener('click', function (ev) {
   var b = ev.target.closest('[data-tab]');
-  if (b && ADMIN_MODE) { showAdminTab(b.dataset.tab); }
+  if (b && ADMIN_MODE && b.dataset.tab !== ADMIN_TAB && adminLeaveOk()) { showAdminTab(b.dataset.tab); }
 });

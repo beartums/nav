@@ -92,3 +92,17 @@ class QueryKeys(unittest.TestCase):
         self.assertEqual(creds.params("ticketmaster", "k1"), {"apikey": "k1"})
         self.assertEqual(creds.headers("ticketmaster", "k1"), {})
         self.assertEqual(creds.params("sonarr", "k1"), {})
+
+
+class Health(unittest.TestCase):
+    def test_recent_tries_and_last_error(self):
+        creds._HEALTH.clear()
+        self.assertEqual(creds.health("x"), {"tries": 0, "errors": 0, "last_error": None, "last_ok": None})
+        creds.note("x", True)
+        creds.note("x", False, "HTTP 500")
+        creds.note("x", True)
+        h = creds.health("x")
+        self.assertEqual((h["tries"], h["errors"], h["last_error"]["detail"]), (3, 1, "HTTP 500"))
+        for _ in range(creds.RECENT):
+            creds.note("x", True)
+        self.assertEqual(creds.health("x")["errors"], 0, "only the last few tries count")
