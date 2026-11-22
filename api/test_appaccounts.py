@@ -39,6 +39,13 @@ class Match(unittest.TestCase):
         self.assertEqual(got["people"][9]["jf"]["login"], "mum")
         self.assertNotIn("jf", got["people"][8])
 
+    def test_email_shaped_login_matches_as_email(self):
+        # FileBrowser behind a proxy: the username is the email, no email field.
+        found = {"jf": [aa.account(login="Kid@x.test")]}
+        got = aa.match(PEOPLE, found, {}, AD)
+        self.assertEqual(got["people"][9]["jf"]["login"], "Kid@x.test")
+        self.assertEqual(got["orphans"]["jf"], [])
+
     def test_account_shape(self):
         self.assertEqual(aa.account(login=" a ", email="A@B.C", name="", last_seen=""),
                          {"login": "a", "email": "a@b.c", "name": None, "role": "user",
@@ -55,8 +62,8 @@ import json as _json  # noqa: E402
 
 
 class _Resp:
-    def __init__(self, body, status=200, text=None):
-        self.status_code, self._body = status, body
+    def __init__(self, body, status=200, text=None, cookies=None):
+        self.status_code, self._body, self.cookies = status, body, cookies or {}
         self.text = text if text is not None else _json.dumps(body)
 
     def json(self):
@@ -157,3 +164,61 @@ class Adapters(unittest.TestCase):
         self.assertEqual(got[0]["role"], "admin")
         got, _ = run(aa._filebrowser, {"/api/users": _Resp([{"username": "a", "permissions": {"admin": True}}])})
         self.assertEqual(got[0]["role"], "admin")
+
+    def test_music_assistant_drops_service_accounts(self):
+        got, c = run(aa._music_assistant, {"/api": _Resp([
+            {"username": "bear", "display_name": "Bear", "role": "admin", "enabled": True},
+            {"username": "kid", "role": "user", "enabled": False},
+            {"username": "ha", "role": "service", "enabled": True}])})
+        self.assertEqual(c.seen[0][1], {"command": "auth/users", "args": {}})
+        self.assertEqual(c.seen[0][2], {"Authorization": "Bearer k"})
+        self.assertEqual([(a["login"], a["role"], a["disabled"]) for a in got],
+                         [("bear", "admin", False), ("kid", "user", True)])
+
+    def test_memos_pages_and_archived(self):
+        class Paged(_Client):
+            async def get(self, url, params=None, headers=None):
+                self.seen.append((url, params, headers))
+                if not params.get("pageToken"):
+                    return _Resp({"users": [{"name": "users/bear", "username": "bear", "role": "ADMIN",
+                                             "email": "B@x"}], "nextPageToken": "p2"})
+                return _Resp({"users": [{"name": "users/old", "role": "USER", "state": "ARCHIVED"}]})
+        c = Paged({})
+        got = asyncio.run(aa._memos(c, "http://app", "k"))
+        self.assertEqual(c.seen[0][0], "http://app/api/users")
+        self.assertEqual(c.seen[1][1]["pageToken"], "p2")
+        self.assertEqual([(a["login"], a["role"], a["disabled"]) for a in got],
+                         [("bear", "admin", False), ("old", "user", True)])
+
+    def test_aurral(self):
+        got, c = run(aa._aurral, {"/api/users": _Resp([{"username": "bear", "role": "admin", "status": "active"},
+                                                       {"username": "kid", "role": "user", "status": "suspended"}])})
+        self.assertEqual(c.seen[0][2], {"X-Api-Key": "k"})
+        self.assertEqual([(a["role"], a["disabled"]) for a in got], [("admin", False), ("user", True)])
+
+    def test_affine_signs_in_and_reads_with_the_session(self):
+        got, c = run(aa._affine, {
+            "/api/auth/sign-in": _Resp({}, cookies={"affine_session": "S", "affine_user_id": "U"}),
+            "/graphql": _Resp({"data": {"users": [{"email": "b@x", "name": "Bear", "features": ["administrator"]},
+                                                  {"email": "k@x", "disabled": True, "features": []}]}})},
+            key="b@x:pa:ss")
+        self.assertEqual(c.seen[0][1], {"email": "b@x", "password": "pa:ss"})
+        self.assertEqual(c.seen[1][2], {"Cookie": "affine_session=S; affine_user_id=U"})
+        self.assertEqual([(a["login"], a["role"], a["disabled"]) for a in got],
+                         [("b@x", "admin", False), ("k@x", "user", True)])
+        with self.assertRaises(ValueError):
+            run(aa._affine, {"/api/auth/sign-in": _Resp({}), "/graphql": _Resp({"errors": [{"message": "no"}]})},
+                key="b@x:pw")
+        with self.assertRaises(ValueError):
+            run(aa._affine, {}, key="nopassword")
+
+    def test_pingvin_signs_in_and_sends_the_cookie(self):
+        got, c = run(aa._pingvin, {"/api/auth/signIn": _Resp({"accessToken": "JWT"}),
+                                   "/api/users": _Resp([{"username": "bear", "email": "b@x", "isAdmin": True}])},
+                     key="bear:pw")
+        self.assertEqual(c.seen[0][1], {"username": "bear", "password": "pw"})
+        self.assertEqual(c.seen[1][2], {"Cookie": "access_token=JWT"})
+        self.assertEqual(got[0]["role"], "admin")
+        _, c = run(aa._pingvin, {"/api/auth/signIn": _Resp({"accessToken": "J"}), "/api/users": _Resp([])},
+                   key="b@x:pw")
+        self.assertEqual(c.seen[0][1], {"email": "b@x", "password": "pw"})
