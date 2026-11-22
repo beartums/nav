@@ -1919,8 +1919,16 @@ def known_app(slug: str) -> str:
 async def list_connections(_: str = Depends(require_admin)) -> dict[str, Any]:
     # An app read for its accounts says what its key must be (often: an admin's).
     notes = {a.conn: a.note for a in appaccounts.ADAPTERS.values() if a.note}
+
+    # Which admin page shows it: Integrations (widgets read it), User
+    # management (its accounts are read), or both -- one key either way.
+    def uses(s: str) -> list[str]:
+        out = [] if s in creds.ACCOUNTS_ONLY else ["widgets"]
+        return out + (["accounts"] if s in notes else [])
+
     return {"can_store": creds.can_store(),
-            "connections": [creds.describe(s) | ({"note": notes[s]} if s in notes else {}) for s in creds.slugs()]}
+            "connections": [creds.describe(s) | {"uses": uses(s)} | ({"note": notes[s]} if s in notes else {})
+                            for s in creds.slugs()]}
 
 
 @app.post("/api/admin/connections")

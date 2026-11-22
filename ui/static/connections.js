@@ -30,7 +30,12 @@ var CONN_KEY_WORDS = {
   unreadable: function () { return 'Stored key cannot be decrypted (the master key changed) — enter it again'; }
 };
 
-function connectionsPage(h) {
+// Two pages over the same connections (admin-pages.js): `integrations`, what
+// widgets use (plus custom ones for remote widgets), and `users`, the apps
+// read for their accounts. One read for both (Seerr, Mealie, choreboard) is on
+// both pages: the same key, so a change on either is the change.
+function connectionsPage(h, which) {
+  which = which || 'integrations';
   var note = h.note;
   note.textContent = 'Loading…';
   h.body.innerHTML = '';
@@ -201,12 +206,26 @@ function connectionsPage(h) {
       note.textContent = '';
       h.save.disabled = true;
       h.setDirty(false);
-      var intro = div('note', b.can_store
-        ? 'Widgets use these to reach each app. Keys are encrypted in nav’s database and never shown again.'
-        : 'Keys cannot be stored: nav-api has no NAV_SECRET_KEY. Addresses can still be set; keys can come from the server’s environment.');
+      var intro = div('note', !b.can_store
+        ? 'Keys cannot be stored: nav-api has no NAV_SECRET_KEY. Addresses can still be set; keys can come from the server’s environment.'
+        : which === 'users'
+          ? 'Apps read for their accounts (Access → App accounts). Most keys must belong to an admin; each says what it needs. ' +
+            'Test checks what is typed and, when it works, keeps it. Keys are encrypted and never shown again.'
+          : 'Widgets use these to reach each app. Test checks what is typed and, when it works, keeps it. ' +
+            'Keys are encrypted in nav’s database and never shown again.');
       h.body.appendChild(intro);
-      b.connections.forEach(function (c) { h.body.appendChild(row(c, b.can_store)); });
-      h.body.appendChild(addForm(b.can_store));
+      var want = which === 'users' ? 'accounts' : 'widgets';
+      b.connections.forEach(function (c) {
+        var uses = c.uses || (c.custom ? ['widgets'] : ['widgets']);
+        if (uses.indexOf(want) === -1) { return; }
+        var box = row(c, b.can_store);
+        if (uses.length > 1) {
+          box.querySelector('legend').appendChild(document.createTextNode(
+            which === 'users' ? ' \u00b7 also used by widgets' : ' \u00b7 also read for its accounts'));
+        }
+        h.body.appendChild(box);
+      });
+      if (which === 'integrations') { h.body.appendChild(addForm(b.can_store)); }
     });
   }
 

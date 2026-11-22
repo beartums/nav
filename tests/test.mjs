@@ -2653,7 +2653,7 @@ test('connections: keys are write-only, and Save sends only what changed', async
     u.startsWith('api/admin/connections') && !u.endsWith('/test') ? CONNS :
     u.endsWith('/test') ? { ok: false, detail: 'HTTP 401: the key was refused' } : null);
   await enterAdmin(window, doc);
-  doc.getElementById('admin-tab-connections').click();
+  doc.getElementById('admin-tab-integrations').click();
   await settle(window, () => doc.querySelectorAll('fieldset.conn').length === 2, 'connections');
   const [son, mea] = doc.querySelectorAll('fieldset.conn');
   assert.equal(son.querySelector('.conn-state').textContent, 'Key stored …abcd');
@@ -2683,7 +2683,7 @@ test('connections: a custom one is added for remote widgets, and can be deleted'
   const { window, doc, seen } = await boot(APPS, null, (u) =>
     u.startsWith('api/admin/connections') ? CONNS : null, (w) => { w.confirm = () => true; });
   await enterAdmin(window, doc);
-  doc.getElementById('admin-tab-connections').click();
+  doc.getElementById('admin-tab-integrations').click();
   await settle(window, () => doc.querySelector('fieldset.conn legend'), 'connections');
   assert.equal(doc.querySelector('fieldset.conn legend').textContent, 'Printer (printer)');
   const form = doc.querySelector('details.conn-add');
@@ -4119,11 +4119,11 @@ test('admin mode: tabs across the top; only Templates keeps the sidebar and tile
   assert.equal(sel(), 'templates', 'admin mode opens on Templates');
   assert.equal(doc.body.classList.contains('admin-page'), false);
   assert.equal(doc.getElementById('adminpage').hidden, true);
-  click(doc.getElementById('admin-tab-connections'));
-  assert.equal(sel(), 'connections');
+  click(doc.getElementById('admin-tab-integrations'));
+  assert.equal(sel(), 'integrations');
   assert.ok(doc.body.classList.contains('admin-page'), 'a page tab hides the tiles and sidebar (CSS on body.admin-page)');
   assert.equal(doc.getElementById('adminpage').hidden, false);
-  assert.equal(doc.getElementById('adminpage-title').textContent, 'Connections');
+  assert.equal(doc.getElementById('adminpage-title').textContent, 'Integrations');
   click(doc.getElementById('admin-tab-templates'));
   assert.equal(doc.body.classList.contains('admin-page'), false);
   click(doc.getElementById('admin-tab-site'));
@@ -4212,7 +4212,7 @@ test('connections: Save waits for a change, Test checks what is typed and saves 
       : /^api\/admin\/connections\//.test(u) ? { ok: true } : null,
     (w) => { w.confirm = () => { asked++; return false; }; });
   await enterAdmin(window, doc);
-  doc.getElementById('admin-tab-connections').click();
+  doc.getElementById('admin-tab-integrations').click();
   await settle(window, () => doc.querySelectorAll('fieldset.conn').length === 2, 'connections');
   const save = doc.getElementById('adminpage-save');
   assert.equal(save.disabled, true, 'nothing to save yet');
@@ -4225,7 +4225,7 @@ test('connections: Save waits for a change, Test checks what is typed and saves 
   assert.equal(save.disabled, false, 'an edit enables Save');
   doc.getElementById('admin-tab-site').click();
   assert.equal(asked, 1, 'leaving with an unsaved change asks');
-  assert.equal(doc.getElementById('adminpage-title').textContent, 'Connections', 'and stays when told to');
+  assert.equal(doc.getElementById('adminpage-title').textContent, 'Integrations', 'and stays when told to');
 
   typeIn(jf.querySelectorAll('input')[0], 'http://mediabox:8096');
   typeIn(jf.querySelector('input[type=password]'), 'KEY123');
@@ -4237,4 +4237,22 @@ test('connections: Save waits for a change, Test checks what is typed and saves 
   assert.deepEqual(puts.map((r) => [r.url, JSON.parse(r.body)]),
     [['api/admin/connections/jellyfin', { url: 'http://mediabox:8096', key: 'KEY123' }]], 'saves only that connection');
   assert.equal(save.disabled, false, "Mealie's edit is still unsaved");
+});
+
+test('Integrations and User management split the connections; a shared one is on both', async () => {
+  const CONNS = { can_store: true, connections: [
+    { slug: 'sonarr', label: 'Sonarr', url: 'http://s', public_url: 'https://s', default_url: 'http://s', key: 'stored', hint: '…1', uses: ['widgets'] },
+    { slug: 'mealie', label: 'Mealie', url: 'http://m', public_url: 'https://m', default_url: 'http://m', key: 'stored', hint: '…2', uses: ['widgets', 'accounts'], note: 'an admin token' },
+    { slug: 'immich', label: 'Immich', url: 'http://i', public_url: 'https://i', default_url: 'http://i', key: 'none', hint: null, uses: ['accounts'], note: 'an admin key' }] };
+  const { window, doc } = await boot(APPS, null, (u) => u === 'api/admin/connections' ? CONNS : null);
+  await enterAdmin(window, doc);
+  const shown = () => [...doc.querySelectorAll('fieldset.conn')].map((f) => f.dataset.slug);
+  doc.getElementById('admin-tab-integrations').click();
+  await settle(window, () => shown().length === 2, 'integrations');
+  assert.deepEqual(shown(), ['sonarr', 'mealie']);
+  assert.ok(doc.querySelector('.conn-add'), 'custom connections are added on Integrations');
+  doc.getElementById('admin-tab-users').click();
+  await settle(window, () => shown().join() === 'mealie,immich', 'user management');
+  assert.equal(doc.querySelector('.conn-add'), null);
+  assert.match(doc.querySelector('fieldset.conn[data-slug="mealie"] legend').textContent, /also used by widgets/);
 });

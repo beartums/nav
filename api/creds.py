@@ -93,6 +93,11 @@ APPS: dict[str, dict[str, Any]] = {
 
 # slug -> {url, public_url, secret (sealed), hint, label, auth, custom}; loaded from the database
 # at start and after every write (app.py). One replica, so one copy.
+# Connections no widget uses: only read for their accounts (appaccounts.py),
+# so they're on the User management page and not Integrations.
+ACCOUNTS_ONLY = {"jellyseerr", "jellyfin", "plex", "audiobookshelf", "navidrome", "immich",
+                 "filebrowser", "grafana", "paperless"}
+
 STORED: dict[str, dict[str, Any]] = {}
 
 KEY_MAX = 512

@@ -25,7 +25,8 @@ window.addEventListener('beforeunload', function (e) {
 var ADMIN_PAGES = {
   access: { title: 'Access', draw: function (h) { accessPage(h); } },
   site: { title: 'Site settings', draw: function (h) { sitePage(h); } },
-  connections: { title: 'Connections', draw: function (h) { connectionsPage(h); } }
+  integrations: { title: 'Integrations', draw: function (h) { connectionsPage(h, 'integrations'); } },
+  users: { title: 'User management', draw: function (h) { connectionsPage(h, 'users'); } }
 };
 
 function adminHost() {
