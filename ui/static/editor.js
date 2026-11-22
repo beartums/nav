@@ -16,7 +16,7 @@ var EDITING = null;
 
 function closeEditor() {
   document.body.classList.remove('editing');
-  editor.classList.remove('wide');   // the widget designer widens it
+  editor.classList.remove('wide', 'acc-wide');   // the widget designer and Access widen it
   document.getElementById('editor-save').disabled = false;   // and may disable Save
   EDITING = null;
 }

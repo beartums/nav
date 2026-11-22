@@ -48,6 +48,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from urls import group_can_see, launchable, offered_to, pick_account, valid_slug
+import access
 import creds
 import health
 import images
@@ -2181,6 +2182,179 @@ async def unplace_widget(pid: int, _: str = Depends(require_admin)) -> dict[str,
         await conn.execute("DELETE FROM widget_placements WHERE id = %s", (pid,))
     return {"ok": True}
 
+
+
+# --- access: group membership, staged as a Terraform PR (access.py) --------------
+
+# Changing who reaches what is a bigger power than editing the dashboard, so it
+# has its own group; by default the same as nav admin.
+ACCESS_GROUPS = {g.strip().lower() for g in os.environ.get("NAV_ACCESS_GROUP", "").split(",") if g.strip()} \
+    or ADMIN_GROUPS
+
+
+async def require_access_admin(request: Request, who: str = Depends(whoami)) -> str:
+    if who in ADMINS or ACCESS_GROUPS & parse_groups(request.headers.get(GROUPS_HEADER, "")):
+        return who
+    raise HTTPException(403, f"managing access needs membership of '{' or '.join(sorted(ACCESS_GROUPS))}'")
+
+
+def _shown(a: dict[str, Any]) -> bool:
+    """An application a person would see as a tile (the same rule as /api/apps)."""
+    return not a.get("meta_hide") and launchable(a.get("launch_url") or a.get("meta_launch_url"))
+
+
+async def _authentik_access() -> dict[str, Any]:
+    """Users, groups, applications and their bindings: one round of reads."""
+    if not AUTHENTIK_TOKEN:
+        raise HTTPException(503, "AUTHENTIK_TOKEN is not set")
+    headers = {"Authorization": f"Bearer {AUTHENTIK_TOKEN}"}
+    async with httpx.AsyncClient(base_url=AUTHENTIK_URL, headers=headers, timeout=20) as client:
+        u = await client.get("/api/v3/core/users/", params={"page_size": 200, "is_active": "true"})
+        a = await client.get("/api/v3/core/applications/", params={"page_size": 200, "superuser_full_list": "true"})
+        b = await client.get("/api/v3/policies/bindings/", params={"page_size": 500})
+        for r in (u, a, b):
+            r.raise_for_status()
+        users = [x for x in u.json().get("results") or [] if "service" not in str(x.get("type", ""))]
+        apps = a.json().get("results") or []
+        # What each person reaches today, from Authentik itself (direct bindings included).
+        reach = {}
+        for x in users:
+            r = await client.get("/api/v3/core/applications/", params={"for_user": x["pk"], "page_size": 200})
+            r.raise_for_status()
+            reach[x["pk"]] = sorted(y["slug"] for y in r.json().get("results") or [] if _shown(y))
+    uuids = {x.get("pk") for x in apps}
+    by_target: dict[str, list[dict[str, Any]]] = {}
+    for x in b.json().get("results") or []:
+        if x.get("target") in uuids:
+            by_target.setdefault(x["target"], []).append(x)
+    return {"users": users, "apps": [x for x in apps if _shown(x)], "by_target": by_target, "reach": reach}
+
+
+def _group_apps(ak: dict[str, Any], gs: set[str]) -> tuple[set[str], set[str]]:
+    """(apps a member of exactly these groups reaches, apps that can't be judged)."""
+    yes, unknown = set(), set()
+    for app_ in ak["apps"]:
+        v = group_can_see(ak["by_target"].get(app_.get("pk"), []), list(gs), app_.get("policy_engine_mode") or "any")
+        if v is None:
+            unknown.add(app_["slug"])
+        elif v:
+            yes.add(app_["slug"])
+    return yes, unknown
+
+
+async def _pending() -> list[dict[str, Any]]:
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT id, user_pk AS pk, user_name AS name, group_name AS \"group\", action, by_whom, at"
+            " FROM access_changes ORDER BY at, id")
+        return await cur.fetchall()
+
+
+def _access_view(tf: dict[str, str], ak: dict[str, Any], pending: list[dict[str, Any]]) -> dict[str, Any]:
+    tfg = access.groups(tf)
+    groups_out = [{"name": n, "managed": g["members"] is not None, "path": g["path"]} for n, g in sorted(tfg.items())]
+    names = {x["slug"]: x.get("name") or x["slug"] for x in ak["apps"]}
+    users_out = []
+    for u in ak["users"]:
+        pk = u["pk"]
+        live = {g.get("name") for g in (u.get("groups_obj") or []) if g.get("name")}
+        # On main: Terraform's lists for managed groups, Authentik's for the rest.
+        main = {n for n, g in tfg.items() if g["members"] is not None and pk in g["members"]} | \
+               {n for n in live if n not in tfg or tfg[n]["members"] is None}
+        after = set(main)
+        for c in pending:
+            if c["pk"] == pk:
+                (after.add if c["action"] == "add" else after.discard)(c["group"])
+        before_apps, unk1 = _group_apps(ak, main)
+        after_apps, unk2 = _group_apps(ak, after)
+        users_out.append({
+            "pk": pk, "username": u.get("username"), "name": u.get("name") or u.get("username"),
+            "email": u.get("email"),
+            "groups": sorted(main), "live": sorted(live),
+            "drift": sorted((main ^ live) & {n for n, g in tfg.items() if g["members"] is not None}),
+            "apps": [{"slug": s, "name": names.get(s, s)} for s in ak["reach"].get(pk, [])],
+            "gains": sorted(names.get(s, s) for s in after_apps - before_apps),
+            "losses": sorted(names.get(s, s) for s in before_apps - after_apps),
+            "unknown": sorted(names.get(s, s) for s in (unk1 | unk2)),
+        })
+    return {"enabled": True, "repo": access.REPO, "base": access.BASE, "groups": groups_out,
+            "users": sorted(users_out, key=lambda x: (x["name"] or "").lower()),
+            "pending": [{k: v for k, v in c.items() if k != "at"} | {"at": c["at"].isoformat()} for c in pending]}
+
+
+@app.get("/api/admin/access")
+async def get_access(_: str = Depends(require_access_admin)) -> dict[str, Any]:
+    if not access.enabled():
+        return {"enabled": False}
+    tf, ak = await asyncio.gather(access.read_tf(), _authentik_access())
+    view = _access_view(tf, ak, await _pending())
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT url, by_whom, at FROM access_prs ORDER BY at DESC LIMIT 1")
+        last = await cur.fetchone()
+    view["last_pr"] = last and {"url": last["url"], "by": last["by_whom"], "at": last["at"].isoformat()}
+    return view
+
+
+@app.post("/api/admin/access/changes")
+async def stage_access_change(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """Stage one membership change; staging the opposite of what's on main drops it."""
+    if not access.enabled():
+        raise HTTPException(409, "the Access panel is off: NAV_GITOPS_REPO / NAV_GITOPS_TOKEN unset")
+    try:
+        pk, group, add = int(body["pk"]), str(body["group"]), bool(body["add"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "pk, group and add are required") from None
+    g = access.groups(await access.read_tf()).get(group)
+    if g is None or g["members"] is None:
+        raise HTTPException(400, f"{group}: membership isn't managed in Terraform")
+    async with pool.connection() as conn:
+        await conn.execute("DELETE FROM access_changes WHERE user_pk = %s AND group_name = %s", (pk, group))
+        if (pk in g["members"]) != add:
+            name = str(body.get("name") or pk)[:80]
+            await conn.execute(
+                "INSERT INTO access_changes (user_pk, user_name, group_name, action, by_whom)"
+                " VALUES (%s, %s, %s, %s, %s)", (pk, name, group, "add" if add else "remove", who))
+    print(f"access: {who} staged {'add' if add else 'remove'} {pk} {group}", flush=True)
+    return {"pending": [c | {"at": c["at"].isoformat()} for c in await _pending()]}
+
+
+@app.delete("/api/admin/access/changes")
+async def clear_access_changes(who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    async with pool.connection() as conn:
+        await conn.execute("DELETE FROM access_changes")
+    print(f"access: {who} cleared the staged changes", flush=True)
+    return {"pending": []}
+
+
+@app.post("/api/admin/access/pr")
+async def open_access_pr(who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """Every staged change as one pull request; the staged list is then cleared."""
+    if not access.enabled():
+        raise HTTPException(409, "the Access panel is off: NAV_GITOPS_REPO / NAV_GITOPS_TOKEN unset")
+    pending = await _pending()
+    if not pending:
+        raise HTTPException(400, "nothing staged")
+    tf, ak = await asyncio.gather(access.read_tf(), _authentik_access())
+    try:
+        changed = access.edit(tf, pending)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    if not changed:
+        raise HTTPException(409, "main already matches every staged change: clear them")
+    view = _access_view(tf, ak, pending)
+    gains = {u["pk"]: u["gains"] for u in view["users"]}
+    losses = {u["pk"]: u["losses"] for u in view["users"]}
+    people = sorted({c["name"] for c in pending})
+    title = f"access: {', '.join(people[:3])}{' +' + str(len(people) - 3) if len(people) > 3 else ''} group membership"
+    try:
+        url = await access.open_pr(changed, title, access.describe(pending, gains, losses), who)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"GitHub refused: {exc.response.status_code} {exc.response.text[:200]}") from None
+    async with pool.connection() as conn:
+        await conn.execute("INSERT INTO access_prs (url, by_whom) VALUES (%s, %s)", (url, who))
+        await conn.execute("DELETE FROM access_changes")
+    print(f"access: {who} opened {url} ({len(pending)} change(s))", flush=True)
+    return {"url": url}
 
 
 # --- the page ------------------------------------------------------------------
