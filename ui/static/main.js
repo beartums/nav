@@ -199,11 +199,18 @@ function render() {
       var c = a.category || 'Other';
       (byCat[c] = byCat[c] || []).push(a);
     });
-    // pageCats, not categoriesOf: a group holding only widgets still renders.
-    pageCats(arranging()).forEach(function (c) {
+    var cats = pageCats(arranging());
+    // Groups inside groups (LAYOUT.group_parents, one level): a subgroup is
+    // drawn inside its parent, after the parent's own tiles, never on its own.
+    var parents = groupParents();
+    function childrenOf(c) {
+      return cats.filter(function (k) { return parents[k] === c; });
+    }
+    function drawGroup(c, into, sub) {
+      var kids = sub ? [] : childrenOf(c);
       // Widgets count as members: a group of only widgets is a group.
       var placed = widgetsShown(c, false);
-      if (!byCat[c] && !placed.length) { return; }
+      if (!byCat[c] && !placed.length && !kids.length) { return; }
       byCat[c] = byCat[c] || [];
       // A hidden group stays visible in admin mode -- otherwise hiding one
       // removes it from the only view that can bring it back.
@@ -211,13 +218,18 @@ function render() {
       // While searching, a heading with nothing under it is noise -- and
       // worse, it reads as "this group has no matches" in a layout where
       // every other empty group has already been dropped.
-      if (SEARCH && !filtered(byCat[c]).length) { return; }
-      var h = document.createElement('h2');
-      h.className = 'cat' + (collapsed[c] ? ' closed' : '');
+      if (SEARCH && !filtered(byCat[c]).length &&
+          !kids.some(function (k) { return filtered(byCat[k] || []).length; })) { return; }
+      var box = document.createElement('section');
+      box.className = 'grp' + (sub ? ' grp-sub' : '');
+      box.dataset.cat = c;
+      var h = document.createElement(sub ? 'h3' : 'h2');
+      h.className = 'cat' + (sub ? ' subcat' : '') + (collapsed[c] ? ' closed' : '');
       var chev = document.createElement('span');
       chev.className = 'chev'; chev.textContent = '\u25be';
       var label = document.createElement('span');
       label.textContent = c;
+      applyTextStyle(label, groupStyleOf(c).heading);
       h.appendChild(chev); h.appendChild(label);
       h.setAttribute('role', 'button');
       h.setAttribute('aria-expanded', String(!collapsed[c]));
@@ -247,12 +259,26 @@ function render() {
         // collapsed section is a different set, not the same set concealed.
         render();
       });
-      out.appendChild(h);
+      box.appendChild(h);
       // Outside the shared grid, widgets lead their group in their own row,
       // and fold away with it.
       var wrow = gridded ? null : widgetRow(widgetsShown(c, collapsed[c]));
-      if (wrow) { out.appendChild(wrow); }
-      out.appendChild(body);
+      if (wrow) { box.appendChild(wrow); }
+      box.appendChild(body);
+      // Its subgroups, inside it and folding with it (one level: groupParents).
+      if (kids.length && !collapsed[c]) {
+        var subs = document.createElement('div');
+        subs.className = 'subgroups';
+        kids.forEach(function (k) { drawGroup(k, subs, true); });
+        if (subs.childNodes.length) { box.appendChild(subs); }
+      }
+      into.appendChild(box);
+    }
+    // pageCats, not categoriesOf: a group holding only widgets still renders.
+    // A subgroup whose parent is gone (renamed, emptied) stands on its own.
+    cats.forEach(function (c) {
+      if (parents[c] && cats.indexOf(parents[c]) !== -1) { return; }
+      drawGroup(c, out, false);
     });
     if (SEARCH && !out.querySelector('a.app')) { noMatches(); }
   } else {

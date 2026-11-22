@@ -392,7 +392,9 @@ def layout_info(row: dict[str, Any]) -> dict[str, Any]:
     return {k: row.get(k) for k in ("id", "kind", "name", "template_id", "is_default",
                                     "group_order", "group_hidden")} | {"mode": row.get("mode") or "packed",
                                                                         "free_groups": row.get("free_groups") or [],
-                                                                        "style": row.get("style") or {}}
+                                                                        "style": row.get("style") or {},
+                                                                        "group_parents": row.get("group_parents") or {},
+                                                                        "group_style": row.get("group_style") or {}}
 
 
 @app.get("/api/apps")
@@ -685,8 +687,9 @@ def bad(exc: ValueError) -> HTTPException:
 async def copy_layout(conn: Any, src: dict[str, Any], dst: int, who: str) -> None:
     """Tiles, placements and groups from `src` into `dst` (assumed empty)."""
     await conn.execute(
-        "UPDATE layouts SET group_order = %s, group_hidden = %s WHERE id = %s",
-        (json.dumps(src["group_order"]), json.dumps(src["group_hidden"]), dst))
+        "UPDATE layouts SET group_order = %s, group_hidden = %s, group_parents = %s, group_style = %s WHERE id = %s",
+        (json.dumps(src["group_order"]), json.dumps(src["group_hidden"]),
+         json.dumps(src.get("group_parents") or {}), json.dumps(src.get("group_style") or {}), dst))
     await conn.execute(
         "INSERT INTO layout_tiles (layout_id, slug, fields) "
         "SELECT %s, slug, fields FROM layout_tiles WHERE layout_id = %s", (dst, src["id"]))
@@ -916,13 +919,20 @@ async def set_layout_order(lid: int, body: dict[str, Any], request: Request,
 @app.put("/api/layouts/{lid}/groups")
 async def set_layout_groups(lid: int, body: dict[str, Any], request: Request,
                             who: str = Depends(whoami)) -> dict[str, Any]:
-    """{order?: [group...], hidden?: [group...]}."""
+    """{order?: [group...], hidden?: [group...], parents?: {group: parent},
+    styles?: {group: {heading, name, desc}}}. Each one sent replaces that whole setting."""
     sets, args = [], []
     try:
         for key, col in (("order", "group_order"), ("hidden", "group_hidden")):
             if key in body:
                 sets.append(f"{col} = %s")
                 args.append(json.dumps(layouts.clean_groups(body[key], key)))
+        if "parents" in body:
+            sets.append("group_parents = %s")
+            args.append(json.dumps(layouts.clean_group_parents(body["parents"])))
+        if "styles" in body:
+            sets.append("group_style = %s")
+            args.append(json.dumps(layouts.clean_group_style(body["styles"])))
     except ValueError as exc:
         raise bad(exc) from None
     async with pool.connection() as conn:  # type: ignore[union-attr]

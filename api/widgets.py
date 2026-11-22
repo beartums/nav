@@ -36,7 +36,7 @@ import re
 import time
 from typing import Any, Awaitable, Callable
 
-SHAPES = ("stat", "timeseries", "list", "status", "clock", "weather", "calendar", "week")
+SHAPES = ("stat", "timeseries", "list", "status", "clock", "weather", "calendar", "week", "text")
 
 # The sizes a placed widget may take, per shape, smallest first. The page owns
 # what each means in grid cells (static/group-grid.js); the server only refuses
@@ -45,7 +45,8 @@ SHAPES = ("stat", "timeseries", "list", "status", "clock", "weather", "calendar"
 SIZES = {"stat": ("XS", "S", "M", "L"), "timeseries": ("XS", "S", "M", "L", "XL"),
          "list": ("S", "M", "L"), "status": ("XS", "S"),
          "clock": ("XS", "S", "M", "L"), "weather": ("XS", "S", "M", "L", "XL", "W"),
-         "calendar": ("M", "L", "XL", "W"), "week": ("M", "L", "XL", "W")}
+         "calendar": ("M", "L", "XL", "W"), "week": ("M", "L", "XL", "W"),
+         "text": ("XS", "S", "M", "L", "XL", "W")}
 TILE_SIZES = ("XS", "S", "M", "L")
 
 # Past the largest named size a widget may take any span, "COLSxROWS" (the
@@ -98,6 +99,7 @@ class Provider:
       required  default False
       default   used when the field is absent
       choices   list, for "enum"
+      rich      True on a "string" edited as formatted text (richtext.py cleans it)
     """
     type: str = ""
     title: str = ""
@@ -216,6 +218,13 @@ def validate_config(cls: type[Provider], config: dict[str, Any] | None) -> dict[
             raise ConfigError(f"{cls.type}: {name} must be {t}")
         if t == "enum" and v not in spec["choices"]:
             raise ConfigError(f"{cls.type}: {name} must be one of {spec['choices']}")
+        if spec.get("rich"):
+            # Formatted text (a text block): allowlisted here, on save.
+            import richtext
+            try:
+                v = richtext.clean(v)
+            except ValueError as exc:
+                raise ConfigError(f"{cls.type}: {exc}") from None
         out[name] = v
     return out
 

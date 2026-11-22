@@ -167,6 +167,14 @@ function widgetDesigner(existing, placement, opts) {
         input = document.createElement('input');
         input.type = 'checkbox';
         input.checked = !!spec['default'];
+      } else if (spec.rich) {
+        // A text block: formatting editor (richtext.js), not a box.
+        var have0 = seed ? seed[name] : existing && existing.config ? existing.config[name] : undefined;
+        var ed = richEditor(have0 != null ? have0 : spec['default'] || '');
+        inputs[name] = { input: ed.el, spec: spec, rich: ed };
+        lab.appendChild(ed.el);
+        form.appendChild(lab);
+        return;
       } else if (name === 'query') {
         // PromQL gets room: these are rarely short.
         input = document.createElement('textarea');
@@ -210,6 +218,7 @@ function widgetDesigner(existing, placement, opts) {
     var out = {};
     Object.keys(inputs).forEach(function (name) {
       var f = inputs[name], t = f.spec.type, el = f.input;
+      if (f.rich) { out[name] = f.rich.value(); return; }
       if (t === 'bool') { out[name] = el.checked; return; }
       var v = el.value.trim();
       if (v === '') { return; }

@@ -123,3 +123,32 @@ class Backgrounds(unittest.TestCase):
             layouts.tile_fields("dashboard", {"colour": "puce"})
         g = layouts.clean_free_groups([{"id": "a", "x": 0, "y": 0, "w": 4, "h": 2, "bg": {"c": "violet"}}])
         self.assertEqual(g[0]["bg"], {"c": "violet"})
+
+
+class TextStylesAndNesting(unittest.TestCase):
+    def test_text_style_closed_set(self):
+        self.assertEqual(layouts.clean_text_style({"font": "serif", "size": 20, "weight": 700, "italic": True,
+                                                    "colour": "#C0392B", "align": "center", "case": "upper"}),
+                         {"font": "serif", "size": 20, "weight": 700, "italic": True, "colour": "#c0392b",
+                          "align": "center", "case": "upper"})
+        self.assertIsNone(layouts.clean_text_style({}))
+        for bad in ({"font": "comic"}, {"size": 100}, {"size": True}, {"weight": 450}, {"colour": "red;x"},
+                    {"italic": "yes"}, {"align": "justify"}, {"css": "x"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                layouts.clean_text_style(bad)
+
+    def test_tile_and_group_styles(self):
+        self.assertEqual(layouts.tile_fields("template", {"text_style": {"name": {"italic": True}, "desc": {}}}),
+                         {"text_style": {"name": {"italic": True}}})
+        with self.assertRaises(ValueError):
+            layouts.clean_tile_style({"heading": {"size": 12}})
+        self.assertEqual(layouts.clean_group_style({"Media": {"heading": {"size": 20}}, "Empty": {}}),
+                         {"Media": {"heading": {"size": 20}}})
+
+    def test_parents_one_level(self):
+        self.assertEqual(layouts.clean_group_parents({"Photos": "Media", " Music ": "Media"}),
+                         {"Photos": "Media", "Music": "Media"})
+        with self.assertRaises(ValueError):
+            layouts.clean_group_parents({"A": "A"})
+        with self.assertRaises(ValueError):
+            layouts.clean_group_parents({"Photos": "Media", "Media": "Home"})   # two levels

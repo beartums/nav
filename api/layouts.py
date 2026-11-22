@@ -44,9 +44,12 @@ from typing import Any
 #
 # `image` is a tile's background picture (an https link or an uploaded one,
 # clean_image), drawn under a veil of the card so the name stays readable.
+#
+# `text_style` is how the tile's own text looks, {name?, desc?}, each a text
+# style (clean_text_style); unset parts come from its group's (group_style).
 OVERRIDABLE = ("name", "description", "category", "icon", "icon_light", "colour", "image",
-               "hidden", "size", "frameable", "order", "above_fold", "x", "y")
-LAYOUT_KEYS = ("category", "order", "size", "hidden", "above_fold", "x", "y")
+               "hidden", "size", "frameable", "order", "above_fold", "x", "y", "text_style")
+LAYOUT_KEYS = ("category", "order", "size", "hidden", "above_fold", "x", "y", "text_style")
 PRESENTATION_KEYS = tuple(k for k in OVERRIDABLE if k not in LAYOUT_KEYS)
 KINDS = ("template", "dashboard")
 NAME_MAX = 60
@@ -116,6 +119,8 @@ def tile_fields(kind: str, raw: dict[str, Any] | None) -> dict[str, Any]:
         raw["x"] = clean_cell(raw["x"], "x", FREE_COLS)
     if "y" in raw:
         raw["y"] = clean_cell(raw["y"], "y", FREE_ROWS_MAX)
+    if "text_style" in raw:
+        raw["text_style"] = clean_tile_style(raw["text_style"])
     return raw
 
 
@@ -229,3 +234,106 @@ def clean_bg(v: Any) -> dict[str, Any] | None:
     img = clean_image(v.get("img"))
     out = {k: x for k, x in (("c", c), ("img", img)) if x}
     return out or None
+
+
+# --- text styles, and groups inside groups ---------------------------------------
+#
+# A TEXT STYLE is a small dict; every key is optional and an unset key inherits
+# (tile <- its group <- the page). Values are a closed set, so what reaches the
+# page's style attribute is always one of these, never free CSS.
+FONTS = ("system", "serif", "mono", "rounded", "condensed")
+WEIGHTS = (300, 400, 500, 600, 700, 800)
+ALIGNS = ("left", "center", "right")
+CASES = ("none", "upper", "lower", "title")
+SIZE_PX = (8, 72)
+STYLE_KEYS = ("font", "size", "weight", "italic", "colour", "align", "case")
+# A tile's text has two parts; a group adds its heading.
+TILE_PARTS = ("name", "desc")
+GROUP_PARTS = ("heading", "name", "desc")
+
+
+def clean_text_style(v: Any) -> dict[str, Any] | None:
+    """One text style, or None when nothing is set."""
+    if v in (None, {}, ""):
+        return None
+    if not isinstance(v, dict) or set(v) - set(STYLE_KEYS):
+        raise ValueError(f"a text style has only {', '.join(STYLE_KEYS)}")
+    out: dict[str, Any] = {}
+    if v.get("font") not in (None, ""):
+        if v["font"] not in FONTS:
+            raise ValueError(f"font is one of {', '.join(FONTS)}")
+        out["font"] = v["font"]
+    if v.get("size") not in (None, ""):
+        if isinstance(v["size"], bool) or not isinstance(v["size"], int) or not SIZE_PX[0] <= v["size"] <= SIZE_PX[1]:
+            raise ValueError(f"size is a whole number of pixels, {SIZE_PX[0]} to {SIZE_PX[1]}")
+        out["size"] = v["size"]
+    if v.get("weight") not in (None, ""):
+        if v["weight"] not in WEIGHTS or isinstance(v["weight"], bool):
+            raise ValueError(f"weight is one of {', '.join(map(str, WEIGHTS))}")
+        out["weight"] = v["weight"]
+    if v.get("italic") is not None:
+        if not isinstance(v["italic"], bool):
+            raise ValueError("italic is true or false")
+        out["italic"] = v["italic"]
+    if v.get("colour") not in (None, ""):
+        c = v["colour"]
+        if not (isinstance(c, str) and HEX.match(c)):
+            raise ValueError("a text colour is #rrggbb")
+        out["colour"] = c.lower()
+    for key, allowed in (("align", ALIGNS), ("case", CASES)):
+        if v.get(key) not in (None, ""):
+            if v[key] not in allowed:
+                raise ValueError(f"{key} is one of {', '.join(allowed)}")
+            out[key] = v[key]
+    return out or None
+
+
+def _parts(v: Any, parts: tuple[str, ...], what: str) -> dict[str, Any] | None:
+    if v in (None, {}, ""):
+        return None
+    if not isinstance(v, dict) or set(v) - set(parts):
+        raise ValueError(f"{what} has only {', '.join(parts)}")
+    out = {p: s for p in parts if (s := clean_text_style(v.get(p)))}
+    return out or None
+
+
+def clean_tile_style(v: Any) -> dict[str, Any] | None:
+    """A tile's {name?, desc?} styles."""
+    return _parts(v, TILE_PARTS, "a tile's text style")
+
+
+GROUPS_MAX = 200
+
+
+def clean_group_style(raw: Any) -> dict[str, dict[str, Any]]:
+    """{group: {heading?, name?, desc?}}: each group's heading, and the default
+    for its tiles' text. Groups with nothing set are dropped."""
+    if not isinstance(raw, dict) or len(raw) > GROUPS_MAX:
+        raise ValueError("group styles are {group: {heading, name, desc}}")
+    out = {}
+    for g, v in raw.items():
+        if not isinstance(g, str) or not g.strip():
+            raise ValueError("a group style needs a group name")
+        s = _parts(v, GROUP_PARTS, f"{g}'s style")
+        if s:
+            out[g.strip()] = s
+    return out
+
+
+def clean_group_parents(raw: Any) -> dict[str, str]:
+    """{child: parent}: groups inside groups, ONE level deep. A group with
+    subgroups can't itself be inside one, and none is inside itself."""
+    if not isinstance(raw, dict) or len(raw) > GROUPS_MAX:
+        raise ValueError("group parents are {group: parent group}")
+    out: dict[str, str] = {}
+    for c, p in raw.items():
+        if not isinstance(c, str) or not isinstance(p, str) or not c.strip() or not p.strip():
+            raise ValueError("a group and its parent are names")
+        c, p = c.strip(), p.strip()
+        if c == p:
+            raise ValueError(f"{c} can't be inside itself")
+        out[c] = p
+    for c, p in out.items():
+        if p in out:
+            raise ValueError(f"{c} can't go inside {p}: {p} is itself inside {out[p]} (one level only)")
+    return out

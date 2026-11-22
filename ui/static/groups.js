@@ -44,10 +44,19 @@ function buildGroups() {
   // pageCats: a group holding only widgets is a group here too.
   var order = (BULK.on && BULK.cats) ? BULK.cats.slice() : pageCats(true);
 
-  order.forEach(function (cat) {
+  // Subgroups listed under their parent, indented (textstyle.js nestGroup).
+  var parents = groupParents();
+  var shownOrder = [];
+  order.forEach(function (c) {
+    if (parents[c] && order.indexOf(parents[c]) !== -1) { return; }
+    shownOrder.push(c);
+    order.forEach(function (k) { if (parents[k] === c) { shownOrder.push(k); } });
+  });
+  shownOrder.forEach(function (cat) {
     var li = document.createElement('li');
     li.draggable = true;
     var hidden = groupHidden(cat);
+    if (parents[cat] && order.indexOf(parents[cat]) !== -1) { li.classList.add('sub'); }
 
     var name = document.createElement('span');
     name.textContent = cat;
@@ -77,6 +86,16 @@ function buildGroups() {
       saveGroups(order, h);
     });
     li.appendChild(eye);
+
+    // ⋯: inside another group or at the top, and the group's text style.
+    var more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'grp-more';
+    more.textContent = '\u22ef';
+    more.title = 'Text style, or put this group inside another';
+    more.setAttribute('aria-label', cat + ': more');
+    more.addEventListener('click', function (ev) { ev.stopPropagation(); groupMenu(cat, more); });
+    li.appendChild(more);
 
     // --- reordering ---------------------------------------------------
     li.addEventListener('dragstart', function (ev) {
@@ -206,3 +225,42 @@ document.getElementById('group-add').addEventListener('click', function () {
     b.addEventListener('click', function () { set(!document.body.classList.contains('side-collapsed')); });
   });
 })();
+
+// --- groups inside groups, and text styles ----------------------------------------
+// LAYOUT.group_parents {child: parent} (one level) and LAYOUT.group_style
+// {group: {heading, name, desc}} -- api/layouts.py clean_group_parents /
+// clean_group_style. A tile's own text_style {name, desc} wins over its group's.
+
+function groupParents() { return (LAYOUT && LAYOUT.group_parents) || {}; }
+function groupStyleOf(c) { return ((LAYOUT && LAYOUT.group_style) || {})[c] || {}; }
+
+var TEXT_FONTS = {
+  system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  rounded: 'ui-rounded, "SF Pro Rounded", "Nunito", "Arial Rounded MT Bold", system-ui, sans-serif',
+  condensed: '"Arial Narrow", "Roboto Condensed", "Helvetica Neue Condensed", system-ui, sans-serif'
+};
+var TEXT_CASES = { none: 'none', upper: 'uppercase', lower: 'lowercase', title: 'capitalize' };
+
+/** Put a text style on an element (inline, so it beats size-specific CSS). */
+function applyTextStyle(el, st) {
+  if (!el || !st) { return; }
+  if (st.font && TEXT_FONTS[st.font]) { el.style.fontFamily = TEXT_FONTS[st.font]; }
+  if (st.size) { el.style.fontSize = st.size + 'px'; }
+  if (st.weight) { el.style.fontWeight = String(st.weight); }
+  if (st.italic != null) { el.style.fontStyle = st.italic ? 'italic' : 'normal'; }
+  if (st.colour) { el.style.color = st.colour; }
+  if (st.align) { el.style.textAlign = st.align; el.style.display = 'block'; }
+  if (st.case && TEXT_CASES[st.case]) { el.style.textTransform = TEXT_CASES[st.case]; }
+}
+
+/** A tile's effective style for `part` (name|desc): its group's, then its own. */
+function tileTextStyle(a, part) {
+  var g = groupStyleOf(a.category || 'Other')[part] || {};
+  var own = (a.text_style || {})[part] || {};
+  var out = {};
+  Object.keys(g).forEach(function (k) { out[k] = g[k]; });
+  Object.keys(own).forEach(function (k) { out[k] = own[k]; });
+  return out;
+}

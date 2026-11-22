@@ -287,6 +287,32 @@ class VmTimeseries(Provider):
         return await instant_labels(config["query"])
 
 
+# --- text blocks ---------------------------------------------------------------
+#
+# EVERYONE: the text is what the admin wrote, and shows no app's data.
+
+@register
+class Text(Provider):
+    """A block of formatted text the admin writes (headings, lists, links,
+    colour...). Nothing is fetched: the cleaned HTML in the definition is the
+    data. Cleaned on save (validate_config, richtext.py)."""
+    type = "text"
+    title = "Text block"
+    description = "Formatted text: headings, lists, links, colours, pictures."
+    app = EVERYONE
+    shape = "text"
+    ttl = 3600
+    config_schema = {
+        "html": {"type": "string", "label": "Text", "default": "", "rich": True},
+        "padding": {"type": "enum", "label": "Padding", "default": "normal",
+                    "choices": ["none", "normal", "roomy"]},
+        "frame": {"type": "bool", "label": "Card background and border", "default": True},
+    }
+
+    async def fetch(self, config: dict[str, Any], who: str) -> dict[str, Any]:
+        return {"html": config["html"], "padding": config["padding"], "frame": config["frame"]}
+
+
 # --- clock and weather ---------------------------------------------------------
 #
 # EVERYONE, honestly: the time, and the weather in a place the definition
