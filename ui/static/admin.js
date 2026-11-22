@@ -388,6 +388,8 @@ function setAdminMode(on) {
   if (ADMIN_MODE && EDIT_MODE) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
   document.body.classList.toggle('admin-mode', ADMIN_MODE);
   closeEditor();
+  // Every visit starts on Templates (admin-pages.js); leaving drops any page.
+  showAdminTab('templates');
   refresh();
 }
 document.getElementById('admin-done').addEventListener('click', function () { setAdminMode(false); });

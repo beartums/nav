@@ -1179,8 +1179,8 @@ test('the New tile button is admin-only', async () => {
   const { window, doc } = await boot();   // starts as a viewer
   assert.ok(doc.getElementById('admin-newtile-btn'), 'the button exists in the markup');
   assert.equal(doc.body.classList.contains('admin-mode'), false);
-  assert.equal(window.getComputedStyle(doc.getElementById('side-menu')).display, 'none',
-    'the Manage menu is hidden outside admin mode, so the button is too');
+  assert.equal(window.getComputedStyle(doc.getElementById('adminbar')).display, 'none',
+    'the template toolbar is hidden outside admin mode, so the button is too');
 });
 
 test('the New tile button is actually VISIBLE in both places, not merely present', async () => {
@@ -1196,16 +1196,13 @@ test('the New tile button is actually VISIBLE in both places, not merely present
   };
 
   const barBtn = doc.getElementById('admin-newtile-btn');
-  const list = doc.getElementById('side-menu-list');
-  assert.equal(list.hidden, true, 'the sidebar Manage menu starts closed');
-  click(doc.getElementById('side-menu-btn'));
-  assert.equal(list.hidden, false, 'and opens on its button');
-  assert.ok(vis(barBtn), 'visible in the Manage menu');
-  assert.ok(barBtn.closest('#groups'), 'which is in the sidebar');
-  assert.ok(vis(doc.getElementById('side-menu')), 'and is itself shown in admin mode');
+  assert.ok(vis(barBtn), 'visible on the template toolbar');
+  assert.ok(barBtn.closest('#adminbar'), 'which is the Templates tab toolbar');
+  assert.ok(vis(doc.getElementById('adminbar')), 'and the toolbar is shown in admin mode');
   click(barBtn);
-  assert.equal(list.hidden, true, 'choosing an item closes the menu');
-  click(doc.getElementById('editor-close'));
+  const dlg = doc.querySelector('.icondlg-back');
+  assert.ok(dlg, 'it opens the New tile dialog');
+  dlg.remove();
 
   await enterBulk(window, doc);
   const tableBtn = doc.getElementById('bulk-add');
@@ -1342,10 +1339,10 @@ test('the tile editor uses the same picker, seeded with the current group', asyn
 });
 
 async function openSite(window, doc) {
-  click(doc.getElementById('admin-site-btn'));
-  await settle(window, () => doc.getElementById('editor-title').textContent === 'Site',
-    'the site dialog');
-  return doc.getElementById('editor-body') || doc.querySelector('#editor');
+  click(doc.getElementById('admin-tab-site'));
+  await settle(window, () => doc.getElementById('adminpage-title').textContent === 'Site settings',
+    'the Site settings page');
+  return doc.getElementById('adminpage-body');
 }
 
 test('site settings gives each icon mode its own control', async () => {
@@ -1406,7 +1403,7 @@ test('saving site settings writes both icon keys separately', async () => {
   dark.value = 'https://example.com/d.svg';
   light.value = 'https://example.com/l.svg';
 
-  click(doc.getElementById('editor-save'));
+  click(doc.getElementById('adminpage-save'));
   await settle(window, () => seen.filter((r) => r.url.startsWith('api/site/')).length >= 3,
     'the three site PUTs');
 
@@ -2656,7 +2653,7 @@ test('connections: keys are write-only, and Save sends only what changed', async
     u.startsWith('api/admin/connections') && !u.endsWith('/test') ? CONNS :
     u.endsWith('/test') ? { ok: false, detail: 'HTTP 401: the key was refused' } : null);
   await enterAdmin(window, doc);
-  doc.getElementById('admin-connections-btn').click();
+  doc.getElementById('admin-tab-connections').click();
   await settle(window, () => doc.querySelectorAll('fieldset.conn').length === 2, 'connections');
   const [son, mea] = doc.querySelectorAll('fieldset.conn');
   assert.equal(son.querySelector('.conn-state').textContent, 'Key stored …abcd');
@@ -2667,7 +2664,7 @@ test('connections: keys are write-only, and Save sends only what changed', async
   mea.querySelector('input[type=password]').value = 'tok123';
   mea.querySelectorAll('input')[0].value = 'http://elsewhere:9000';
   [...son.querySelectorAll('button')].find((b) => b.textContent === 'Remove key').click();
-  doc.getElementById('editor-save').click();
+  doc.getElementById('adminpage-save').click();
   await settle(window, () => seen.filter((r) => r.method === 'PUT').length === 2, 'two PUTs');
   const puts = seen.filter((r) => r.method === 'PUT');
   assert.deepEqual(puts.map((r) => [r.url, JSON.parse(r.body)]), [
@@ -2686,7 +2683,7 @@ test('connections: a custom one is added for remote widgets, and can be deleted'
   const { window, doc, seen } = await boot(APPS, null, (u) =>
     u.startsWith('api/admin/connections') ? CONNS : null, (w) => { w.confirm = () => true; });
   await enterAdmin(window, doc);
-  doc.getElementById('admin-connections-btn').click();
+  doc.getElementById('admin-tab-connections').click();
   await settle(window, () => doc.querySelector('fieldset.conn legend'), 'connections');
   assert.equal(doc.querySelector('fieldset.conn legend').textContent, 'Printer (printer)');
   const form = doc.querySelector('details.conn-add');
@@ -4099,18 +4096,38 @@ test('access: a click stages a change, and Open PR sends them', async () => {
     return null;
   });
   await enterAdmin(window, doc);
-  doc.getElementById('admin-access-btn').click();
+  doc.getElementById('admin-tab-access').click();
   await settle(window, () => doc.querySelectorAll('.acc-cell').length === 2, 'matrix');
   const [fam, admins] = doc.querySelectorAll('.acc-cell');
   assert.ok(admins.disabled, 'a group whose membership is not in Terraform is read-only');
-  assert.equal(doc.getElementById('editor-save').disabled, true);
+  assert.equal(doc.getElementById('adminpage-save').disabled, true);
   fam.click();
   await settle(window, () => doc.querySelector('.acc-staged'), 'staged cell');
   const post = seen.find((r) => r.url === 'api/admin/access/changes' && r.method === 'POST');
   assert.deepEqual(JSON.parse(post.body), { pk: 9, group: 'family', add: true, name: 'carol' });
   assert.equal(doc.querySelector('.acc-gain').textContent, '+ Jotty');
-  assert.equal(doc.getElementById('editor-save').textContent, 'Open PR (1)');
-  doc.getElementById('editor-save').click();
-  await settle(window, () => /Pull request opened/.test(doc.getElementById('editor-note').textContent), 'pr link');
+  assert.equal(doc.getElementById('adminpage-save').textContent, 'Open PR (1)');
+  doc.getElementById('adminpage-save').click();
+  await settle(window, () => /Pull request opened/.test(doc.getElementById('adminpage-note').textContent), 'pr link');
   assert.ok(seen.some((r) => r.url === 'api/admin/access/pr' && r.method === 'POST'));
+});
+
+test('admin mode: tabs across the top; only Templates keeps the sidebar and tiles', async () => {
+  const { window, doc } = await boot(APPS, null, (u) => u.startsWith('api/admin/connections') ? { can_store: false, connections: [] } : null);
+  await enterAdmin(window, doc);
+  const sel = () => doc.querySelector('#admintabs [aria-selected="true"]').dataset.tab;
+  assert.equal(sel(), 'templates', 'admin mode opens on Templates');
+  assert.equal(doc.body.classList.contains('admin-page'), false);
+  assert.equal(doc.getElementById('adminpage').hidden, true);
+  click(doc.getElementById('admin-tab-connections'));
+  assert.equal(sel(), 'connections');
+  assert.ok(doc.body.classList.contains('admin-page'), 'a page tab hides the tiles and sidebar (CSS on body.admin-page)');
+  assert.equal(doc.getElementById('adminpage').hidden, false);
+  assert.equal(doc.getElementById('adminpage-title').textContent, 'Connections');
+  click(doc.getElementById('admin-tab-templates'));
+  assert.equal(doc.body.classList.contains('admin-page'), false);
+  click(doc.getElementById('admin-tab-site'));
+  click(doc.getElementById('admin-done'));
+  assert.equal(doc.body.classList.contains('admin-mode'), false, 'Done leaves admin mode');
+  assert.equal(doc.body.classList.contains('admin-page'), false, 'and drops the page');
 });

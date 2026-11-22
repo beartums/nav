@@ -1,21 +1,17 @@
 // access.js -- who is in which group, staged as a pull request.
 //
 // One of nav's page scripts (classic, shared globals; see widgets.js). Reuses
-// the editor dialog, like connections.js. Server half: /api/admin/access
+// the admin page host (admin-pages.js), like connections.js. Server half: /api/admin/access
 // (api/access.py). Nothing here changes access directly: a click stages a
 // membership change, "Open PR" turns every staged change into one pull request
 // on the GitOps repo, and access changes when that is merged and applied.
 'use strict';
 
-function accessDialog() {
-  EDITING = '__access__';
-  PASTE_TARGET = null;
-  document.getElementById('editor-title').textContent = 'Access';
-  var note = document.getElementById('editor-note');
-  var save = document.getElementById('editor-save');
+function accessPage(h) {
+  var note = h.note;
+  var save = h.save;
   note.textContent = 'Loading…';
-  editorBody.innerHTML = '';
-  editor.classList.add('wide', 'acc-wide');
+  h.body.innerHTML = '';
   var view = null;
 
   function staged(pk, group) {
@@ -49,13 +45,13 @@ function accessDialog() {
   }
 
   function render() {
-    editorBody.innerHTML = '';
+    h.body.innerHTML = '';
     if (!view.enabled) {
-      editorBody.appendChild(div('note', 'The Access panel is off: nav-api needs NAV_GITOPS_REPO and NAV_GITOPS_TOKEN.'));
+      h.body.appendChild(div('note', 'The Access panel is off: nav-api needs NAV_GITOPS_REPO and NAV_GITOPS_TOKEN.'));
       save.disabled = true;
       return;
     }
-    editorBody.appendChild(div('note', 'Membership as it is on ' + view.repo + ' ' + view.base +
+    h.body.appendChild(div('note', 'Membership as it is on ' + view.repo + ' ' + view.base +
       '. Click a cell to stage a change; Open PR puts every staged change into one pull request. ' +
       'Nothing changes until it is merged and applied.'));
     if (view.last_pr) {
@@ -65,7 +61,7 @@ function accessDialog() {
       a.href = view.last_pr.url; a.target = '_blank'; a.rel = 'noopener';
       a.textContent = view.last_pr.url.replace(/^https:\/\/github\.com\//, '');
       last.appendChild(a);
-      editorBody.appendChild(last);
+      h.body.appendChild(last);
     }
     var t = document.createElement('table');
     t.className = 'acc-table';
@@ -107,7 +103,7 @@ function accessDialog() {
       tb.appendChild(tr);
     });
     t.appendChild(tb);
-    editorBody.appendChild(t);
+    h.body.appendChild(t);
     var n = (view.pending || []).length;
     if (n) {
       var clear = document.createElement('button');
@@ -118,15 +114,14 @@ function accessDialog() {
         connSend('DELETE', 'api/admin/access/changes').then(function (r) { view.pending = r.pending; load(); })
           .catch(function (e) { note.textContent = e.message; });
       });
-      editorBody.appendChild(clear);
+      h.body.appendChild(clear);
     }
     save.disabled = !n;
     save.textContent = n ? 'Open PR (' + n + ')' : 'Open PR';
     note.textContent = n ? n + ' staged' : '';
   }
 
-  editorBody.addEventListener('click', function onCell(e) {
-    if (EDITING !== '__access__') { editorBody.removeEventListener('click', onCell); return; }
+  h.body.addEventListener('click', function onCell(e) {
     var b = e.target.closest('.acc-cell');
     if (!b || b.disabled) { return; }
     var pk = Number(b.dataset.pk), group = b.dataset.group;
@@ -157,8 +152,4 @@ function accessDialog() {
   };
 
   load().catch(function (e) { note.textContent = 'Could not load access: ' + e.message; });
-  document.body.classList.add('editing');
-  editor.style.left = Math.max(12, innerWidth / 2 - 380) + 'px';
-  editor.style.top = '60px';
 }
-document.getElementById('admin-access-btn').addEventListener('click', accessDialog);

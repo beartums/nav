@@ -149,26 +149,6 @@ document.getElementById('group-add').addEventListener('click', function () {
   saveGroups(categoriesOf(APPS, true).concat([name.trim()]), groupHiddenList());
 });
 
-// The sidebar's Manage menu (admin tools that used to crowd the admin bar).
-// Each item's own listener lives with its dialog; this only opens and closes.
-(function () {
-  var btn = document.getElementById('side-menu-btn');
-  var list = document.getElementById('side-menu-list');
-  function close() { list.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
-  btn.addEventListener('click', function (ev) {
-    ev.stopPropagation();
-    list.hidden = !list.hidden;
-    btn.setAttribute('aria-expanded', String(!list.hidden));
-  });
-  list.addEventListener('click', function (ev) { if (ev.target.closest('button')) { close(); } });
-  document.addEventListener('click', function (ev) {
-    if (!list.hidden && !list.contains(ev.target) && ev.target !== btn) { close(); }
-  });
-  document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape' && !list.hidden) { close(); btn.focus(); }
-  });
-})();
-
 // The sidebar's width: drag its edge (or arrow keys on the grip). Per viewer,
 // in localStorage -- a convenience; it falls back to the default.
 (function () {

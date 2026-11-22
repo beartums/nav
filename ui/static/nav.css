@@ -106,7 +106,49 @@ ul.tiles.collapsed a.app:focus-visible .text { opacity:1; }
 #adminbar, #editbar { position:sticky; top:0; z-index:25; display:none; gap:12px;
             align-items:center; margin:-24px -16px 16px; padding:10px 16px;
             background:var(--accent); color:#fff; font-size:13px; }
-body.admin-mode #adminbar { display:flex; }
+/* Admin mode is a frame round the whole window plus the Admin pill, not a
+   coloured bar: the tabs and the template toolbar are ordinary page chrome. */
+body.admin-mode::after { content:''; position:fixed; inset:0; border:3px solid var(--accent);
+  pointer-events:none; z-index:60; }
+#admintabs { display:none; position:sticky; top:0; z-index:26; align-items:center; gap:4px;
+  margin:-24px -16px 0; padding:8px 16px 0; background:var(--bg); border-bottom:1px solid var(--line); }
+body.admin-mode #admintabs { display:flex; }
+#admintabs [data-tab] { border:1px solid transparent; border-bottom:0; border-radius:8px 8px 0 0;
+  background:none; padding:7px 14px; font:inherit; font-size:14px; color:var(--muted); margin-bottom:-1px; }
+#admintabs [data-tab]:hover { color:var(--fg); }
+#admintabs [data-tab][aria-selected="true"] { background:var(--card); border-color:var(--line);
+  color:var(--fg); font-weight:600; }
+.admin-pill { background:var(--accent); color:#fff; border-radius:999px; padding:2px 10px; font-size:12px;
+  font-weight:700; letter-spacing:.03em; margin:0 10px 6px 0; }
+#admintabs .admin-done { margin-bottom:6px; padding:5px 14px; background:var(--accent); color:#fff; border-color:var(--accent);
+  font-weight:600; }
+/* The template toolbar: light, under the tabs. */
+body.admin-mode #adminbar { display:flex; top:41px; margin:0 -16px 16px; background:var(--card);
+  color:var(--fg); border-bottom:1px solid var(--line); }
+body.admin-mode #adminbar button, body.admin-mode #adminbar .tpl select { background:var(--bg); color:var(--fg);
+  border-color:var(--line); }
+body.admin-mode #adminbar .tb.on { background:color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Access, Site settings, Connections: full pages, no sidebar, no tiles. */
+#adminpage { padding:8px 0 40px; }
+/* The pages' forms read like the editor dialog's, wider. */
+#adminpage-body { display:grid; gap:10px; max-width:760px; }
+#adminpage-body label { font-size:12px; color:var(--muted); display:grid; gap:3px; }
+#adminpage-body input[type=text], #adminpage-body input[type=password], #adminpage-body input:not([type]),
+#adminpage-body select { font:inherit; font-size:13px; padding:6px 8px; border:1px solid var(--line);
+  border-radius:6px; background:var(--card); color:var(--fg); width:100%; }
+#adminpage-body .drop { border:1px dashed var(--line); border-radius:7px; padding:10px; text-align:center;
+  font-size:12px; color:var(--muted); }
+#adminpage-body .drop.over { border-color:var(--accent); color:var(--accent); }
+#adminpage .note { font-size:12px; color:var(--muted); }
+#adminpage-body .acc-table { max-width:none; }
+body.admin-page #adminpage-body:has(.acc-table) { max-width:none; }
+#adminpage h2 { margin:6px 0 14px; font-size:20px; }
+.adminpage-foot { display:flex; align-items:center; gap:10px; justify-content:flex-end; margin-top:18px;
+  position:sticky; bottom:0; padding:10px 0; background:var(--bg); border-top:1px solid var(--line); }
+.adminpage-foot .note { margin-right:auto; }
+body.admin-page #adminbar, body.admin-page #out, body.admin-page #dashtabs, body.admin-page #groups,
+body.admin-page #side-grip, body.admin-page #widget-palette, body.admin-page header #search { display:none !important; }
+body.admin-mode.admin-page .wrap { margin-left:auto; max-width:1100px; }
 body.edit-mode #editbar { display:flex; }
 #adminbar strong, #editbar strong { font-size:14px; white-space:nowrap; }
 #adminbar .hint, #editbar .hint { opacity:.85; flex:1 1 160px; min-width:0; }
@@ -173,11 +215,6 @@ body.admin-mode .wrap, body.edit-mode .wrap { margin-left:var(--side-w, 210px);
 #side-grip:hover, #side-grip:focus-visible, body.side-dragging #side-grip {
   background:color-mix(in srgb, var(--accent) 40%, transparent); outline:none; }
 body.side-dragging { cursor:col-resize; user-select:none; }
-/* Admin tools: one button in the sidebar rather than a row on the bar. */
-.side-menu { display:none; position:relative; margin-bottom:14px; }
-body.admin-mode .side-menu { display:block; }
-.side-menu > button { width:100%; text-align:left; }
-.side-menu .menu-list { left:0; right:0; min-width:0; }
 #groups h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); margin:0 0 8px; }
 #group-list { list-style:none; margin:0 0 10px; padding:0; display:block; }
@@ -505,7 +542,6 @@ body.editing #editor { display:block; }
 .cal-warn { margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #editor.wide { width:min(560px, calc(100vw - 24px)); }
 /* Access (access.js): people x groups, staged changes marked. */
-#editor.wide.acc-wide { width:min(920px, calc(100vw - 24px)); max-height:calc(100vh - 80px); overflow:auto; }
 .acc-table { border-collapse:collapse; margin:10px 0; font-size:13px; width:100%; }
 .acc-table th, .acc-table td { border-bottom:1px solid var(--line); padding:4px 6px; text-align:center; vertical-align:top; }
 .acc-table th { font-weight:600; white-space:nowrap; }
