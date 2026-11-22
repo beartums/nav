@@ -11,15 +11,6 @@
 </head>
 <body>
   <aside id="groups" aria-label="Groups">
-    <div class="side-menu" id="side-menu">
-      <button id="side-menu-btn" aria-haspopup="true" aria-expanded="false">Manage &#9662;</button>
-      <ul class="menu-list" id="side-menu-list" hidden>
-        <li><button id="admin-newtile-btn">New tile&hellip;</button></li>
-        <li><button id="admin-site-btn">Site settings&hellip;</button></li>
-        <li><button id="admin-connections-btn">Connections&hellip;</button></li>
-        <li><button id="admin-access-btn">Access&hellip;</button></li>
-      </ul>
-    </div>
     <h2>Groups</h2>
     <ul id="group-list"></ul>
     <button id="group-add">+ New group</button>
@@ -39,21 +30,31 @@
     </div>
     <!-- The mode bars are icons; each says what it does on hover (title) and to
          a screen reader (aria-label). The ⓘ carries the how-to hint. -->
+    <!-- Administrative mode: its sections as tabs. The accent frame round the
+         window (body.admin-mode) and the Admin pill say which mode this is. -->
+    <nav id="admintabs" aria-label="Administration">
+      <span class="admin-pill" title="Administrative mode: changes here are for everyone">Admin</span>
+      <button type="button" role="tab" data-tab="templates" id="admin-tab-templates">Templates</button>
+      <button type="button" role="tab" data-tab="access" id="admin-tab-access">Access</button>
+      <button type="button" role="tab" data-tab="site" id="admin-tab-site">Site settings</button>
+      <button type="button" role="tab" data-tab="connections" id="admin-tab-connections">Connections</button>
+      <span class="tb-spacer"></span>
+      <button type="button" class="admin-done" id="admin-done" title="Leave administrative mode">Done</button>
+    </nav>
     <div id="adminbar">
       <button class="tb side-toggle" type="button" title="Show or hide the sidebar"
               aria-label="Show or hide the sidebar">&#9707;</button>
-      <strong>Administrative mode</strong>
       <label class="tpl">Template <select id="admin-tpl" aria-describedby="admin-tpl-note"></select></label>
       <span class="hint" id="admin-tpl-note"></span>
       <span class="tb-info" tabindex="0" role="note"
             title="Click a tile to edit it &middot; drag tiles between groups or to reorder &middot; drag a widget from the widgets panel">&#9432;</span>
       <span class="tb-spacer"></span>
+      <button class="tb" type="button" id="admin-newtile-btn" title="New tile&hellip;" aria-label="New tile">&#65291;</button>
       <button class="tb page-bg-btn" type="button" id="admin-bg-btn" title="Page background" aria-label="Page background">&#127912;</button>
       <button class="tb widgets-toggle" type="button" id="admin-widgets-btn" title="Widgets: drag one onto the page"
               aria-label="Widgets" aria-expanded="false">&#9638;</button>
       <button class="tb" type="button" id="admin-viewas-btn" title="View-as list&hellip;" aria-label="View-as list">&#128101;</button>
       <button class="tb" type="button" id="admin-bulk-btn" title="Bulk edit&hellip;" aria-label="Bulk edit">&#9636;</button>
-      <button class="tb tb-done" type="button" id="admin-done" title="Done" aria-label="Done">&#10003;</button>
     </div>
     <div id="editbar">
       <button class="tb side-toggle" type="button" title="Show or hide the sidebar"
@@ -93,6 +94,15 @@
     <!-- Your dashboards as tabs, and + for another (layouts.js). -->
     <nav id="dashtabs" aria-label="Dashboards" hidden></nav>
     <div id="out" class="msg">Loading…</div>
+    <!-- An admin tab other than Templates: a full page (admin-pages.js). -->
+    <section id="adminpage" hidden>
+      <h2 id="adminpage-title"></h2>
+      <div id="adminpage-body"></div>
+      <div class="adminpage-foot">
+        <span class="note" id="adminpage-note"></span>
+        <button type="button" id="adminpage-save">Save</button>
+      </div>
+    </section>
   </div>
 
   <!-- Tile editor. Movable, deliberately small, and positioned near whatever
@@ -131,6 +141,7 @@
   <script src="/static/widget-designer.js"></script>
   <script src="/static/connections.js"></script>
   <script src="/static/access.js"></script>
+  <script src="/static/admin-pages.js"></script>
   <script src="/static/main.js"></script>
 </body>
 </html>

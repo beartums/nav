@@ -1,8 +1,8 @@
 // connections.js -- where nav's widgets reach each app, and with which key.
 //
-// One of nav's page scripts (classic, shared globals; see widgets.js). Loads
-// after editor.js, whose dialog it reuses. Admin only; the server half is
-// /api/admin/connections (api/creds.py).
+// One of nav's page scripts (classic, shared globals; see widgets.js). The
+// Connections tab of admin mode (admin-pages.js draws the page around it).
+// The server half is /api/admin/connections (api/creds.py).
 //
 // A key goes IN and never comes back: the server answers whether one is set
 // and its last four characters. So the key box is always empty -- blank means
@@ -30,14 +30,10 @@ var CONN_KEY_WORDS = {
   unreadable: function () { return 'Stored key cannot be decrypted (the master key changed) — enter it again'; }
 };
 
-function connectionsDialog() {
-  EDITING = '__connections__';
-  PASTE_TARGET = null;
-  document.getElementById('editor-title').textContent = 'Connections';
-  var note = document.getElementById('editor-note');
+function connectionsPage(h) {
+  var note = h.note;
   note.textContent = 'Loading…';
-  editorBody.innerHTML = '';
-  editor.classList.add('wide');
+  h.body.innerHTML = '';
   var rows = [];
 
   function row(c, canStore) {
@@ -156,22 +152,22 @@ function connectionsDialog() {
   function load() {
     rows = [];
     return connSend('GET', 'api/admin/connections').then(function (b) {
-      editorBody.innerHTML = '';
+      h.body.innerHTML = '';
       note.textContent = '';
       var intro = div('note', b.can_store
         ? 'Widgets use these to reach each app. Keys are encrypted in nav’s database and never shown again.'
         : 'Keys cannot be stored: nav-api has no NAV_SECRET_KEY. Addresses can still be set; keys can come from the server’s environment.');
-      editorBody.appendChild(intro);
-      b.connections.forEach(function (c) { editorBody.appendChild(row(c, b.can_store)); });
-      editorBody.appendChild(addForm(b.can_store));
+      h.body.appendChild(intro);
+      b.connections.forEach(function (c) { h.body.appendChild(row(c, b.can_store)); });
+      h.body.appendChild(addForm(b.can_store));
     });
   }
 
-  document.getElementById('editor-save').textContent = 'Save';
-  document.getElementById('editor-save').onclick = function () {
+  h.save.textContent = 'Save';
+  h.save.onclick = function () {
     var todo = rows.map(function (r) { return { slug: r.slug, body: r.body() }; })
       .filter(function (r) { return Object.keys(r.body).length; });
-    if (!todo.length) { closeEditor(); return; }
+    if (!todo.length) { note.textContent = 'Nothing changed.'; return; }
     note.textContent = 'Saving…';
     // One at a time, so the message names the connection that was refused.
     todo.reduce(function (p, r) {
@@ -186,8 +182,4 @@ function connectionsDialog() {
   };
 
   load().catch(function (e) { note.textContent = 'Could not load connections: ' + e.message; });
-  document.body.classList.add('editing');
-  editor.style.left = Math.max(12, innerWidth / 2 - 280) + 'px';
-  editor.style.top = '70px';
 }
-document.getElementById('admin-connections-btn').addEventListener('click', connectionsDialog);

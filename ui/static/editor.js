@@ -16,7 +16,7 @@ var EDITING = null;
 
 function closeEditor() {
   document.body.classList.remove('editing');
-  editor.classList.remove('wide', 'acc-wide');   // the widget designer and Access widen it
+  editor.classList.remove('wide');   // the widget designer widens it
   document.getElementById('editor-save').disabled = false;   // and may disable Save
   EDITING = null;
 }
@@ -270,7 +270,8 @@ function openEditor(a, atX, atY) {
 
 // Paste anywhere while the editor is open.
 document.addEventListener('paste', function (ev) {
-  if (!EDITING || !PASTE_TARGET) { return; }
+  // The tile editor, or an admin page (Site's icons) -- both set PASTE_TARGET.
+  if (!PASTE_TARGET || (!EDITING && !document.body.classList.contains('admin-page'))) { return; }
   var items = (ev.clipboardData && ev.clipboardData.items) || [];
   for (var i = 0; i < items.length; i++) {
     if (items[i].type.indexOf('image/') === 0) {
@@ -446,19 +447,16 @@ function aboutDialog() {
   editor.style.top = '90px';
 }
 
-function siteDialog() {
-  EDITING = '__site__';
-  PASTE_TARGET = null;
-  document.getElementById('editor-title').textContent = 'Site';
-  document.getElementById('editor-note').textContent = '';
-  editorBody.innerHTML = '';
+function sitePage(h) {
+  h.note.textContent = '';
+  h.body.innerHTML = '';
 
   var f = {
     title: field('Site name', SITE.title, 'nav'),
     icon: field('Site icon \u2014 dark mode', SITE.icon, 'the built-in mark'),
     icon_light: field('Site icon \u2014 light mode', SITE.icon_light, 'falls back to dark')
   };
-  editorBody.appendChild(f.title.label);
+  h.body.appendChild(f.title.label);
 
   // The same iconRow() the tile editor uses: one preview, one Choose\u2026
   // and one drop target PER MODE. This dialog used to have a single shared
@@ -466,25 +464,21 @@ function siteDialog() {
   // which is the arrangement the tile editor abandoned -- the target was
   // focus, which is invisible, and pasting a light icon while the dark
   // field happened to hold focus quietly replaced the wrong one.
-  editorBody.appendChild(iconRow(f.icon, ''));
-  editorBody.appendChild(iconRow(f.icon_light, SITE.icon || ''));
+  h.body.appendChild(iconRow(f.icon, ''));
+  h.body.appendChild(iconRow(f.icon_light, SITE.icon || ''));
 
-  document.getElementById('editor-save').textContent = 'Save';
-  document.getElementById('editor-save').onclick = function () {
+  h.save.textContent = 'Save';
+  h.save.disabled = false;
+  h.save.onclick = function () {
     // One PUT per key, in parallel: site_settings is key-addressed and
     // three of them is not worth a bulk endpoint.
     Promise.all(['title', 'icon', 'icon_light'].map(function (k) {
       return api('PUT', 'api/site/' + k, { value: f[k].input.value.trim() || null });
-    })).then(function () { closeEditor(); refresh(); })
-      .catch(function (e) { document.getElementById('editor-note').textContent = e.message; });
+    })).then(function () { h.note.textContent = 'Saved.'; refresh(); })
+      .catch(function (e) { h.note.textContent = e.message; });
   };
-
-  document.body.classList.add('editing');
-  editor.style.left = Math.max(12, innerWidth / 2 - 165) + 'px';
-  editor.style.top = '90px';
 }
-document.getElementById('admin-site-btn').addEventListener('click', siteDialog);
-// Also on the admin bar, not only inside Bulk edit. Creating a tile writes
+// On the Templates toolbar, not only inside Bulk edit. Creating a tile writes
 // immediately rather than staging, so it never depended on being in the
 // table -- and the table is not where anyone looks for "add a thing".
 // newTileDialog is declared further down; function declarations hoist.
