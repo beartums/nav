@@ -60,6 +60,29 @@ APPS: dict[str, dict[str, Any]] = {
     # "read"), sent as a bearer token. github.com/beartums/choreboard
     "choreboard": {"label": "Choreboard", "auth": "bearer", "test": "/api/me",
                    "url": "http://choreboard.tools.svc.cluster.local"},
+    # Read for their ACCOUNTS (appaccounts.py): the Access tab's App accounts
+    # view, and the Test button runs that read. What each key must be is in
+    # the adapter's note. Jellyfin has no default address (it may not run in
+    # the cluster): set it in Connections.
+    "jellyseerr": {"label": "Jellyseerr", "auth": "x-api-key", "test": "/api/v1/request/count",
+                   "url": "http://jellyseerr.media.svc.cluster.local:5055"},
+    "jellyfin": {"label": "Jellyfin", "auth": "query:ApiKey", "test": "/System/Info", "url": ""},
+    "plex": {"label": "Plex (plex.tv)", "auth": "header:X-Plex-Token", "test": "/users/account.json",
+             "url": "https://plex.tv"},
+    "audiobookshelf": {"label": "Audiobookshelf", "auth": "bearer", "test": "/api/me",
+                       "url": "http://audiobookshelf.audiobooks.svc.cluster.local"},
+    # No API keys in Navidrome: the "key" is an admin's username:password.
+    "navidrome": {"label": "Navidrome", "auth": "bearer", "test": "",
+                  "url": "http://navidrome.tools.svc.cluster.local:4533"},
+    "immich": {"label": "Immich", "auth": "x-api-key", "test": "/api/users/me",
+               "url": "http://immich-server.immich.svc.cluster.local:2283"},
+    "filebrowser": {"label": "FileBrowser", "auth": "bearer", "test": "/api/users",
+                    "url": "http://filebrowser.tools.svc.cluster.local"},
+    "grafana": {"label": "Grafana", "auth": "bearer", "test": "/api/org",
+                "url": "http://monitoring-grafana.monitoring.svc.cluster.local"},
+    # DRF token auth: sent as "Token <key>" (the adapter adds "Token ").
+    "paperless": {"label": "Paperless", "auth": "header:Authorization", "test": "/api/users/",
+                  "url": "http://paperless.tools.svc.cluster.local:8000"},
     # A Discovery API consumer key (developer.ticketmaster.com -> My Apps),
     # sent as ?apikey=. Public event listings: the venue-events widget.
     "ticketmaster": {"label": "Ticketmaster", "auth": "query:apikey",
