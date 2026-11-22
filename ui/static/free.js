@@ -25,7 +25,8 @@ var FREE_COLS = 24;             // layouts.py FREE_COLS
 var FREE_NARROW = 700;          // px of page below which cells give way to reading order
 var FREE_SPARE_ROWS = 6;        // empty rows kept below the lowest item while arranging
 
-function freeMode() { return !!LAYOUT && LAYOUT.mode === 'free' && !ADMIN_MODE; }
+// Admin mode too: a template may be free-placement (it is arranged as one).
+function freeMode() { return !!LAYOUT && LAYOUT.mode === 'free'; }
 
 function placedCell(x, y) { return x != null && y != null; }
 
@@ -710,3 +711,45 @@ function newGroupButton() {
     if (n !== wasNarrow) { wasNarrow = n; render(); }
   });
 })();
+
+
+// --- the grid's column count ------------------------------------------------------
+// A finer grid is more, narrower columns; rows keep their height. So changing
+// it scales every placed thing's column and width by the same factor and keeps
+// its rows: each stays where it was, the same size on screen.
+
+function syncGridControls() {
+  var free = !!LAYOUT && LAYOUT.mode === 'free';
+  document.querySelectorAll('.grid-cols').forEach(function (l) {
+    l.hidden = !free;
+    l.querySelector('select').value = String(FREE_COLS);
+  });
+}
+
+function rescaleGrid(cols) {
+  var old = FREE_COLS, f = cols / old;
+  function fit(x, w) {
+    var nw = Math.max(1, Math.min(cols, Math.round(w * f)));
+    return [Math.max(0, Math.min(cols - nw, Math.round(x * f))), nw];
+  }
+  var body = { cols: cols, tiles: {}, placements: {}, free_groups: [] };
+  freeItems().forEach(function (it) {
+    var s = freeSpan(it), r = fit(it.x, s[0]);
+    var v = { x: r[0], size: r[1] + 'x' + s[1] };
+    if (it.kind === 'app') { body.tiles[it.a.slug] = v; } else { body.placements[it.p.id] = v; }
+  });
+  body.free_groups = freeGroups().map(function (g) {
+    var r = fit(g.x, g.w);
+    return Object.assign({}, g, { x: r[0], w: r[1] });
+  });
+  return api('PUT', layoutPath('/grid'), body).then(refresh)
+    .catch(function (e) { alert('Changing the grid failed: ' + e.message); refresh(); });
+}
+
+document.querySelectorAll('.grid-cols select').forEach(function (s) {
+  s.addEventListener('change', function () {
+    var cols = Number(s.value);
+    if (cols === FREE_COLS) { return; }
+    rescaleGrid(cols);
+  });
+});

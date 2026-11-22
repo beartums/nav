@@ -60,6 +60,11 @@ NAME_MAX = 60
 # a new free dashboard is empty. Dashboards only, for now.
 MODES = ("packed", "free")
 FREE_COLS = 24
+# A free layout's column count is its own (layouts.free_cols), one of these;
+# a finer grid is more, narrower columns. Cells are checked against the most
+# any layout may have; the page keeps each layout within its own count.
+FREE_COLS_CHOICES = (12, 16, 24, 32, 36, 48)
+FREE_COLS_MAX = max(FREE_COLS_CHOICES)
 FREE_ROWS_MAX = 500
 
 
@@ -116,7 +121,7 @@ def tile_fields(kind: str, raw: dict[str, Any] | None) -> dict[str, Any]:
     if "image" in raw:
         raw["image"] = clean_image(raw["image"])
     if "x" in raw:
-        raw["x"] = clean_cell(raw["x"], "x", FREE_COLS)
+        raw["x"] = clean_cell(raw["x"], "x", FREE_COLS_MAX)
     if "y" in raw:
         raw["y"] = clean_cell(raw["y"], "y", FREE_ROWS_MAX)
     if "text_style" in raw:
@@ -165,8 +170,8 @@ FREE_GROUPS_MAX = 60
 GROUP_ID = re.compile(r"^[a-z0-9]{1,16}$")
 
 
-def clean_free_groups(raw: Any) -> list[dict[str, Any]]:
-    """The whole list, validated: ids unique, cells in range, kinds known."""
+def clean_free_groups(raw: Any, cols: int = FREE_COLS) -> list[dict[str, Any]]:
+    """The whole list, validated: ids unique, cells inside `cols` columns, kinds known."""
     if not isinstance(raw, list) or len(raw) > FREE_GROUPS_MAX:
         raise ValueError(f"groups must be a list of at most {FREE_GROUPS_MAX}")
     out, seen = [], set()
@@ -181,12 +186,12 @@ def clean_free_groups(raw: Any) -> list[dict[str, Any]]:
         if kind not in FREE_GROUP_KINDS:
             raise ValueError(f"group {gid}: kind must be one of {list(FREE_GROUP_KINDS)}")
         name = " ".join(str(g.get("name") or "").split())[:NAME_MAX]
-        x = clean_cell(g.get("x"), "x", FREE_COLS)
+        x = clean_cell(g.get("x"), "x", cols)
         y = clean_cell(g.get("y"), "y", FREE_ROWS_MAX)
-        w = clean_cell(g.get("w"), "w", FREE_COLS + 1)
+        w = clean_cell(g.get("w"), "w", cols + 1)
         h = clean_cell(g.get("h"), "h", FREE_ROWS_MAX)
-        if x is None or y is None or not w or not h or x + w > FREE_COLS:
-            raise ValueError(f"group {gid}: needs x, y, w >= 1 and h >= 1 inside the {FREE_COLS} columns")
+        if x is None or y is None or not w or not h or x + w > cols:
+            raise ValueError(f"group {gid}: needs x, y, w >= 1 and h >= 1 inside the {cols} columns")
         item = {"id": gid, "name": name, "kind": kind, "x": x, "y": y, "w": w, "h": h}
         bg = clean_bg(g.get("bg"))
         if bg:

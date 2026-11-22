@@ -75,8 +75,17 @@ function tile(a, o) {
   link.href = a.url;
   link.rel = 'noopener';
   var mode = opts.target;
+  var dash = dashboardLinkId(a.url);
 
-  if (mode === 'window' || mode === 'split') {
+  if (dash) {
+    // Another dashboard: switch here, never a new tab (layouts.js).
+    link.addEventListener('click', function (ev) {
+      if (arranging()) { return; }
+      ev.preventDefault();
+      count(a.slug);
+      openDashboard(dash);
+    });
+  } else if (mode === 'window' || mode === 'split') {
     link.addEventListener('click', function (ev) {
       ev.preventDefault();
       count(a.slug);

@@ -273,6 +273,24 @@ function newTileDialog(existing) {
   }
   var fName = row('Name', 'AdGuard Home');
   var fUrl = row('URL', 'http://192.0.2.8/');
+  // Or another dashboard: the URL becomes /?dashboard=<id> (layouts.js).
+  var dl = document.createElement('label');
+  dl.style.cssText = 'display:flex; flex-direction:column; gap:3px; font-size:12px;';
+  dl.appendChild(document.createTextNode('…or open a dashboard'));
+  var dsel = document.createElement('select');
+  dsel.id = 'newtile-dashboard';
+  dsel.style.cssText = 'padding:6px 8px; font:inherit; background:var(--bg); color:var(--fg);' +
+                       'border:1px solid var(--line); border-radius:5px;';
+  [['', '(none: the URL above)']].concat(
+    (LAYOUTS.templates || []).map(function (t) { return [t.is_default ? 'default' : String(t.id), 'Template: ' + t.name]; }),
+    (LAYOUTS.dashboards || []).map(function (d) { return [String(d.id), 'My dashboard: ' + d.name + ' (only I can open it)']; })
+  ).forEach(function (o) {
+    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; dsel.appendChild(op);
+  });
+  dsel.addEventListener('change', function () { if (dsel.value) { fUrl.value = '/?dashboard=' + dsel.value; } });
+  fUrl.addEventListener('input', function () { dsel.value = dashboardLinkId(fUrl.value.trim()) || ''; });
+  dl.appendChild(dsel);
+  box.appendChild(dl);
   var fSlug = row('Slug', 'lowercase, digits and hyphens');
   // groupPicker returns its own <label>; nesting it inside another would
   // be invalid and would make the caption click into the wrong control.
@@ -286,6 +304,7 @@ function newTileDialog(existing) {
   if (existing) {
     fName.value = existing.name || '';
     fUrl.value = existing.url || '';
+    dsel.value = dashboardLinkId(fUrl.value) || '';
     fSlug.value = existing.slug;
     // The slug is the primary key and the icon filename. Changing it would
     // be a create plus a delete, silently orphaning overrides and clicks.

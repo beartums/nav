@@ -394,7 +394,8 @@ def layout_info(row: dict[str, Any]) -> dict[str, Any]:
                                                                         "free_groups": row.get("free_groups") or [],
                                                                         "style": row.get("style") or {},
                                                                         "group_parents": row.get("group_parents") or {},
-                                                                        "group_style": row.get("group_style") or {}}
+                                                                        "group_style": row.get("group_style") or {},
+                                                                        "free_cols": row.get("free_cols") or layouts.FREE_COLS}
 
 
 @app.get("/api/apps")
@@ -685,7 +686,13 @@ def bad(exc: ValueError) -> HTTPException:
 
 
 async def copy_layout(conn: Any, src: dict[str, Any], dst: int, who: str) -> None:
-    """Tiles, placements and groups from `src` into `dst` (assumed empty)."""
+    """Tiles, placements and groups from `src` into `dst` (assumed empty).
+    A free source's grid comes too, so a dashboard made from a free template
+    (or a copy of a free dashboard) starts as the same page."""
+    if (src.get("mode") or "packed") == "free":
+        await conn.execute(
+            "UPDATE layouts SET mode = 'free', free_groups = %s, free_cols = %s WHERE id = %s",
+            (json.dumps(src.get("free_groups") or []), src.get("free_cols") or layouts.FREE_COLS, dst))
     await conn.execute(
         "UPDATE layouts SET group_order = %s, group_hidden = %s, group_parents = %s, group_style = %s WHERE id = %s",
         (json.dumps(src["group_order"]), json.dumps(src["group_hidden"]),
@@ -726,10 +733,8 @@ async def create_layout(body: dict[str, Any], request: Request,
     mode = body.get("mode") or "packed"
     if mode not in layouts.MODES:
         raise HTTPException(422, f"mode must be one of {list(layouts.MODES)}")
-    if mode == "free" and kind != "dashboard":
-        raise HTTPException(422, "only a dashboard can be free -- templates stay packed")
     if mode == "free" and body.get("from_id") is not None:
-        raise HTTPException(422, "a free dashboard starts empty; it copies nothing")
+        raise HTTPException(422, "a new free layout starts empty; a copy takes its source's mode")
     try:
         name = layouts.clean_name(body.get("name"))
     except ValueError as exc:
@@ -810,7 +815,7 @@ async def revert_layout(lid: int, request: Request, who: str = Depends(whoami)) 
             row = await writable_layout(conn, request, who, lid)
             if row["kind"] != "dashboard":
                 raise HTTPException(422, "only a dashboard reverts to its template")
-            if row.get("mode") == "free":
+            if row.get("mode") == "free" and row["template_id"] is None:
                 raise HTTPException(422, "a free dashboard has no template to revert to")
             src = None
             if row["template_id"] is not None:
@@ -1075,14 +1080,14 @@ async def set_free_groups(lid: int, body: dict[str, Any], request: Request,
     """{groups: [{id, name, kind, x, y, w, h}]}: a free layout's groups, the
     whole list REPLACED. Members of a removed dynamic group are the page's to
     move; this stores rectangles, nothing else."""
-    try:
-        groups = layouts.clean_free_groups(body.get("groups"))
-    except ValueError as exc:
-        raise bad(exc) from None
     async with pool.connection() as conn:  # type: ignore[union-attr]
         row = await writable_layout(conn, request, who, lid)
         if row.get("mode") != "free":
             raise HTTPException(422, "groups on the page grid are for free layouts")
+        try:
+            groups = layouts.clean_free_groups(body.get("groups"), row.get("free_cols") or layouts.FREE_COLS)
+        except ValueError as exc:
+            raise bad(exc) from None
         await conn.execute("UPDATE layouts SET free_groups = %s WHERE id = %s", (json.dumps(groups), lid))
         await touch(conn, lid, who)
     return {"ok": True, "count": len(groups)}
@@ -1103,7 +1108,7 @@ async def add_placement(conn: Any, lay: dict[str, Any], def_id: int, body: dict[
     if not category:
         raise HTTPException(422, "a placement needs a group")
     try:
-        x = layouts.clean_cell(body.get("x"), "x", layouts.FREE_COLS)
+        x = layouts.clean_cell(body.get("x"), "x", layouts.FREE_COLS_MAX)
         y = layouts.clean_cell(body.get("y"), "y", layouts.FREE_ROWS_MAX)
     except ValueError as exc:
         raise bad(exc) from None
@@ -1150,7 +1155,7 @@ async def edit_placement(conn: Any, lid: int | None, pid: int, body: dict[str, A
         if not cat:
             raise HTTPException(422, "a placement needs a group")
         sets.append("category = %s"); args.append(cat)
-    for k, hi in (("x", layouts.FREE_COLS), ("y", layouts.FREE_ROWS_MAX)):
+    for k, hi in (("x", layouts.FREE_COLS_MAX), ("y", layouts.FREE_ROWS_MAX)):
         if k in body:
             try:
                 v = layouts.clean_cell(body[k], k, hi)
@@ -2192,6 +2197,149 @@ async def unplace_widget(pid: int, _: str = Depends(require_admin)) -> dict[str,
         await conn.execute("DELETE FROM widget_placements WHERE id = %s", (pid,))
     return {"ok": True}
 
+
+
+# --- copies: duplicate a layout, or make a template from one --------------------
+
+async def copy_whole(conn: Any, src: dict[str, Any], dst: int, who: str, to_template: bool) -> int:
+    """Everything in `src` into the empty layout `dst`: grid, groups, styles,
+    background, tiles and placements. Into a TEMPLATE, a tile keeps its layout
+    fields only (what a tile is called is site-wide there) and personal
+    widgets are left out (a template holds library widgets). Returns how many
+    placements were left out."""
+    await conn.execute(
+        "UPDATE layouts SET mode = %s, free_groups = %s, free_cols = %s, style = %s, group_order = %s, "
+        "group_hidden = %s, group_parents = %s, group_style = %s WHERE id = %s",
+        (src.get("mode") or "packed", json.dumps(src.get("free_groups") or []),
+         src.get("free_cols") or layouts.FREE_COLS, json.dumps(src.get("style") or {}),
+         json.dumps(src["group_order"]), json.dumps(src["group_hidden"]),
+         json.dumps(src.get("group_parents") or {}), json.dumps(src.get("group_style") or {}), dst))
+    for slug, fields in (await tiles_of(conn, src["id"])).items():
+        if to_template:
+            fields = {k: v for k, v in fields.items() if k in layouts.LAYOUT_KEYS}
+        await conn.execute("INSERT INTO layout_tiles (layout_id, slug, fields) VALUES (%s, %s, %s)",
+                           (dst, slug, json.dumps(fields)))
+    owner_ok = "AND d.owner IS NULL" if to_template else ""
+    await conn.execute(
+        "INSERT INTO widget_placements (layout_id, def_id, category, ord, size, hidden, above_fold, x, y, created_by) "
+        "SELECT %s, p.def_id, p.category, p.ord, p.size, p.hidden, p.above_fold, p.x, p.y, %s "
+        f"FROM widget_placements p JOIN widget_defs d ON d.id = p.def_id WHERE p.layout_id = %s {owner_ok}",
+        (dst, who, src["id"]))
+    if not to_template:
+        return 0
+    r = await (await conn.execute(
+        "SELECT COUNT(*) AS n FROM widget_placements p JOIN widget_defs d ON d.id = p.def_id "
+        "WHERE p.layout_id = %s AND d.owner IS NOT NULL", (src["id"],))).fetchone()
+    return r["n"]
+
+
+async def free_name(conn: Any, kind: str, owner: str | None, want: str) -> str:
+    """`want`, or "want (2)", "want (3)"... -- the first not taken."""
+    base = want[: layouts.NAME_MAX - 5]
+    for i in range(1, 100):
+        name = base if i == 1 else f"{base} ({i})"
+        taken = await (await conn.execute(
+            "SELECT 1 FROM layouts WHERE COALESCE(owner, '') = %s AND lower(name) = lower(%s)",
+            (owner or "", name))).fetchone()
+        if not taken:
+            return name
+    raise HTTPException(409, "pick another name")
+
+
+@app.post("/api/layouts/{lid}/duplicate")
+async def duplicate_layout(lid: int, body: dict[str, Any], request: Request,
+                           who: str = Depends(whoami)) -> dict[str, Any]:
+    """{name?}: a copy of the same kind -- a template (admins) or one of your
+    dashboards. Default name: "<name> (copy)"."""
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        async with conn.transaction():
+            src = await viewable_layout(conn, lid, who)
+            kind = src["kind"]
+            if kind == "template" and not await is_admin(request, who):
+                raise HTTPException(403, f"templates are copied by administrators of nav ('{ADMIN_GROUP}')")
+            if kind == "dashboard" and src["owner"] != who:
+                raise HTTPException(404, f"no layout {lid}")
+            owner = who if kind == "dashboard" else None
+            try:
+                want = layouts.clean_name(body.get("name") or f"{src['name']} (copy)")
+            except ValueError as exc:
+                raise bad(exc) from None
+            name = await free_name(conn, kind, owner, want)
+            row = await (await conn.execute(
+                "INSERT INTO layouts (kind, owner, name, template_id, mode, updated_by) "
+                "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (kind, owner, name, src["template_id"], src.get("mode") or "packed", who))).fetchone()
+            await copy_whole(conn, src, row["id"], who, kind == "template")
+    return {"ok": True, "id": row["id"], "name": name}
+
+
+@app.post("/api/layouts/{lid}/to-template")
+async def layout_to_template(lid: int, body: dict[str, Any], request: Request,
+                             who: str = Depends(require_admin)) -> dict[str, Any]:
+    """{name?}: a new template copied from a layout the admin can see (their
+    own dashboard, or another template). Free stays free."""
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        async with conn.transaction():
+            src = await viewable_layout(conn, lid, who)
+            try:
+                want = layouts.clean_name(body.get("name") or src["name"])
+            except ValueError as exc:
+                raise bad(exc) from None
+            name = await free_name(conn, "template", None, want)
+            row = await (await conn.execute(
+                "INSERT INTO layouts (kind, owner, name, mode, updated_by) VALUES ('template', NULL, %s, %s, %s) "
+                "RETURNING id", (name, src.get("mode") or "packed", who))).fetchone()
+            skipped = await copy_whole(conn, src, row["id"], who, True)
+    return {"ok": True, "id": row["id"], "name": name, "skipped_widgets": skipped}
+
+
+@app.put("/api/layouts/{lid}/grid")
+async def set_layout_grid(lid: int, body: dict[str, Any], request: Request,
+                          who: str = Depends(whoami)) -> dict[str, Any]:
+    """{cols, tiles?: {slug: {x, size}}, placements?: {id: {x, size}}, free_groups?}:
+    a free layout's column count, with everything already on it moved and
+    resized to keep its place (the page works out the new cells). One
+    transaction: a half-rescaled page would overlap itself."""
+    cols = body.get("cols")
+    if cols not in layouts.FREE_COLS_CHOICES or isinstance(cols, bool):
+        raise HTTPException(422, f"cols must be one of {list(layouts.FREE_COLS_CHOICES)}")
+    try:
+        groups = layouts.clean_free_groups(body["free_groups"], cols) if "free_groups" in body else None
+        tiles = {}
+        for slug, v in (body.get("tiles") or {}).items():
+            x = layouts.clean_cell(v.get("x"), "x", cols)
+            size = v.get("size")
+            if size is not None and not (size in widgets.TILE_SIZES or widgets.custom_ok(size)):
+                raise ValueError(f"{slug}: size must be a named size or COLSxROWS")
+            tiles[slug] = {"x": x, "size": size}
+        places = {}
+        for pid, v in (body.get("placements") or {}).items():
+            x = layouts.clean_cell(v.get("x"), "x", cols)
+            size = v.get("size")
+            if size is not None and not widgets.custom_ok(size) and not isinstance(size, str):
+                raise ValueError(f"placement {pid}: bad size")
+            places[int(pid)] = {"x": x, "size": size}
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise bad(ValueError(str(exc))) from None
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        async with conn.transaction():
+            row = await writable_layout(conn, request, who, lid)
+            if row.get("mode") != "free":
+                raise HTTPException(422, "only a free layout has a grid to resize")
+            await conn.execute("UPDATE layouts SET free_cols = %s WHERE id = %s", (cols, lid))
+            if groups is not None:
+                await conn.execute("UPDATE layouts SET free_groups = %s WHERE id = %s", (json.dumps(groups), lid))
+            for slug, v in tiles.items():
+                patch = {"x": v["x"]} | ({"size": v["size"]} if v["size"] else {})
+                await conn.execute(
+                    "UPDATE layout_tiles SET fields = fields || %s::jsonb WHERE layout_id = %s AND slug = %s",
+                    (json.dumps(patch), lid, slug))
+            for pid, v in places.items():
+                await conn.execute(
+                    "UPDATE widget_placements SET x = %s, size = COALESCE(%s, size) WHERE id = %s AND layout_id = %s",
+                    (v["x"], v["size"], pid, lid))
+            await touch(conn, lid, who)
+    return {"ok": True, "cols": cols}
 
 
 # --- access: group membership, staged as a Terraform PR (access.py) --------------

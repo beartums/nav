@@ -321,6 +321,9 @@ INSERT INTO image_uploads (sha, owner, created_at)
 ALTER TABLE layouts ADD COLUMN IF NOT EXISTS group_parents JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE layouts ADD COLUMN IF NOT EXISTS group_style JSONB NOT NULL DEFAULT '{}'::jsonb;
 
+-- A free layout's column count (layouts.py FREE_COLS_CHOICES).
+ALTER TABLE layouts ADD COLUMN IF NOT EXISTS free_cols INTEGER NOT NULL DEFAULT 24;
+
 -- Access panel (access.py): group-membership changes staged until someone
 -- opens them as one pull request, and the pull requests opened.
 CREATE TABLE IF NOT EXISTS access_changes (

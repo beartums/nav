@@ -39,7 +39,8 @@ STYLE = {
     "margin-left": re.compile(r"^\d{1,3}px$"),
     "padding-left": re.compile(r"^\d{1,3}px$"),
 }
-LINK = re.compile(r"^(https?://|mailto:)", re.I)
+LINK = re.compile(r"^(https?://|mailto:|/\?dashboard=(\d+|default)$)", re.I)
+DASHBOARD = re.compile(r"^/\?dashboard=(\d+|default)$")
 IMAGE = re.compile(r"^(https://|api/images/[0-9a-f]{64}$)")
 
 
@@ -88,7 +89,7 @@ class _Cleaner(HTMLParser):
             kept.append(f' {k}="{escape(v.strip())}"')
         if tag == "img" and not any(a.startswith(" src=") for a in kept):
             return
-        if tag == "a":
+        if tag == "a" and not any(DASHBOARD.match(v or "") for k, v in attrs if k == "href"):
             kept.append(' target="_blank" rel="noopener noreferrer"')
         self.out.append(f"<{tag}{''.join(kept)}>")
         if tag not in VOID:
