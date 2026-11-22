@@ -351,6 +351,9 @@ function refresh() {
       }
       SITE = both[1] || {};
       LAYOUT = data.layout || null;
+      // A free layout's own column count (free.js reads FREE_COLS everywhere).
+      FREE_COLS = (LAYOUT && LAYOUT.free_cols) || 24;
+      syncGridControls();
       // Off the layout since templates; the site keys are an older API's.
       GROUP_ORDER = LAYOUT ? groupOrder()
         : Array.isArray(SITE.group_order) ? SITE.group_order : [];

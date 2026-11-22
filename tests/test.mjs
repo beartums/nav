@@ -3424,9 +3424,9 @@ test('the picker makes, renames and deletes templates', async () => {
   await enterAdmin(window, doc);
   await settle(window, () => doc.getElementById('admin-tpl').value === 't:2', 'Family');
   pick(window, doc, 'dup');
-  await settle(window, () => seen.some((r) => r.url === 'api/layouts' && r.method === 'POST'), 'POST');
-  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'POST').body),
-                   { kind: 'template', name: 'Kids', from_id: 2 });
+  await settle(window, () => seen.some((r) => r.url === 'api/layouts/2/duplicate' && r.method === 'POST'), 'POST');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'POST').body), { name: 'Kids' },
+                   'Duplicate copies the whole template (the duplicate route), named as asked');
   assert.equal(doc.getElementById('admin-tpl').value, 't:2', 'the select shows a template, never an action');
   pick(window, doc, 'rename');
   await settle(window, () => seen.some((r) => r.url === 'api/layouts/2' && r.method === 'PUT'), 'rename');
@@ -4161,4 +4161,18 @@ test('text blocks: the page cleans formatting again before drawing it', async ()
   assert.ok(!/script|onclick|javascript|<img|<font/.test(out), out);
   assert.ok(/<h2 style="text-align: center;">Hi<\/h2>/.test(out), 'formatting stays');
   assert.ok(/<b>ok<\/b>kept text/.test(out), "an unknown wrapper's text stays");
+});
+
+test('a tile whose address is /?dashboard=<id> switches dashboards in place', async () => {
+  const payload = { ...APPS, apps: [...APPS.apps, { slug: 'kids', name: 'Kids page', url: '/?dashboard=7', description: '',
+    category: 'Media', icon: '', clicks_mine: 0, clicks_all: 0, order: 2, base: { name: 'Kids page' }, override: {} }] };
+  const { window, doc, seen } = await boot(payload);
+  assert.equal(window.dashboardLinkId('/?dashboard=7'), '7');
+  assert.equal(window.dashboardLinkId('/?dashboard=default'), 'default');
+  assert.equal(window.dashboardLinkId('https://x/?dashboard=7'), null);
+  const t = [...doc.querySelectorAll('a.app')].find((a) => /Kids page/.test(a.textContent));
+  assert.notEqual(t.target, '_blank', 'never a new tab');
+  click(t);
+  await settle(window, () => seen.some((r) => /api\/apps\?.*layout=7/.test(r.url)), 'reload with layout 7');
+  assert.equal(window.localStorage.getItem('nav.layout'), '7', 'this device now shows dashboard 7');
 });

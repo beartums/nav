@@ -115,6 +115,7 @@ function buildTemplatePicker() {
   var acts = document.createElement('optgroup');
   acts.label = 'This template';
   opt('new', 'New template…', acts);
+  opt('newfree', 'New free-placement template…', acts);
   opt('dup', 'Duplicate…', acts);
   opt('rename', 'Rename…', acts);
   if (!LAYOUT.is_default) { opt('default', 'Make it the default', acts); opt('delete', 'Delete…', acts); }
@@ -137,14 +138,20 @@ function templateAction(v) {
   function fail(what) { return function (e) { alert(what + ' failed: ' + e.message); done(null); }; }
   sel.value = 't:' + LAYOUT.id;          // the select shows the template, never an action
   if (v.indexOf('t:') === 0) { return done(Number(v.slice(2))); }
-  if (v === 'new' || v === 'dup') {
-    var name = prompt(v === 'new' ? 'Name for the new, empty template'
-                                  : 'Name for the copy of “' + LAYOUT.name + '”');
+  if (v === 'new' || v === 'newfree') {
+    var name = prompt('Name for the new, empty ' + (v === 'newfree' ? 'free-placement ' : '') + 'template');
     if (!name || !name.trim()) { return; }
-    var body = { kind: 'template', name: name.trim() };
-    if (v === 'dup') { body.from_id = LAYOUT.id; }
-    return api('POST', 'api/layouts', body).then(function (r) { return done(r.id); })
+    return api('POST', 'api/layouts', { kind: 'template', name: name.trim(), mode: v === 'newfree' ? 'free' : 'packed' })
+      .then(function (r) { return done(r.id); })
       .catch(fail('Creating the template'));
+  }
+  if (v === 'dup') {
+    // A whole copy: tiles, widgets, groups, styles, background, grid.
+    var dn = prompt('Name for the copy of “' + LAYOUT.name + '”', LAYOUT.name + ' (copy)');
+    if (!dn || !dn.trim()) { return; }
+    return api('POST', 'api/layouts/' + LAYOUT.id + '/duplicate', { name: dn.trim() })
+      .then(function (r) { return done(r.id); })
+      .catch(fail('Duplicating the template'));
   }
   if (v === 'rename') {
     var nn = prompt('Rename “' + LAYOUT.name + '” to', LAYOUT.name);
@@ -203,6 +210,28 @@ function setUserLayout(id) {
     api('PUT', 'api/device/' + encodeURIComponent(DEVICE_ID), { layout_id: id }).catch(function () {});
   }
 }
+
+// --- links to a dashboard -------------------------------------------------------
+// A tile or a text-block link whose address is /?dashboard=<id> (or =default)
+// switches this device to that dashboard instead of leaving nav. A plain
+// root-relative URL, so the server needs nothing new; opened from outside (a
+// bookmark, a new tab) the page start below does the same.
+function dashboardLinkId(url) {
+  var m = /^\/\?dashboard=(\d+|default)$/.exec(String(url || ''));
+  return m ? m[1] : null;
+}
+function openDashboard(id) {
+  if (EDIT_MODE) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
+  setUserLayout(id === 'default' ? null : Number(id));
+  window.scrollTo(0, 0);
+  refresh();
+}
+(function () {
+  var id = dashboardLinkId('/' + location.search);
+  if (!id) { return; }
+  setUserLayout(id === 'default' ? null : Number(id));
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+})();
 
 /** Arranging a layout: the admin on a template, or a user on their own. */
 function arranging() { return ADMIN_MODE || EDIT_MODE; }
@@ -268,6 +297,8 @@ function dashboardMenu(menuList) {
   item('New dashboard…', function () { newDashboardDialog(null, null); });
   if (!onShared) {
     item('Rename…', renameDashboard);
+    item('Duplicate…', duplicateDashboard, { id: 'menu-duplicate' });
+    if (IS_ADMIN) { item('Copy to a new template…', dashboardToTemplate, { id: 'menu-to-template' }); }
     item('Revert to template…', revertDashboard);
     item('Delete…', deleteDashboard);
   }
@@ -317,6 +348,29 @@ function buildDashTabs() {
   add.setAttribute('aria-label', 'New dashboard');
   add.addEventListener('click', function () { newDashboardDialog(null, null, 'free'); });
   bar.appendChild(add);
+}
+
+function duplicateDashboard() {
+  var nn = prompt('Name for the copy of “' + LAYOUT.name + '”', LAYOUT.name + ' (copy)');
+  if (!nn || !nn.trim()) { return; }
+  api('POST', 'api/layouts/' + LAYOUT.id + '/duplicate', { name: nn.trim() })
+    .then(function (r) { setUserLayout(r.id); return loadLayouts(); }).then(refresh)
+    .catch(function (e) { alert('Duplicate failed: ' + e.message); });
+}
+
+/** Admins: this dashboard as a new template (its tiles' names and icons stay
+ *  site-wide, so only their places, sizes and styles go across). */
+function dashboardToTemplate() {
+  var nn = prompt('Name for the new template made from “' + LAYOUT.name + '”', LAYOUT.name);
+  if (!nn || !nn.trim()) { return; }
+  api('POST', 'api/layouts/' + LAYOUT.id + '/to-template', { name: nn.trim() })
+    .then(function (r) {
+      alert('Template “' + r.name + '” made.' + (r.skipped_widgets
+        ? ' ' + r.skipped_widgets + ' personal widget(s) were left out: a template holds library widgets only.' : '') +
+        ' Edit it under Administration → Templates.');
+      return loadLayouts();
+    }).then(refresh)
+    .catch(function (e) { alert('Copying to a template failed: ' + e.message); });
 }
 
 function renameDashboard() {

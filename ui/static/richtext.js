@@ -28,8 +28,8 @@ function cleanRich(html) {
       var el = document.createElement(n.tagName.toLowerCase());
       if (n.tagName === 'A') {
         var href = n.getAttribute('href') || '';
-        if (/^(https?:\/\/|mailto:)/i.test(href)) { el.setAttribute('href', href); }
-        el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer');
+        if (/^(https?:\/\/|mailto:)/i.test(href) || dashboardLinkId(href)) { el.setAttribute('href', href); }
+        if (!dashboardLinkId(href)) { el.setAttribute('target', '_blank'); el.setAttribute('rel', 'noopener noreferrer'); }
       }
       if (n.tagName === 'IMG') {
         var s = n.getAttribute('src') || '';
@@ -59,6 +59,12 @@ WIDGET_RENDERERS.text = function (el, d) {
   if (!body.textContent.trim() && !body.querySelector('img,hr')) {
     body.appendChild(div('w-dim', 'Empty text block'));
   }
+  // A link to another dashboard switches here (layouts.js), not a new page.
+  body.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[href]');
+    var id = a && dashboardLinkId(a.getAttribute('href'));
+    if (id && !arranging()) { e.preventDefault(); openDashboard(id); }
+  });
   el.appendChild(body);
 };
 
@@ -171,7 +177,7 @@ function richEditor(html) {
     keep();
     askFor = kind;
     askIn.value = '';
-    askIn.placeholder = kind === 'link' ? 'https://… or mailto:…' : 'https://… picture address';
+    askIn.placeholder = kind === 'link' ? 'https://…, mailto:…, or /?dashboard=<id>' : 'https://… picture address';
     askOk.textContent = kind === 'link' ? 'Link' : 'Insert picture';
     ask.hidden = false;
     askIn.focus();
@@ -181,7 +187,7 @@ function richEditor(html) {
     ask.hidden = true;
     if (!go || !v) { back(); return; }
     if (askFor === 'link') {
-      if (!/^(https?:\/\/|mailto:)/i.test(v)) { v = 'https://' + v; }
+      if (!/^(https?:\/\/|mailto:)/i.test(v) && !dashboardLinkId(v)) { v = 'https://' + v; }
       cmd('createLink', v);
     } else if (/^https:\/\//.test(v)) {
       cmd('insertImage', v);
