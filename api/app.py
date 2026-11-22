@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -2361,31 +2362,45 @@ def _shown(a: dict[str, Any]) -> bool:
     return not a.get("meta_hide") and launchable(a.get("launch_url") or a.get("meta_launch_url"))
 
 
-async def _authentik_access() -> dict[str, Any]:
-    """Users, groups, applications and their bindings: one round of reads."""
+# Authentik's answer is reused for a minute: every click in the panel redraws
+# it, and the per-person checks are the slow part (~1.5 s each). ?fresh=1
+# (the panel's Refresh) reads again.
+ACCESS_TTL = 60
+_AK_CACHE: dict[str, Any] = {"at": 0.0, "data": None}
+
+
+async def _authentik_access(fresh: bool = False) -> dict[str, Any]:
+    """Users, groups, applications and their bindings: one round of reads, in parallel."""
+    if not fresh and _AK_CACHE["data"] is not None and time.monotonic() - _AK_CACHE["at"] < ACCESS_TTL:
+        return _AK_CACHE["data"]
     if not AUTHENTIK_TOKEN:
         raise HTTPException(503, "AUTHENTIK_TOKEN is not set")
     headers = {"Authorization": f"Bearer {AUTHENTIK_TOKEN}"}
     async with httpx.AsyncClient(base_url=AUTHENTIK_URL, headers=headers, timeout=20) as client:
-        u = await client.get("/api/v3/core/users/", params={"page_size": 200, "is_active": "true"})
-        a = await client.get("/api/v3/core/applications/", params={"page_size": 200, "superuser_full_list": "true"})
-        b = await client.get("/api/v3/policies/bindings/", params={"page_size": 500})
+        u, a, b = await asyncio.gather(
+            client.get("/api/v3/core/users/", params={"page_size": 200, "is_active": "true"}),
+            client.get("/api/v3/core/applications/", params={"page_size": 200, "superuser_full_list": "true"}),
+            client.get("/api/v3/policies/bindings/", params={"page_size": 500}))
         for r in (u, a, b):
             r.raise_for_status()
         users = [x for x in u.json().get("results") or [] if "service" not in str(x.get("type", ""))]
         apps = a.json().get("results") or []
+
         # What each person reaches today, from Authentik itself (direct bindings included).
-        reach = {}
-        for x in users:
-            r = await client.get("/api/v3/core/applications/", params={"for_user": x["pk"], "page_size": 200})
+        async def reach_of(pk: int) -> tuple[int, list[str]]:
+            r = await client.get("/api/v3/core/applications/", params={"for_user": pk, "page_size": 200})
             r.raise_for_status()
-            reach[x["pk"]] = sorted(y["slug"] for y in r.json().get("results") or [] if _shown(y))
+            return pk, sorted(y["slug"] for y in r.json().get("results") or [] if _shown(y))
+
+        reach = dict(await asyncio.gather(*(reach_of(x["pk"]) for x in users)))
     uuids = {x.get("pk") for x in apps}
     by_target: dict[str, list[dict[str, Any]]] = {}
     for x in b.json().get("results") or []:
         if x.get("target") in uuids:
             by_target.setdefault(x["target"], []).append(x)
-    return {"users": users, "apps": [x for x in apps if _shown(x)], "by_target": by_target, "reach": reach}
+    data = {"users": users, "apps": [x for x in apps if _shown(x)], "by_target": by_target, "reach": reach}
+    _AK_CACHE.update(at=time.monotonic(), data=data)
+    return data
 
 
 def _group_apps(ak: dict[str, Any], gs: set[str]) -> tuple[set[str], set[str]]:
@@ -2441,10 +2456,10 @@ def _access_view(tf: dict[str, str], ak: dict[str, Any], pending: list[dict[str,
 
 
 @app.get("/api/admin/access")
-async def get_access(_: str = Depends(require_access_admin)) -> dict[str, Any]:
+async def get_access(_: str = Depends(require_access_admin), fresh: bool = False) -> dict[str, Any]:
     if not access.enabled():
         return {"enabled": False}
-    tf, ak = await asyncio.gather(access.read_tf(), _authentik_access())
+    tf, ak = await asyncio.gather(access.read_tf(), _authentik_access(fresh))
     view = _access_view(tf, ak, await _pending())
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT url, by_whom, at FROM access_prs ORDER BY at DESC LIMIT 1")
@@ -2492,7 +2507,7 @@ async def open_access_pr(who: str = Depends(require_access_admin)) -> dict[str, 
     pending = await _pending()
     if not pending:
         raise HTTPException(400, "nothing staged")
-    tf, ak = await asyncio.gather(access.read_tf(), _authentik_access())
+    tf, ak = await asyncio.gather(access.read_tf(), _authentik_access(True))
     try:
         changed = access.edit(tf, pending)
     except ValueError as exc:

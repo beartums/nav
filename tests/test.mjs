@@ -4100,7 +4100,7 @@ test('access: a click stages a change, and Open PR sends them', async () => {
   await settle(window, () => doc.querySelectorAll('.acc-cell').length === 2, 'matrix');
   const [fam, admins] = doc.querySelectorAll('.acc-cell');
   assert.ok(admins.disabled, 'a group whose membership is not in Terraform is read-only');
-  assert.equal(doc.getElementById('adminpage-save').disabled, true);
+  assert.equal(doc.getElementById('adminpage-save').hidden, true, 'no Open PR until something is staged');
   fam.click();
   await settle(window, () => doc.querySelector('.acc-staged'), 'staged cell');
   const post = seen.find((r) => r.url === 'api/admin/access/changes' && r.method === 'POST');

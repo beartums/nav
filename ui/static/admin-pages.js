@@ -24,6 +24,7 @@ function adminHost() {
   save.replaceWith(fresh);
   fresh.textContent = 'Save';
   fresh.disabled = false;
+  fresh.hidden = false;
   fresh.onclick = null;
   var note = document.getElementById('adminpage-note');
   note.textContent = '';
