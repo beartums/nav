@@ -4205,6 +4205,20 @@ test('access: App accounts shows each app’s accounts against people, errors an
   assert.equal(doc.getElementById('adminpage-save').hidden, true, 'nothing to open a PR for here');
 });
 
+test('access: opening straight onto App accounts (remembered) reads the apps instead of failing', async () => {
+  const APPV = { apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', error: null, count: 1 }],
+                 people: [{ pk: 5, name: 'Bear', email: 'b@x', cells: { jellyfin: { status: 'account', role: 'user', disabled: false, login: 'bear' } } }],
+                 orphans: {} };
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
+    u.startsWith('api/admin/access/apps') ? APPV : u.startsWith('api/admin/access') ? { enabled: false } : null);
+  window.localStorage.setItem('nav.accessView', JSON.stringify({ mode: 'apps', pivot: false }));
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-apps-table'), 'app accounts table');
+  assert.doesNotMatch(doc.getElementById('adminpage-note').textContent, /Could not/);
+  assert.equal(seen.filter((r) => r.url.startsWith('api/admin/access/apps')).length, 1, 'read once');
+});
+
 test('connections: Save waits for a change, Test checks what is typed and saves that connection on success, leaving asks', async () => {
   const CONNS = { can_store: true, connections: [
     { slug: 'jellyfin', label: 'Jellyfin', url: '', public_url: 'https://j.x', url_set: false, public_set: false,
