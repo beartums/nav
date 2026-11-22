@@ -2656,7 +2656,7 @@ test('connections: keys are write-only, and Save sends only what changed', async
   doc.getElementById('admin-tab-integrations').click();
   await settle(window, () => doc.querySelectorAll('fieldset.conn').length === 2, 'connections');
   const [son, mea] = doc.querySelectorAll('fieldset.conn');
-  assert.equal(son.querySelector('.conn-state').textContent, 'Key stored …abcd');
+  assert.equal(son.querySelector('.conn-state').textContent, '\u2713 Key stored …abcd');
   const keyBox = son.querySelector('input[type=password]');
   assert.equal(keyBox.value, '', 'a stored key is never put back in the page');
   assert.equal(mea.querySelector('.conn-state').textContent, 'No key');
@@ -4255,4 +4255,25 @@ test('Integrations and User management split the connections; a shared one is on
   await settle(window, () => shown().join() === 'mealie,immich', 'user management');
   assert.equal(doc.querySelector('.conn-add'), null);
   assert.match(doc.querySelector('fieldset.conn[data-slug="mealie"] legend').textContent, /also used by widgets/);
+});
+
+test('connections: a set key is a green badge; recent tries show as a green border or a red dot', async () => {
+  const CONNS = { can_store: true, connections: [
+    { slug: 'sonarr', label: 'Sonarr', url: 'http://s', public_url: 'https://s', default_url: 'http://s', key: 'stored', hint: '…1',
+      uses: ['widgets'], health: { tries: 4, errors: 0, last_error: null, last_ok: 1 } },
+    { slug: 'radarr', label: 'Radarr', url: 'http://r', public_url: 'https://r', default_url: 'http://r', key: 'stored', hint: '…2',
+      uses: ['widgets'], health: { tries: 5, errors: 2, last_error: { at: 1700000000, ok: false, detail: 'HTTP 500' }, last_ok: 1 } },
+    { slug: 'lidarr', label: 'Lidarr', url: 'http://l', public_url: 'https://l', default_url: 'http://l', key: 'none', hint: null,
+      uses: ['widgets'], health: { tries: 0, errors: 0, last_error: null, last_ok: null } }] };
+  const { window, doc } = await boot(APPS, null, (u) => u === 'api/admin/connections' ? CONNS : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-integrations').click();
+  await settle(window, () => doc.querySelectorAll('fieldset.conn').length === 3, 'connections');
+  const [son, rad, lid] = doc.querySelectorAll('fieldset.conn');
+  assert.ok(son.querySelector('.conn-state').classList.contains('conn-key-stored'), 'green key badge');
+  assert.ok(lid.querySelector('.conn-state').classList.contains('conn-key-none'));
+  assert.ok(son.classList.contains('conn-healthy') && son.querySelector('.conn-dot').hidden, 'all good: green border, no dot');
+  assert.ok(!rad.classList.contains('conn-healthy') && !rad.querySelector('.conn-dot').hidden, 'a recent failure: red dot');
+  assert.match(rad.querySelector('.conn-dot').title, /2 of the last 5 tries failed\. Latest: HTTP 500/);
+  assert.ok(!lid.classList.contains('conn-healthy') && lid.querySelector('.conn-dot').hidden, 'never tried: neither');
 });

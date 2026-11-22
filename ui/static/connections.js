@@ -56,8 +56,29 @@ function connectionsPage(h, which) {
     var legend = document.createElement('legend');
     legend.textContent = c.label;
     box.appendChild(legend);
-    var state = div('note conn-state' + (c.key === 'unreadable' ? ' conn-bad' : ''), CONN_KEY_WORDS[c.key](c));
+    var state = div('conn-state', '');
+    // The key as a badge: green when one is set, grey when not, red when it no longer opens.
+    function paintKey() {
+      state.className = 'conn-state conn-key-' + c.key;
+      state.textContent = (c.key === 'stored' ? '\u2713 ' : c.key === 'unreadable' ? '\u2715 ' : '') + CONN_KEY_WORDS[c.key](c);
+    }
+    paintKey();
     box.appendChild(state);
+    // How it has been doing (nav-api remembers the last few uses): a green
+    // border when they all worked, a red dot when any failed lately.
+    var dot = document.createElement('span');
+    dot.className = 'conn-dot';
+    legend.appendChild(dot);
+    function paintHealth(hl) {
+      hl = hl || { tries: 0, errors: 0 };
+      box.classList.toggle('conn-healthy', hl.tries > 0 && hl.errors === 0);
+      dot.hidden = !hl.errors;
+      dot.title = hl.errors ? hl.errors + ' of the last ' + hl.tries + ' tries failed. Latest: ' +
+        hl.last_error.detail + ' (' + new Date(hl.last_error.at * 1000).toLocaleString() + ')' : '';
+      dot.setAttribute('aria-label', dot.title);
+      box.title = hl.tries && !hl.errors ? 'The last ' + hl.tries + ' tries worked' : '';
+    }
+    paintHealth(c.health);
     // What the key must be, for an app read for its accounts (Access → App accounts).
     if (c.note) { box.appendChild(div('note conn-need', 'Key: ' + c.note)); }
     var url = field(c.custom ? 'Base URL (its key is sent only under this)' : 'Address nav uses',
@@ -102,6 +123,11 @@ function connectionsPage(h, which) {
       connSend('POST', 'api/admin/connections/' + c.slug + '/test', tb).then(function (r) {
         out.textContent = (r.ok ? '✓ ' : '✗ ') + r.detail;
         out.classList.toggle('conn-bad', !r.ok);
+        // A test of what is saved counts as a try: repaint from the server's tally.
+        connSend('GET', 'api/admin/connections').then(function (all) {
+          var mine = (all.connections || []).filter(function (x) { return x.slug === c.slug; })[0];
+          if (mine) { paintHealth(mine.health); }
+        }).catch(function () {});
         // It works: keep this connection's changes now (only this one's --
         // other connections' edits stay unsaved until Save).
         var b = me.body();
@@ -112,7 +138,7 @@ function connectionsPage(h, which) {
           if ('auth' in b) { c.auth = b.auth; }
           if ('key' in b) { c.key = b.key ? 'stored' : 'none'; c.hint = b.key ? '\u2026' + b.key.slice(-4) : null; key.input.value = ''; removing = false; }
           if (rm) { rm.textContent = 'Remove key'; }
-          state.textContent = CONN_KEY_WORDS[c.key](c);
+          paintKey();
           out.textContent += ' \u2014 saved';
           changed();
         });
@@ -128,7 +154,7 @@ function connectionsPage(h, which) {
       rm.addEventListener('click', function () {
         removing = !removing;
         rm.textContent = removing ? 'Keep key' : 'Remove key';
-        state.textContent = removing ? 'Key will be removed on Save' : CONN_KEY_WORDS[c.key](c);
+        if (removing) { state.textContent = 'Key will be removed on Save'; state.className = 'conn-state'; } else { paintKey(); }
         changed();
       });
       bar.appendChild(rm);

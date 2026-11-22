@@ -2035,10 +2035,13 @@ async def test_connection(slug: str, body: dict[str, Any] | None = None,
         return {"ok": False, "detail": "no address set"}
     if not key:
         return {"ok": False, "detail": "no key set"}
+    saved = not new_url and not new_key       # a try of what is stored, worth remembering
     ad = next((a for a in appaccounts.ADAPTERS.values() if a.conn == slug), None)
     if ad is not None:
         # An app read for its accounts: the test is that read.
         got = await _read_app(ad, url, key)
+        if saved:
+            creds.note(slug, not got["error"], got["error"] or "")
         if got["error"]:
             return {"ok": False, "detail": got["error"]}
         return {"ok": True, "detail": f"connected to {url}: {len(got['accounts'])} account(s) listed"}
@@ -2047,12 +2050,14 @@ async def test_connection(slug: str, body: dict[str, Any] | None = None,
             test = creds.APPS[slug]["test"] if slug in creds.APPS else ""
             r = await client.get(url + test, headers=creds.headers(slug, key), params=creds.params(slug, key))
     except httpx.HTTPError as exc:
-        return {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
-    if r.status_code in (401, 403):
-        return {"ok": False, "detail": f"HTTP {r.status_code}: the key was refused"}
-    if r.status_code >= 400:
-        return {"ok": False, "detail": f"HTTP {r.status_code} from {url}"}
-    return {"ok": True, "detail": f"connected to {url}"}
+        out = {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
+    else:
+        out = ({"ok": False, "detail": f"HTTP {r.status_code}: the key was refused"} if r.status_code in (401, 403)
+               else {"ok": False, "detail": f"HTTP {r.status_code} from {url}"} if r.status_code >= 400
+               else {"ok": True, "detail": f"connected to {url}"})
+    if saved:
+        creds.note(slug, out["ok"], "" if out["ok"] else out["detail"])
+    return out
 
 
 @app.post("/api/admin/widgets")
@@ -2533,7 +2538,10 @@ async def _read_apps(fresh: bool) -> dict[str, dict[str, Any]]:
 
     async def one(ad: Any) -> tuple[str, dict[str, Any]]:
         url, key, _ = creds.resolve(ad.conn)
-        return ad.key, await _read_app(ad, url, key)
+        got = await _read_app(ad, url, key)
+        if url and key:              # a missing key isn't a failed try
+            creds.note(ad.conn, not got["error"], got["error"] or "")
+        return ad.key, got
 
     data = dict(await asyncio.gather(*(one(a) for a in appaccounts.ADAPTERS.values())))
     _APPS_CACHE.update(at=time.monotonic(), data=data)

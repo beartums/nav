@@ -416,11 +416,18 @@ async def keyed_get(client: httpx.AsyncClient, slug: str, path: str,
     base, key, _ = creds.resolve(slug)
     if not key:
         raise ValueError(f"no API key for {creds.APPS[slug]['label']} -- add one in Connections")
-    r = await client.get(base + path, params=params, headers=creds.headers(slug, key))
+    try:
+        r = await client.get(base + path, params=params, headers=creds.headers(slug, key))
+    except httpx.HTTPError as exc:
+        creds.note(slug, False, f"{type(exc).__name__}: cannot reach {base}")
+        raise
     if r.status_code in (401, 403):
+        creds.note(slug, False, f"HTTP {r.status_code}: the API key was refused")
         raise ValueError(f"HTTP {r.status_code}: the API key was refused")
     if r.status_code >= 400:
+        creds.note(slug, False, f"HTTP {r.status_code} from {path}")
         raise ValueError(f"HTTP {r.status_code} from {path}")
+    creds.note(slug, True)
     return r.json()
 
 
@@ -740,7 +747,14 @@ async def cb_call(client: httpx.AsyncClient, method: str, path: str, who: str | 
         headers["X-Choreboard-As"] = who
     if who and via and via.lower() != who.lower():
         headers["X-Choreboard-Via"] = via
-    r = await client.request(method, base + path, json=body, params=params, headers=headers)
+    try:
+        r = await client.request(method, base + path, json=body, params=params, headers=headers)
+    except httpx.HTTPError as exc:
+        creds.note("choreboard", False, f"{type(exc).__name__}: cannot reach {base}")
+        raise
+    # A refused key or a server fault is the connection's; a 403/409 on one
+    # person's action is choreboard's answer, and the connection is fine.
+    creds.note("choreboard", r.status_code != 401 and r.status_code < 500, f"HTTP {r.status_code}")
     if r.status_code >= 400:
         try:
             msg = r.json().get("error") or r.json().get("detail") or r.text
@@ -948,6 +962,18 @@ class VenueEvents(Provider):
                                                        "week_start": "sunday"}}]
 
     async def fetch(self, config: dict[str, Any], who: str) -> dict[str, Any]:
+        try:
+            got = await self._fetch(config, who)
+        except httpx.HTTPStatusError as exc:
+            creds.note("ticketmaster", False, f"HTTP {exc.response.status_code}")
+            raise
+        except httpx.HTTPError as exc:
+            creds.note("ticketmaster", False, f"{type(exc).__name__}: cannot reach Ticketmaster")
+            raise
+        creds.note("ticketmaster", True)
+        return got
+
+    async def _fetch(self, config: dict[str, Any], who: str) -> dict[str, Any]:
         base, key, _ = creds.resolve("ticketmaster")
         if not key:
             raise ValueError("no Ticketmaster API key -- add one in Connections")
@@ -1101,12 +1127,19 @@ class Remote(Provider):
             if not key:
                 raise ValueError(f"connection {name!r} has no key")
             headers.update(creds.headers(name, key))
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            async with client.stream("GET", url, headers=headers) as r:
-                buf, over = bytearray(), False
-                async for chunk in r.aiter_bytes():
-                    buf.extend(chunk)
-                    if len(buf) > remote.MAX_BYTES:
-                        over = True
-                        break
-                return remote.body(r.status_code, bytes(buf), over)
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+                async with client.stream("GET", url, headers=headers) as r:
+                    buf, over = bytearray(), False
+                    async for chunk in r.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > remote.MAX_BYTES:
+                            over = True
+                            break
+                    if name:
+                        creds.note(name, r.status_code < 400, f"HTTP {r.status_code}")
+                    return remote.body(r.status_code, bytes(buf), over)
+        except httpx.HTTPError as exc:
+            if name:
+                creds.note(name, False, f"{type(exc).__name__}: cannot reach the URL")
+            raise
