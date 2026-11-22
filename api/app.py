@@ -2006,11 +2006,25 @@ async def save_connection(slug: str, body: dict[str, Any],
 
 
 @app.post("/api/admin/connections/{slug}/test")
-async def test_connection(slug: str, _: str = Depends(require_admin)) -> dict[str, Any]:
-    """One cheap authenticated call with what is saved. The answer is a
-    result, not a status code: a refused key is a 200 saying so."""
+async def test_connection(slug: str, body: dict[str, Any] | None = None,
+                          _: str = Depends(require_admin)) -> dict[str, Any]:
+    """One cheap authenticated call. {url?, key?} tests what is typed, before
+    saving; a field left out is the saved value. The answer is a result, not
+    a status code: a refused key is a 200 saying so."""
     known_app(slug)
     url, key, _pub = creds.resolve(slug)
+    body = body or {}
+    try:
+        new_url = creds.clean_url(body.get("url"), "url") if body.get("url") else None
+        new_key = creds.clean_key(body["key"]) if body.get("key") else None
+    except creds.CredError as exc:
+        return {"ok": False, "detail": str(exc)}
+    if new_url and new_url.rstrip("/") != url and not new_key:
+        # The saved key only ever goes where it was saved for.
+        return {"ok": False, "detail": "testing a new address needs the key typed too"}
+    url, key = (new_url or url).rstrip("/"), new_key or key
+    if not url:
+        return {"ok": False, "detail": "no address set"}
     if not key:
         return {"ok": False, "detail": "no key set"}
     ad = next((a for a in appaccounts.ADAPTERS.values() if a.conn == slug), None)

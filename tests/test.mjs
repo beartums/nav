@@ -4199,3 +4199,42 @@ test('access: App accounts shows each app’s accounts against people, errors an
   assert.match(doc.querySelector('.acc-orphans').textContent, /Jellyfin: ghost/);
   assert.equal(doc.getElementById('adminpage-save').hidden, true, 'nothing to open a PR for here');
 });
+
+test('connections: Save waits for a change, Test checks what is typed and saves that connection on success, leaving asks', async () => {
+  const CONNS = { can_store: true, connections: [
+    { slug: 'jellyfin', label: 'Jellyfin', url: '', public_url: 'https://j.x', url_set: false, public_set: false,
+      default_url: '', key: 'none', hint: null, note: 'an API key' },
+    { slug: 'mealie', label: 'Mealie', url: 'http://mealie:9000', public_url: 'https://m.x', url_set: false,
+      public_set: false, default_url: 'http://mealie:9000', key: 'stored', hint: '…abcd' }] };
+  let asked = 0;
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
+    u === 'api/admin/connections' ? CONNS : /\/test$/.test(u) ? { ok: true, detail: 'connected: 3 account(s) listed' }
+      : /^api\/admin\/connections\//.test(u) ? { ok: true } : null,
+    (w) => { w.confirm = () => { asked++; return false; }; });
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-connections').click();
+  await settle(window, () => doc.querySelectorAll('fieldset.conn').length === 2, 'connections');
+  const save = doc.getElementById('adminpage-save');
+  assert.equal(save.disabled, true, 'nothing to save yet');
+  const [jf, me] = doc.querySelectorAll('fieldset.conn');
+  assert.match(jf.querySelector('.conn-default').textContent, /No default address/);
+  assert.match(me.querySelector('.conn-default').textContent, /Using the default: http:\/\/mealie:9000/);
+
+  const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new window.Event('input', { bubbles: true })); };
+  typeIn(me.querySelectorAll('input')[0], 'http://elsewhere:9000');
+  assert.equal(save.disabled, false, 'an edit enables Save');
+  doc.getElementById('admin-tab-site').click();
+  assert.equal(asked, 1, 'leaving with an unsaved change asks');
+  assert.equal(doc.getElementById('adminpage-title').textContent, 'Connections', 'and stays when told to');
+
+  typeIn(jf.querySelectorAll('input')[0], 'http://mediabox:8096');
+  typeIn(jf.querySelector('input[type=password]'), 'KEY123');
+  [...jf.querySelectorAll('button')].find((b) => b.textContent === 'Test').click();
+  await settle(window, () => /saved/.test(jf.querySelector('.conn-test').textContent), 'tested and saved');
+  const t = seen.find((r) => r.url === 'api/admin/connections/jellyfin/test');
+  assert.deepEqual(JSON.parse(t.body), { url: 'http://mediabox:8096', key: 'KEY123' }, 'tests what is typed');
+  const puts = seen.filter((r) => r.method === 'PUT');
+  assert.deepEqual(puts.map((r) => [r.url, JSON.parse(r.body)]),
+    [['api/admin/connections/jellyfin', { url: 'http://mediabox:8096', key: 'KEY123' }]], 'saves only that connection');
+  assert.equal(save.disabled, false, "Mealie's edit is still unsaved");
+});

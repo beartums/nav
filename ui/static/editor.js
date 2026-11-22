@@ -72,6 +72,9 @@ function field(label, value, placeholder) {
 // the very thing the next sentence says does not work.
 // A single shared drop zone answered "which field does this apply to?"
 // with focus, which is invisible and guessable at best.
+/** Tell listeners a field was set by a drop, paste or file pick, not typing. */
+function changedBy(input) { input.dispatchEvent(new Event('input', { bubbles: true })); }
+
 function iconRow(entry, fallback) {
   var input = entry.input;
   var pic = document.createElement('img');
@@ -115,7 +118,7 @@ function iconRow(entry, fallback) {
     var dt = ev.dataTransfer;
     if (dt.files && dt.files[0]) { takeIcon(dt.files[0], input, note, show); return; }
     var url = dt.getData('text/uri-list') || dt.getData('text/plain');
-    if (url) { input.value = url.trim(); input.className = ''; show(url.trim()); }
+    if (url) { input.value = url.trim(); input.className = ''; show(url.trim()); changedBy(input); }
   });
 
   // appendChild REPARENTS: this moves the input out of the label on its
@@ -318,6 +321,7 @@ document.addEventListener('paste', function (ev) {
   var text = ev.clipboardData && ev.clipboardData.getData('text');
   if (text && /^https?:\/\//.test(text.trim())) {
     PASTE_TARGET.input.value = text.trim();
+    changedBy(PASTE_TARGET.input);
     PASTE_TARGET.input.className = '';
     if (PASTE_TARGET.show) { PASTE_TARGET.show(text.trim()); }
     ev.preventDefault();
@@ -330,7 +334,7 @@ var ICON_CAP = 128 * 1024;
 function takeIcon(file, input, statusEl, onSet) {
   readIcon(file, function (err, uri) {
     if (err) { if (statusEl) { statusEl.textContent = err; } return; }
-    input.value = uri; input.className = '';
+    input.value = uri; input.className = ''; changedBy(input);
     if (onSet) { onSet(uri); }
     if (statusEl) {
       statusEl.textContent = 'Attached \u2014 ' + Math.round(uri.length / 1024) + ' KB. Save to apply.';
@@ -503,13 +507,19 @@ function sitePage(h) {
   h.body.appendChild(iconRow(f.icon_light, SITE.icon || ''));
 
   h.save.textContent = 'Save';
-  h.save.disabled = false;
+  // Save only once something differs; leaving with a difference asks first.
+  function now() { return ['title', 'icon', 'icon_light'].map(function (k) { return f[k].input.value; }).join('\n'); }
+  var was = now();
+  function check() { var d = now() !== was; h.save.disabled = !d; h.setDirty(d); }
+  h.save.disabled = true;
+  h.body.addEventListener('input', check);
+  h.body.addEventListener('change', check);
   h.save.onclick = function () {
     // One PUT per key, in parallel: site_settings is key-addressed and
     // three of them is not worth a bulk endpoint.
     Promise.all(['title', 'icon', 'icon_light'].map(function (k) {
       return api('PUT', 'api/site/' + k, { value: f[k].input.value.trim() || null });
-    })).then(function () { h.note.textContent = 'Saved.'; refresh(); })
+    })).then(function () { was = now(); check(); h.note.textContent = 'Saved.'; refresh(); })
       .catch(function (e) { h.note.textContent = e.message; });
   };
 }

@@ -190,17 +190,31 @@ async def _jellyfin(client: Any, base: str, key: str) -> list[dict[str, Any]]:
                     last_seen=_recent(u.get("LastActivityDate") or u.get("LastLoginDate"))) for u in r.json()]
 
 
+PLEX_TV = "https://plex.tv"
+
+
 async def _plex(client: Any, base: str, key: str) -> list[dict[str, Any]]:
-    # plex.tv: the owner (JSON) and everyone they share with (XML, whatever Accept says).
+    # `base` is the LOCAL server: its /identity gives the machine id. The owner
+    # and the people it is shared with come from plex.tv (the same token);
+    # /api/users is XML whatever Accept says, and is the owner's whole friends
+    # list, so keep those sharing THIS server (as Seerr does).
     import xml.etree.ElementTree as ET
     h = {"X-Plex-Token": key, "X-Plex-Client-Identifier": "nav", "X-Plex-Product": "nav", "Accept": "application/json"}
-    me = await client.get(base + "/users/account.json", headers=h)
+    ident = await client.get(base + "/identity", headers=h)
+    ident.raise_for_status()
+    try:
+        machine = ident.json()["MediaContainer"]["machineIdentifier"]
+    except ValueError:
+        machine = ET.fromstring(ident.text).get("machineIdentifier")
+    me = await client.get(PLEX_TV + "/users/account.json", headers=h)
     me.raise_for_status()
     o = me.json().get("user") or {}
     out = [account(login=o.get("username"), email=o.get("email"), name=o.get("title"), admin=True)]
-    r = await client.get(base + "/api/users", headers=h)
+    r = await client.get(PLEX_TV + "/api/users", headers=h)
     r.raise_for_status()
     for u in ET.fromstring(r.text).iter("User"):
+        if machine and not any(s.get("machineIdentifier") == machine for s in u.iter("Server")):
+            continue
         out.append(account(login=u.get("username") or u.get("title"), email=u.get("email"), name=u.get("title")))
     return out
 
@@ -273,7 +287,8 @@ adapter(Adapter("jellyseerr", "Jellyseerr", "jellyseerr", ("jellyseerr",), "firs
                 "the API key (Settings → General)"))
 adapter(Adapter("jellyfin", "Jellyfin", "jellyfin", ("jellyfin",), "manual", _jellyfin,
                 "an API key (Dashboard → API Keys)"))
-adapter(Adapter("plex", "Plex", "plex", ("plex",), "manual", _plex, "the server owner's Plex token"))
+adapter(Adapter("plex", "Plex", "plex", ("plex",), "manual", _plex,
+                "the server owner's Plex token (address: the local Plex server)"))
 adapter(Adapter("audiobookshelf", "Audiobookshelf", "audiobookshelf", ("audiobookshelf",), "manual",
                 _audiobookshelf, "an API key made by an admin (Settings → API Keys)"))
 adapter(Adapter("navidrome", "Navidrome", "navidrome", ("music",), "manual", _navidrome,

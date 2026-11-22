@@ -108,11 +108,16 @@ class Adapters(unittest.TestCase):
         self.assertTrue(got[1]["disabled"])
         self.assertEqual(c.seen[0][1], {"ApiKey": "k"})
 
-    def test_plex_owner_and_xml_friends(self):
-        xml = '<MediaContainer><User id="1" username="mum" email="m@x" title="Mum"/><User id="2" title="Kid"/></MediaContainer>'
-        got, _ = run(aa._plex, {"/users/account.json": _Resp({"user": {"username": "bear", "email": "b@x"}}),
+    def test_plex_owner_and_friends_sharing_this_server(self):
+        xml = ('<MediaContainer><User id="1" username="mum" email="m@x" title="Mum"><Server machineIdentifier="M1"/></User>'
+               '<User id="2" title="Kid"><Server machineIdentifier="M1"/></User>'
+               '<User id="3" username="elsewhere"><Server machineIdentifier="OTHER"/></User></MediaContainer>')
+        got, c = run(aa._plex, {"/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
+                                "/users/account.json": _Resp({"user": {"username": "bear", "email": "b@x"}}),
                                 "/api/users": _Resp(None, text=xml)})
         self.assertEqual([(a["login"], a["role"]) for a in got], [("bear", "admin"), ("mum", "user"), ("Kid", "user")])
+        self.assertTrue(c.seen[0][0].startswith("http://app/identity"), "the local server first")
+        self.assertTrue(c.seen[1][0].startswith("https://plex.tv/"), "then plex.tv")
 
     def test_audiobookshelf_drops_tokens(self):
         got, _ = run(aa._audiobookshelf, {"/api/users": _Resp({"users": [

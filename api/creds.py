@@ -67,8 +67,9 @@ APPS: dict[str, dict[str, Any]] = {
     "jellyseerr": {"label": "Jellyseerr", "auth": "x-api-key", "test": "/api/v1/request/count",
                    "url": "http://jellyseerr.media.svc.cluster.local:5055"},
     "jellyfin": {"label": "Jellyfin", "auth": "query:ApiKey", "test": "/System/Info", "url": ""},
-    "plex": {"label": "Plex (plex.tv)", "auth": "header:X-Plex-Token", "test": "/users/account.json",
-             "url": "https://plex.tv"},
+    # The local Plex server (its machine id picks out who it is shared with);
+    # the shared users themselves come from plex.tv with the same token.
+    "plex": {"label": "Plex", "auth": "header:X-Plex-Token", "test": "/identity", "url": ""},
     "audiobookshelf": {"label": "Audiobookshelf", "auth": "bearer", "test": "/api/me",
                        "url": "http://audiobookshelf.audiobooks.svc.cluster.local"},
     # No API keys in Navidrome: the "key" is an admin's username:password.
