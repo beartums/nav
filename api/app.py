@@ -2517,6 +2517,9 @@ async def _read_app(ad: Any, url: str, key: str) -> dict[str, Any]:
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         why = "the key was refused (does it belong to an admin?)" if code in (401, 403) else f"HTTP {code}"
+        if code == 400 and "Bad Request (400)" in exc.response.text:
+            # Django's answer to a Host it doesn't list, before the key is read.
+            why = "HTTP 400: the app refused the address nav uses (a Django app's ALLOWED_HOSTS), not the key"
         return {"accounts": [], "error": why}
     except httpx.HTTPError as exc:
         return {"accounts": [], "error": f"{type(exc).__name__}: cannot reach {url}"}
