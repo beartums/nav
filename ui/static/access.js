@@ -45,7 +45,15 @@ function accessPage(h) {
   }
 
   // Two views: group membership (staged as a PR), and each app's own accounts (read-only).
-  var mode = 'groups', apps = null;
+  // Which view, and which way round App accounts is: remembered per browser.
+  var PREF = 'nav.accessView';
+  var pref = {};
+  try { pref = JSON.parse(localStorage.getItem(PREF) || '{}') || {}; } catch (e) {}
+  var mode = pref.mode === 'apps' ? 'apps' : 'groups', pivot = !!pref.pivot, apps = null;
+  function savePref() {
+    try { localStorage.setItem(PREF, JSON.stringify({ mode: mode, pivot: pivot })); } catch (e) {}
+  }
+
   function switcher() {
     var sw = div('acc-switch');
     [['groups', 'Groups'], ['apps', 'App accounts']].forEach(function (m) {
@@ -55,6 +63,7 @@ function accessPage(h) {
       b.addEventListener('click', function () {
         if (mode === m[0]) { return; }
         mode = m[0];
+        savePref();
         if (mode === 'apps' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
       });
       sw.appendChild(b);
@@ -62,64 +71,143 @@ function accessPage(h) {
     h.body.appendChild(sw);
   }
 
+  // "As of 14:02 (3 min ago) · Refresh": the server keeps what it read for ten
+  // minutes; Refresh reads Authentik, the repo and the apps again now.
+  function freshness(at, text, again) {
+    var line = div('note acc-asof', '');
+    var info = document.createElement('span');
+    info.className = 'tb-info acc-info';
+    info.textContent = '\u24d8';
+    info.title = text;
+    info.setAttribute('role', 'img');
+    info.setAttribute('aria-label', text);
+    info.tabIndex = 0;
+    line.appendChild(info);
+    line.appendChild(document.createTextNode(' '));
+    if (at) {
+      var mins = Math.max(0, Math.round((Date.now() / 1000 - at) / 60));
+      line.appendChild(document.createTextNode('As of ' + new Date(at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+        ' (' + (mins ? mins + ' min ago' : 'just now') + '). '));
+    }
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'linkish acc-refresh'; b.textContent = 'Refresh';
+    b.title = 'Read again now';
+    b.addEventListener('click', again);
+    line.appendChild(b);
+    h.body.appendChild(line);
+  }
+
+  // Each cell is an indicator; the words are its hover text (and its label for
+  // a screen reader). ACC_KEY is the legend above the grid.
+  var ACC_KEY = [['admin', '★', 'Admin account'], ['user', '●', 'Account'],
+                 ['disabled', '○', 'Disabled account'],
+                 ['stale', '⚠', 'Account, but Authentik no longer lets them in'],
+                 ['missing', '✕', 'No account, though Authentik lets them in'],
+                 ['notyet', '◌', 'Not signed in yet (the app makes the account then)']];
+  function ind(kind, title) {
+    var k = ACC_KEY.filter(function (x) { return x[0] === kind; })[0];
+    var sp = document.createElement('span');
+    sp.className = 'acc-ind acc-ind-' + kind;
+    sp.textContent = k[1];
+    sp.title = title || k[2];
+    sp.setAttribute('role', 'img');
+    sp.setAttribute('aria-label', sp.title);
+    return sp;
+  }
+  function appCell(p, a) {
+    var td = document.createElement('td');
+    td.className = 'acc-cellind';
+    var c = p.cells[a.key];
+    if (a.error) { td.classList.add('acc-na'); td.title = a.label + ' could not be read: ' + a.error; }
+    else if (!c) { /* neither an account nor access */ }
+    else if (c.status === 'missing') {
+      td.appendChild(c.provision === 'first'
+        ? ind('notyet', 'Authentik lets ' + p.name + ' open ' + a.label + '; the account appears at their first sign-in')
+        : ind('missing', 'Authentik lets ' + p.name + ' open ' + a.label + ', but nobody has made them an account'));
+    } else {
+      var kind = c.status === 'stale' ? 'stale' : c.disabled ? 'disabled' : c.role === 'admin' ? 'admin' : 'user';
+      td.appendChild(ind(kind, (c.status === 'stale' ? 'Leftover account: Authentik no longer lets ' + p.name + ' open ' + a.label
+                                : (c.disabled ? 'Disabled ' : '') + (c.role === 'admin' ? 'Admin account' : 'Account')) +
+        (c.login ? ' · ' + c.login : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
+        (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '')));
+    }
+    return td;
+  }
+  function appHead(a, tag) {
+    var th = document.createElement(tag || 'th');
+    th.textContent = a.label;
+    if (a.error) {
+      // Coloured, with a warning icon; the reason is its hover text.
+      th.classList.add('acc-app-err');
+      var d = document.createElement('span');
+      d.className = 'acc-head-warn';
+      d.textContent = '\u26a0';
+      d.title = a.label + ' could not be read: ' + a.error;
+      d.setAttribute('role', 'img');
+      d.setAttribute('aria-label', d.title);
+      th.appendChild(d);
+      th.title = d.title;
+    } else {
+      th.title = a.count + ' account(s) · Authentik app: ' + a.apps.join(', ') +
+        (a.provision === 'first' ? ' · accounts are made at first sign-in' : ' · an admin makes the accounts');
+    }
+    return th;
+  }
+  function legend() {
+    var l = div('acc-legend');
+    ACC_KEY.forEach(function (k) {
+      var item = document.createElement('span');
+      item.appendChild(ind(k[0]));
+      item.appendChild(document.createTextNode(' ' + k[2]));
+      l.appendChild(item);
+    });
+    h.body.appendChild(l);
+  }
+  function personHead(p, tag) {
+    var el = document.createElement(tag || 'td');
+    el.className = 'acc-who';
+    el.textContent = p.name;
+    el.appendChild(div('note', p.email || ''));
+    return el;
+  }
+
   function renderApps() {
     save.hidden = true;
     note.textContent = '';
-    var intro = div('note', "Each app's own accounts, read from the app with its key in Connections, matched to " +
-      'Authentik people by email, then username. Read-only. Up to a minute old. ');
-    var again = document.createElement('button');
-    again.type = 'button'; again.className = 'linkish'; again.textContent = 'Refresh';
-    again.addEventListener('click', function () { note.textContent = 'Reading each app…'; loadApps(true); });
-    intro.appendChild(again);
-    h.body.appendChild(intro);
+    freshness(apps.as_of, "Each app's own accounts, read with its key in User management, matched to Authentik " +
+      'people by email, then username. Read-only.', function () { note.textContent = 'Reading each app…'; loadApps(true); });
+    var flip = document.createElement('button');
+    flip.type = 'button'; flip.id = 'acc-pivot'; flip.className = 'acc-pivot';
+    flip.textContent = '⇄ ' + (pivot ? 'People across' : 'Apps across');
+    flip.title = 'Swap rows and columns';
+    flip.setAttribute('aria-pressed', String(pivot));
+    flip.addEventListener('click', function () { pivot = !pivot; savePref(); render(); });
+    h.body.appendChild(flip);
+    legend();
+
     var t = document.createElement('table');
-    t.className = 'acc-table acc-apps-table';
+    t.className = 'acc-table acc-apps-table' + (pivot ? ' acc-pivoted' : '');
     var hr = document.createElement('tr');
-    var th0 = document.createElement('th'); th0.textContent = 'Person'; hr.appendChild(th0);
-    apps.apps.forEach(function (a) {
-      var th = document.createElement('th');
-      th.textContent = a.label;
-      if (a.error) {
-        th.className = 'acc-app-err';
-        th.appendChild(div('acc-err', '\u26a0 ' + a.error));
-      } else {
-        th.title = a.count + ' account(s) · Authentik app: ' + a.apps.join(', ') +
-          (a.provision === 'first' ? ' · accounts are made at first sign-in' : ' · an admin makes the accounts');
-      }
-      hr.appendChild(th);
-    });
+    var th0 = document.createElement('th'); th0.textContent = pivot ? 'App' : 'Person'; hr.appendChild(th0);
+    if (pivot) { apps.people.forEach(function (p) { hr.appendChild(personHead(p, 'th')); }); }
+    else { apps.apps.forEach(function (a) { hr.appendChild(appHead(a)); }); }
     t.appendChild(document.createElement('thead')).appendChild(hr);
     var tb = document.createElement('tbody');
-    apps.people.forEach(function (p) {
-      var tr = document.createElement('tr');
-      var who = document.createElement('td');
-      who.className = 'acc-who';
-      who.textContent = p.name;
-      who.appendChild(div('note', p.email || ''));
-      tr.appendChild(who);
+    if (pivot) {
       apps.apps.forEach(function (a) {
-        var td = document.createElement('td');
-        var c = p.cells[a.key];
-        if (a.error) { td.className = 'acc-na'; }
-        else if (!c) { td.textContent = ''; }
-        else if (c.status === 'missing') {
-          td.className = c.provision === 'first' ? 'acc-notyet' : 'acc-missing';
-          td.textContent = c.provision === 'first' ? 'not signed in' : 'no account';
-          td.title = c.provision === 'first'
-            ? 'Authentik lets them open ' + a.label + '; the account appears at their first sign-in'
-            : 'Authentik lets them open ' + a.label + ', but nobody has made them an account';
-        } else {
-          td.className = c.status === 'stale' ? 'acc-stale' : (c.role === 'admin' ? 'acc-admin' : 'acc-user');
-          td.textContent = (c.status === 'stale' ? '\u26a0 ' : '') + c.role + (c.disabled ? ' (disabled)' : '');
-          td.title = (c.login ? 'Account: ' + c.login : 'Account') +
-            (c.last_seen ? ' · last seen ' + c.last_seen : '') +
-            (c.status === 'stale' ? ' · Authentik no longer lets them open ' + a.label + ': a leftover account' : '');
-          if (c.disabled) { td.classList.add('acc-disabled'); }
-        }
-        tr.appendChild(td);
+        var tr = document.createElement('tr');
+        tr.appendChild(appHead(a, 'td'));
+        apps.people.forEach(function (p) { tr.appendChild(appCell(p, a)); });
+        tb.appendChild(tr);
       });
-      tb.appendChild(tr);
-    });
+    } else {
+      apps.people.forEach(function (p) {
+        var tr = document.createElement('tr');
+        tr.appendChild(personHead(p));
+        apps.apps.forEach(function (a) { tr.appendChild(appCell(p, a)); });
+        tb.appendChild(tr);
+      });
+    }
     t.appendChild(tb);
     h.body.appendChild(t);
     var keys = Object.keys(apps.orphans || {});
@@ -151,16 +239,10 @@ function accessPage(h) {
       save.disabled = true;
       return;
     }
-    var intro = div('note', 'Membership as it is on ' + view.repo + ' ' + view.base +
+    freshness(view.as_of, 'Membership as it is on ' + view.repo + ' ' + view.base +
       '. Click a cell to stage a change; Open PR puts every staged change into one pull request. ' +
-      'Nothing changes until it is merged and applied. Apps are as Authentik had them up to a minute ago. ');
-    var again = document.createElement('button');
-    again.type = 'button'; again.id = 'acc-refresh'; again.className = 'linkish';
-    again.textContent = 'Refresh';
-    again.title = 'Read Authentik and the repo again now';
-    again.addEventListener('click', function () { note.textContent = 'Reading…'; load(true).then(function () { note.textContent = 'Up to date.'; }); });
-    intro.appendChild(again);
-    h.body.appendChild(intro);
+      'Nothing changes until it is merged and applied.',
+      function () { note.textContent = 'Reading…'; apps = null; load(true).then(function () { note.textContent = ''; }); });
     if (view.last_pr) {
       var last = div('note');
       last.appendChild(document.createTextNode('Last pull request: '));
@@ -250,7 +332,9 @@ function accessPage(h) {
     save.disabled = true;
     note.textContent = 'Opening the pull request…';
     connSend('POST', 'api/admin/access/pr').then(function (r) {
-      return load().then(function () {
+      // Opening the PR changes what is worth showing: read everything again.
+      apps = null;
+      return load(true).then(function () {
         note.textContent = '';
         var a = document.createElement('a');
         a.href = r.url; a.target = '_blank'; a.rel = 'noopener';
@@ -260,5 +344,7 @@ function accessPage(h) {
     }).catch(function (e) { note.textContent = e.message; save.disabled = false; });
   };
 
-  load().catch(function (e) { note.textContent = 'Could not load access: ' + e.message; });
+  // Open on the view used last (App accounts reads its apps first).
+  load().then(function () { if (mode === 'apps') { note.textContent = 'Reading each app…'; return loadApps(false); } })
+    .catch(function (e) { note.textContent = 'Could not load access: ' + e.message; });
 }

@@ -4193,9 +4193,14 @@ test('access: App accounts shows each app’s accounts against people, errors an
   await settle(window, () => doc.querySelector('.acc-switch [data-view="apps"]'), 'switch');
   doc.querySelector('.acc-switch [data-view="apps"]').click();
   await settle(window, () => doc.querySelector('.acc-apps-table'), 'app accounts table');
-  const cells = [...doc.querySelectorAll('.acc-apps-table tbody tr')].map((r) => [...r.querySelectorAll('td')].slice(1).map((c) => c.textContent));
-  assert.deepEqual(cells, [['admin', ''], ['⚠ user (disabled)', ''], ['no account', '']]);
-  assert.match(doc.querySelector('.acc-app-err').textContent, /no key/);
+  const cells = [...doc.querySelectorAll('.acc-apps-table tbody tr')].map((r) =>
+    [...r.querySelectorAll('td')].slice(1).map((c) => { const i = c.querySelector('.acc-ind'); return i ? i.className.replace('acc-ind acc-ind-', '') : ''; }));
+  assert.deepEqual(cells, [['admin', ''], ['stale', ''], ['missing', '']], 'indicators, not words');
+  assert.match(doc.querySelector('.acc-apps-table tbody tr:nth-child(2) .acc-ind').title, /Leftover account.*mum.*user, disabled/);
+  assert.match(doc.querySelector('.acc-app-err .acc-head-warn').title, /no key/, 'an unread app: a warning icon with the reason');
+  doc.getElementById('acc-pivot').click();
+  assert.equal(doc.querySelectorAll('.acc-apps-table tbody tr').length, 2, 'pivoted: one row per app');
+  assert.equal(JSON.parse(window.localStorage.getItem('nav.accessView')).pivot, true, 'remembered');
   assert.match(doc.querySelector('.acc-orphans').textContent, /Jellyfin: ghost/);
   assert.equal(doc.getElementById('adminpage-save').hidden, true, 'nothing to open a PR for here');
 });
@@ -4276,4 +4281,17 @@ test('connections: a set key is a green badge; recent tries show as a green bord
   assert.ok(!rad.classList.contains('conn-healthy') && !rad.querySelector('.conn-dot').hidden, 'a recent failure: red dot');
   assert.match(rad.querySelector('.conn-dot').title, /2 of the last 5 tries failed\. Latest: HTTP 500/);
   assert.ok(!lid.classList.contains('conn-healthy') && lid.querySelector('.conn-dot').hidden, 'never tried: neither');
+});
+
+test('press and hold shows hover text in a bubble (touchscreens)', async () => {
+  const { window, doc } = await boot();
+  const el = doc.createElement('span');
+  el.title = 'What this does';
+  doc.body.appendChild(el);
+  const touch = (type) => { const e = new window.Event(type, { bubbles: true, cancelable: true }); e.touches = [{ clientX: 5, clientY: 5 }]; el.dispatchEvent(e); };
+  touch('touchstart');
+  await new Promise((r) => setTimeout(r, 600));
+  const tip = doc.querySelector('.holdtip');
+  assert.ok(tip, 'a bubble after the hold');
+  assert.equal(tip.textContent, 'What this does');
 });

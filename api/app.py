@@ -2399,16 +2399,18 @@ def _shown(a: dict[str, Any]) -> bool:
     return not a.get("meta_hide") and launchable(a.get("launch_url") or a.get("meta_launch_url"))
 
 
-# Authentik's answer is reused for a minute: every click in the panel redraws
-# it, and the per-person checks are the slow part (~1.5 s each). ?fresh=1
-# (the panel's Refresh) reads again.
-ACCESS_TTL = 60
+# The Access panel's reads (Authentik, and each app's accounts) are reused for
+# ten minutes: who has what changes rarely, the per-person checks are the slow
+# part (~1.5 s each), and the page shows how old they are. ?fresh=1 (the
+# panel's Refresh, and after opening a PR) reads again. NOT ACCESS_TTL above:
+# that one bounds how long a revoked app's widgets keep loading.
+PANEL_TTL = 600
 _AK_CACHE: dict[str, Any] = {"at": 0.0, "data": None}
 
 
 async def _authentik_access(fresh: bool = False) -> dict[str, Any]:
     """Users, groups, applications and their bindings: one round of reads, in parallel."""
-    if not fresh and _AK_CACHE["data"] is not None and time.monotonic() - _AK_CACHE["at"] < ACCESS_TTL:
+    if not fresh and _AK_CACHE["data"] is not None and time.monotonic() - _AK_CACHE["at"] < PANEL_TTL:
         return _AK_CACHE["data"]
     if not AUTHENTIK_TOKEN:
         raise HTTPException(503, "AUTHENTIK_TOKEN is not set")
@@ -2436,7 +2438,7 @@ async def _authentik_access(fresh: bool = False) -> dict[str, Any]:
         if x.get("target") in uuids:
             by_target.setdefault(x["target"], []).append(x)
     data = {"users": users, "apps": [x for x in apps if _shown(x)], "by_target": by_target, "reach": reach}
-    _AK_CACHE.update(at=time.monotonic(), data=data)
+    _AK_CACHE.update(at=time.monotonic(), data=data, wall=time.time())
     return data
 
 
@@ -2502,6 +2504,7 @@ async def get_access(_: str = Depends(require_access_admin), fresh: bool = False
         cur = await conn.execute("SELECT url, by_whom, at FROM access_prs ORDER BY at DESC LIMIT 1")
         last = await cur.fetchone()
     view["last_pr"] = last and {"url": last["url"], "by": last["by_whom"], "at": last["at"].isoformat()}
+    view["as_of"] = _AK_CACHE.get("wall") or time.time()
     return view
 
 
@@ -2533,7 +2536,7 @@ async def _read_app(ad: Any, url: str, key: str) -> dict[str, Any]:
 
 
 async def _read_apps(fresh: bool) -> dict[str, dict[str, Any]]:
-    if not fresh and _APPS_CACHE["data"] is not None and time.monotonic() - _APPS_CACHE["at"] < ACCESS_TTL:
+    if not fresh and _APPS_CACHE["data"] is not None and time.monotonic() - _APPS_CACHE["at"] < PANEL_TTL:
         return _APPS_CACHE["data"]
 
     async def one(ad: Any) -> tuple[str, dict[str, Any]]:
@@ -2544,7 +2547,7 @@ async def _read_apps(fresh: bool) -> dict[str, dict[str, Any]]:
         return ad.key, got
 
     data = dict(await asyncio.gather(*(one(a) for a in appaccounts.ADAPTERS.values())))
-    _APPS_CACHE.update(at=time.monotonic(), data=data)
+    _APPS_CACHE.update(at=time.monotonic(), data=data, wall=time.time())
     return data
 
 
@@ -2564,6 +2567,7 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
                            "cells": m["people"].get(u["pk"], {})} for u in ak["users"]),
                          key=lambda x: (x["name"] or "").lower()),
         "orphans": {k: v for k, v in m["orphans"].items() if v},
+        "as_of": min(_AK_CACHE.get("wall") or time.time(), _APPS_CACHE.get("wall") or time.time()),
     }
 
 
