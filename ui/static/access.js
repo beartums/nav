@@ -224,16 +224,24 @@ function accessPage(h) {
     }
   }
 
+  var appsReading = null;
   function loadApps(fresh) {
-    return connSend('GET', 'api/admin/access/apps' + (fresh ? '?fresh=1' : ''))
+    if (appsReading && !fresh) { return appsReading; }
+    appsReading = connSend('GET', 'api/admin/access/apps' + (fresh ? '?fresh=1' : ''))
       .then(function (v) { apps = v; note.textContent = ''; render(); })
-      .catch(function (e) { note.textContent = 'Could not read the apps: ' + e.message; });
+      .catch(function (e) { note.textContent = 'Could not read the apps: ' + e.message; })
+      .then(function () { appsReading = null; });
+    return appsReading;
   }
 
   function render() {
     h.body.innerHTML = '';
     switcher();
-    if (mode === 'apps') { renderApps(); return; }
+    if (mode === 'apps') {
+      // Not read yet (first open, or cleared after a PR): read, then draw.
+      if (!apps) { note.textContent = 'Reading each app…'; loadApps(false); return; }
+      renderApps(); return;
+    }
     if (!view.enabled) {
       h.body.appendChild(div('note', 'The Access panel is off: nav-api needs NAV_GITOPS_REPO and NAV_GITOPS_TOKEN.'));
       save.disabled = true;
@@ -345,6 +353,5 @@ function accessPage(h) {
   };
 
   // Open on the view used last (App accounts reads its apps first).
-  load().then(function () { if (mode === 'apps') { note.textContent = 'Reading each app…'; return loadApps(false); } })
-    .catch(function (e) { note.textContent = 'Could not load access: ' + e.message; });
+  load().catch(function (e) { note.textContent = 'Could not load access: ' + e.message; });
 }
