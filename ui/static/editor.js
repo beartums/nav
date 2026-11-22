@@ -219,6 +219,27 @@ function openEditor(a, atX, atY) {
   cl.appendChild(clBtn);
   editorBody.appendChild(cl);
 
+  // Text style (textstyle.js): this tile's name and description, over its
+  // group's. Folded away: most tiles take their group's.
+  var tsOwn = ov.text_style || {};
+  var tsGroup = groupStyleOf(ov.category || a.category || 'Other');
+  var tsBox = document.createElement('details');
+  tsBox.className = 'editor-ts';
+  tsBox.open = !!(tsOwn.name || tsOwn.desc);
+  var tsSum = document.createElement('summary');
+  tsSum.textContent = 'Text style';
+  tsBox.appendChild(tsSum);
+  var tsCtl = {};
+  [['name', 'Name'], ['desc', 'Description']].forEach(function (p) {
+    var lab = document.createElement('div');
+    lab.className = 'ts-lab';
+    lab.textContent = p[1];
+    tsBox.appendChild(lab);
+    tsCtl[p[0]] = styleControls(tsOwn[p[0]], tsGroup[p[0]] || {});
+    tsBox.appendChild(tsCtl[p[0]].el);
+  });
+  editorBody.appendChild(tsBox);
+
   document.getElementById('editor-save').textContent = 'Save';
   document.getElementById('editor-save').onclick = function () {
     var fields = {};
@@ -238,6 +259,9 @@ function openEditor(a, atX, atY) {
     // The default is stored as no size, so a later change of default reaches
     // every tile nobody deliberately sized.
     if (sizeSel.value !== 'M') { fields.size = sizeSel.value; }
+    var ts = {};
+    ['name', 'desc'].forEach(function (k) { var v = tsCtl[k].value(); if (v) { ts[k] = v; } });
+    if (Object.keys(ts).length) { fields.text_style = ts; }
     var one = {}; one[a.slug] = fields;
     saveTiles(one)
       .then(function () { closeEditor(); refresh(); })
@@ -266,6 +290,17 @@ function openEditor(a, atX, atY) {
   document.body.classList.add('editing');
   editor.style.left = Math.min(atX, innerWidth - 350) + 'px';
   editor.style.top = Math.min(atY, innerHeight - 320) + 'px';
+  clampEditor();
+  // Opening Text style makes it taller: keep Save on screen.
+  tsBox.addEventListener('toggle', clampEditor);
+}
+
+/** Keep the whole editor, footer included, inside the window. */
+function clampEditor() {
+  var h = editor.offsetHeight;
+  if (!h) { return; }
+  var top = parseFloat(editor.style.top) || 0;
+  editor.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
 }
 
 // Paste anywhere while the editor is open.

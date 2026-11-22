@@ -15,7 +15,7 @@ var LAYOUT = null;                    // the reply's `layout`: on screen now
 var LAYOUTS = { templates: [], dashboards: [] };
 // The fields that belong to a layout; the rest of an override is presentation.
 // Mirrors layouts.py LAYOUT_KEYS.
-var LAYOUT_KEYS = ['category', 'order', 'size', 'hidden', 'above_fold', 'x', 'y'];
+var LAYOUT_KEYS = ['category', 'order', 'size', 'hidden', 'above_fold', 'x', 'y', 'text_style'];
 
 // The template the admin is editing, per device like the tab. Null: the default.
 var ADMIN_TEMPLATE = null;

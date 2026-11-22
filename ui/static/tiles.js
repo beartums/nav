@@ -99,10 +99,12 @@ function tile(a, o) {
   text.className = 'text';
   var n = document.createElement('div');
   n.className = 'name'; n.textContent = a.name || a.slug;
+  applyTextStyle(n, tileTextStyle(a, 'name'));
   text.appendChild(n);
   if (a.description) {
     var d = document.createElement('div');
     d.className = 'desc'; d.textContent = a.description;
+    applyTextStyle(d, tileTextStyle(a, 'desc'));
     text.appendChild(d);
   }
   // On the whole tile, so a collapsed (icons-only) tile still explains

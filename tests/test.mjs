@@ -4131,3 +4131,34 @@ test('admin mode: tabs across the top; only Templates keeps the sidebar and tile
   assert.equal(doc.body.classList.contains('admin-mode'), false, 'Done leaves admin mode');
   assert.equal(doc.body.classList.contains('admin-page'), false, 'and drops the page');
 });
+
+test('a subgroup is drawn inside its parent, and group and tile text styles apply', async () => {
+  const payload = {
+    ...APPS,
+    layout: { ...DEFAULT_LAYOUT, group_parents: { Photos: 'Media' },
+              group_style: { Media: { heading: { font: 'serif', colour: '#c0392b' }, name: { weight: 700 } } } },
+    apps: [
+      { ...APPS.apps[0], text_style: { name: { italic: true } } },
+      { slug: 'immich', name: 'Immich', url: 'https://i.example.com', description: 'Photos', category: 'Photos',
+        icon: '', clicks_mine: 0, clicks_all: 0, order: 0, base: { name: 'Immich', category: 'Photos' }, override: {} }
+    ]
+  };
+  const { doc } = await boot(payload);
+  const media = doc.querySelector('#out > section.grp[data-cat="Media"]');
+  assert.ok(media, 'Media is a top-level group');
+  assert.ok(media.querySelector('.subgroups section.grp-sub[data-cat="Photos"]'), 'Photos is drawn inside it');
+  assert.equal(doc.querySelectorAll('#out > section.grp[data-cat="Photos"]').length, 0, 'and not on its own');
+  assert.equal(media.querySelector('h2.cat span:not(.chev)').style.color, 'rgb(192, 57, 43)', 'heading colour');
+  const sonarr = [...doc.querySelectorAll('a.app')].find((a) => /Sonarr/.test(a.textContent)).querySelector('.name');
+  assert.equal(sonarr.style.fontWeight, '700', "the group's tile-name weight");
+  assert.equal(sonarr.style.fontStyle, 'italic', "and the tile's own italic over it");
+});
+
+test('text blocks: the page cleans formatting again before drawing it', async () => {
+  const { window } = await boot();
+  const out = window.cleanRich('<h2 style="text-align:center" onclick="x()">Hi</h2><script>bad()</script>' +
+    '<a href="javascript:alert(1)">l</a><img src="http://x/i.png"><p><b>ok</b><font>kept text</font></p>');
+  assert.ok(!/script|onclick|javascript|<img|<font/.test(out), out);
+  assert.ok(/<h2 style="text-align: center;">Hi<\/h2>/.test(out), 'formatting stays');
+  assert.ok(/<b>ok<\/b>kept text/.test(out), "an unknown wrapper's text stays");
+});

@@ -58,9 +58,9 @@ button:hover { border-color:var(--accent); }
 .menu-list .tick { width:14px; flex:0 0 14px; color:var(--accent); }
 .menu-list .caret { margin-left:auto; color:var(--muted); }
 
-h2.cat { font-size:13px; text-transform:uppercase; letter-spacing:0.06em;
+h2.cat, h3.cat { font-size:13px; text-transform:uppercase; letter-spacing:0.06em;
          color:var(--muted); margin:22px 0 10px; font-weight:600; }
-h2.cat:first-of-type { margin-top:4px; }
+#out > .grp:first-child > h2.cat { margin-top:4px; }
 
 /* SCOPED to .tiles on purpose. As a bare `ul` rule this also matched
    .menu-list, and an author `display` declaration beats the UA stylesheet's
@@ -360,10 +360,10 @@ a.app.dragging { opacity:.4; }
 li.dropbefore { border-left:3px solid var(--accent); margin-left:-3px; }
 
 /* Collapsible categories, in BOTH modes. */
-h2.cat { display:flex; align-items:center; gap:8px; cursor:pointer;
+h2.cat, h3.cat { display:flex; align-items:center; gap:8px; cursor:pointer;
          user-select:none; }
-h2.cat .chev { transition:transform .12s; }
-h2.cat.closed .chev { transform:rotate(-90deg); }
+h2.cat .chev, h3.cat .chev { transition:transform .12s; }
+h2.cat.closed .chev, h3.cat.closed .chev { transform:rotate(-90deg); }
 
 /* --- the movable editor -------------------------------------------- */
 #editor { position:fixed; z-index:50; width:330px; display:none;
@@ -1062,3 +1062,30 @@ ul.ugrid.fg-body { padding:0; }
 .rt-area { min-height:160px; max-height:420px; overflow:auto; padding:10px 12px; outline:none; font-size:14px;
   line-height:1.45; color:var(--fg); }
 .rt-area:focus { box-shadow:inset 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* Groups inside groups (main.js drawGroup): a subgroup sits indented in its parent. */
+.subgroups { margin:4px 0 10px 14px; padding-left:12px; border-left:2px solid var(--line); }
+h3.cat.subcat { font-size:12px; margin:10px 0 8px; }
+
+/* Text style controls (textstyle.js): one row of selects and pressed buttons. */
+.ts { display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+.ts select { font:inherit; font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;
+  background:var(--bg); color:var(--fg); max-width:170px; }
+.ts-t { min-width:28px; height:28px; padding:0 6px; border-radius:6px; font-size:13px; }
+.ts-t[aria-pressed="true"] { background:color-mix(in srgb, var(--accent) 22%, transparent); border-color:var(--accent); }
+.ts-col { display:inline-flex; align-items:center; gap:3px; }
+.ts-col input { width:30px; height:28px; padding:0; border:1px solid var(--line); border-radius:6px; background:none; }
+.ts-col.ts-unset input { opacity:.45; }
+.ts-lab { font-size:12px; color:var(--muted); margin:8px 0 4px; }
+.ts-sec + .ts-sec { border-top:1px solid var(--line); margin-top:8px; }
+.editor-ts summary { cursor:pointer; font-size:12px; color:var(--muted); }
+.smalldlg { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:10px; padding:16px;
+  width:min(560px, 94vw); display:flex; flex-direction:column; gap:8px; }
+.smalldlg-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+.grp-menu { list-style:none; margin:0; padding:4px; background:var(--card); border:1px solid var(--line);
+  border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
+.grp-menu button { width:100%; text-align:left; border:0; background:none; padding:6px 10px; font:inherit; font-size:13px; }
+.grp-menu button:hover:not(:disabled) { background:var(--bg); }
+.grp-menu .menu-head { font-size:11px; color:var(--muted); padding:8px 10px 2px; text-transform:uppercase; letter-spacing:.05em; }
+#group-list li.sub { margin-left:16px; }
+#group-list .grp-more { background:none; border:0; padding:0 3px; cursor:pointer; color:var(--muted); font-size:15px; }
