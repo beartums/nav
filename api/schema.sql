@@ -315,6 +315,12 @@ INSERT INTO image_uploads (sha, owner, created_at)
     SELECT sha, owner, created_at FROM images
      WHERE NOT EXISTS (SELECT 1 FROM image_uploads) ON CONFLICT DO NOTHING;
 
+-- Groups inside groups ({child: parent}, one level) and each group's text
+-- styles ({group: {heading, name, desc}}): layouts.py clean_group_parents /
+-- clean_group_style. Copied with the rest when a dashboard is made or reverted.
+ALTER TABLE layouts ADD COLUMN IF NOT EXISTS group_parents JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE layouts ADD COLUMN IF NOT EXISTS group_style JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 -- Access panel (access.py): group-membership changes staged until someone
 -- opens them as one pull request, and the pull requests opened.
 CREATE TABLE IF NOT EXISTS access_changes (

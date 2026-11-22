@@ -44,13 +44,15 @@ var SIZE_SPANS = {
   // Week, month or agenda at any size; narrow ones draw dots.
   calendar:   { M: [4, 4], L: [8, 4], XL: [12, 8], W: [WIDE, 4] },
   week:       { M: [4, 4], L: [8, 4], XL: [12, 8], W: [WIDE, 4] },
+  // Text blocks (richtext.js): a note beside a tile up to a full-width banner.
+  text:       { XS: [4, 1], S: [4, 2], M: [8, 2], L: [8, 4], XL: [12, 6], W: [WIDE, 2] },
   unknown:    { M: [4, 4] }
 };
 // A resize drag in progress, and a re-layout deferred until it ends.
 var RESIZING = false, RELAYOUT_PENDING = false;
 
 var SIZE_DEFAULT = { tile: 'M', stat: 'M', timeseries: 'M', list: 'M', status: 'S', clock: 'S', weather: 'M',
-                     calendar: 'L', week: 'L', unknown: 'M' };
+                     calendar: 'L', week: 'L', text: 'M', unknown: 'M' };
 
 function useGroupGrid() { return opts.collapse !== 'on'; }
 
