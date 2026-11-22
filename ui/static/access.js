@@ -51,9 +51,16 @@ function accessPage(h) {
       save.disabled = true;
       return;
     }
-    h.body.appendChild(div('note', 'Membership as it is on ' + view.repo + ' ' + view.base +
+    var intro = div('note', 'Membership as it is on ' + view.repo + ' ' + view.base +
       '. Click a cell to stage a change; Open PR puts every staged change into one pull request. ' +
-      'Nothing changes until it is merged and applied.'));
+      'Nothing changes until it is merged and applied. Apps are as Authentik had them up to a minute ago. ');
+    var again = document.createElement('button');
+    again.type = 'button'; again.id = 'acc-refresh'; again.className = 'linkish';
+    again.textContent = 'Refresh';
+    again.title = 'Read Authentik and the repo again now';
+    again.addEventListener('click', function () { note.textContent = 'Reading…'; load(true).then(function () { note.textContent = 'Up to date.'; }); });
+    intro.appendChild(again);
+    h.body.appendChild(intro);
     if (view.last_pr) {
       var last = div('note');
       last.appendChild(document.createTextNode('Last pull request: '));
@@ -116,8 +123,10 @@ function accessPage(h) {
       });
       h.body.appendChild(clear);
     }
+    // Only when there is something to open: an idle "Open PR" reads as a to-do.
+    save.hidden = !n;
     save.disabled = !n;
-    save.textContent = n ? 'Open PR (' + n + ')' : 'Open PR';
+    save.textContent = 'Open PR (' + n + ')';
     note.textContent = n ? n + ' staged' : '';
   }
 
@@ -133,8 +142,8 @@ function accessPage(h) {
       .catch(function (err) { note.textContent = err.message; b.disabled = false; });
   });
 
-  function load() {
-    return connSend('GET', 'api/admin/access').then(function (v) { view = v; render(); });
+  function load(fresh) {
+    return connSend('GET', 'api/admin/access' + (fresh ? '?fresh=1' : '')).then(function (v) { view = v; render(); });
   }
 
   save.onclick = function () {

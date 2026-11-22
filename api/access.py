@@ -16,6 +16,7 @@ they can be tested without a network.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import re
@@ -144,18 +145,31 @@ def _client():
         "X-GitHub-Api-Version": "2022-11-28"})
 
 
+# The files as of one commit of BASE: re-read only when BASE moves.
+_TF_CACHE: dict[str, Any] = {"sha": None, "files": None}
+
+
 async def read_tf() -> dict[str, str]:
-    """The .tf files under TF_DIR on BASE: {path: text}."""
+    """The .tf files under TF_DIR on BASE: {path: text}. One request to see
+    whether BASE moved; the files themselves only when it did, in parallel."""
     async with _client() as gh:
-        r = await gh.get(f"/repos/{REPO}/contents/{TF_DIR}", params={"ref": BASE})
+        ref = await gh.get(f"/repos/{REPO}/commits/{BASE}", headers={"Accept": "application/vnd.github.sha"})
+        ref.raise_for_status()
+        sha = ref.text.strip()
+        if sha == _TF_CACHE["sha"] and _TF_CACHE["files"] is not None:
+            return dict(_TF_CACHE["files"])
+        r = await gh.get(f"/repos/{REPO}/contents/{TF_DIR}", params={"ref": sha})
         r.raise_for_status()
-        out = {}
-        for f in r.json():
-            if f.get("type") == "file" and f["name"].endswith(".tf"):
-                b = await gh.get(f"/repos/{REPO}/contents/{f['path']}", params={"ref": BASE})
-                b.raise_for_status()
-                out[f["path"]] = base64.b64decode(b.json()["content"]).decode()
-        return out
+        paths = [f["path"] for f in r.json() if f.get("type") == "file" and f["name"].endswith(".tf")]
+
+        async def one(path: str) -> tuple[str, str]:
+            b = await gh.get(f"/repos/{REPO}/contents/{path}", params={"ref": sha})
+            b.raise_for_status()
+            return path, base64.b64decode(b.json()["content"]).decode()
+
+        out = dict(await asyncio.gather(*(one(p) for p in paths)))
+    _TF_CACHE.update(sha=sha, files=out)
+    return dict(out)
 
 
 async def open_pr(files: dict[str, str], title: str, body: str, who: str) -> str:
