@@ -10,6 +10,9 @@
 'use strict';
 
 var ADMIN_TAB = 'templates';
+// The open page's host (adminHost); a page may give it onURL(want) to move
+// within itself on Back/Forward (urlstate.js) instead of being drawn again.
+var ADMIN_HOST = null;
 // A page with changes not yet saved: leaving it (another tab, Done, closing
 // the window) asks first. Pages report it through their host's setDirty().
 var ADMIN_DIRTY = false;
@@ -29,7 +32,7 @@ var ADMIN_PAGES = {
   users: { title: 'User management', draw: function (h) { connectionsPage(h, 'users'); } }
 };
 
-function adminHost() {
+function adminHost(want) {
   var save = document.getElementById('adminpage-save');
   // A fresh button each time: pages set onclick, and one left over from the
   // last tab must not fire on this one.
@@ -42,12 +45,17 @@ function adminHost() {
   var note = document.getElementById('adminpage-note');
   note.textContent = '';
   ADMIN_DIRTY = false;
+  // want: the page's place from the URL ({view, pivot} / {conn}); empty when
+  // the page was opened by a click, so it falls back to what it remembers.
   return { body: document.getElementById('adminpage-body'), note: note, save: fresh,
+           want: want || {}, onURL: null,
            setDirty: function (on) { ADMIN_DIRTY = !!on; } };
 }
 
-function showAdminTab(tab) {
-  ADMIN_TAB = ADMIN_PAGES[tab] ? tab : 'templates';
+function showAdminTab(tab, want) {
+  ADMIN_TAB = ADMIN_PAGES[tab] || tab === 'templates' ? tab : 'templates';
+  URL_PAGE = {};
+  ADMIN_HOST = null;
   var page = ADMIN_PAGES[ADMIN_TAB];
   document.body.classList.toggle('admin-page', !!page);
   document.querySelectorAll('#admintabs [data-tab]').forEach(function (b) {
@@ -56,10 +64,12 @@ function showAdminTab(tab) {
   var box = document.getElementById('adminpage');
   box.hidden = !page;
   PASTE_TARGET = null;
-  if (!page) { return; }
+  if (!page) { syncURL(true); return; }
   closeEditor();
   document.getElementById('adminpage-title').textContent = page.title;
-  page.draw(adminHost());
+  ADMIN_HOST = adminHost(want);
+  page.draw(ADMIN_HOST);
+  syncURL(true);
 }
 
 document.getElementById('admintabs').addEventListener('click', function (ev) {

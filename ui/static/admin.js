@@ -369,7 +369,7 @@ function impersonateDialog() {
   loadPrincipals().then(function () { paint(); filter.focus(); });
 }
 
-function setAdminMode(on) {
+function setAdminMode(on, tab, want) {
   // Entering admin mode ends impersonation. The admin UI writes, and every
   // write goes out as the real caller -- editing while the screen shows
   // someone else's tiles is how you change the wrong thing confidently.
@@ -388,8 +388,10 @@ function setAdminMode(on) {
   if (ADMIN_MODE && EDIT_MODE) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
   document.body.classList.toggle('admin-mode', ADMIN_MODE);
   closeEditor();
-  // Every visit starts on Templates (admin-pages.js); leaving drops any page.
-  showAdminTab('templates');
+  // A visit starts on Templates (admin-pages.js) unless a link names a page;
+  // leaving drops any page.
+  showAdminTab(ADMIN_MODE && tab ? tab : 'templates', want);
+  syncURL(true);
   refresh();
 }
 document.getElementById('admin-done').addEventListener('click', function () {
