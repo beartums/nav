@@ -336,6 +336,15 @@ CREATE TABLE IF NOT EXISTS access_changes (
     at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (user_pk, group_name)
 );
+-- Addresses to add to the edge's email allow-list (access.py cf_add), staged
+-- with the membership changes and opened in the same pull request.
+CREATE TABLE IF NOT EXISTS access_emails (
+    email     TEXT        PRIMARY KEY,
+    user_pk   INTEGER     NOT NULL,
+    user_name TEXT        NOT NULL,
+    by_whom   TEXT        NOT NULL,
+    at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS access_prs (
     id      SERIAL      PRIMARY KEY,
     url     TEXT        NOT NULL,

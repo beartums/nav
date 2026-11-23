@@ -13,6 +13,16 @@ they can be tested without a network.
   NAV_GITOPS_TOKEN    a token that may push branches and open PRs there
   NAV_GITOPS_BASE     the branch to read and to target (default main)
   NAV_GITOPS_TF_DIR   the directory of Authentik .tf files (default terraform/authentik)
+  NAV_GITOPS_CF_FILE  the .tf file holding the edge's email allow-list (a Cloudflare
+                      Access policy whose `include` lists `email = { email = "..." }`
+                      entries); unset: adding someone from outside the household
+                      domain is left to a person, and the panel says where
+  NAV_GITOPS_CF_POLICY  that policy's Terraform resource name in the file
+
+Outside access is the same idea as membership: a person whose address isn't
+the household's own domain must be named on the edge's allow-list, which lives
+in Terraform. The entry is copied from an existing one with only the address
+swapped, then the file is re-read to check exactly that address was added.
 """
 from __future__ import annotations
 
@@ -28,6 +38,8 @@ REPO = os.environ.get("NAV_GITOPS_REPO", "").strip()
 TOKEN = os.environ.get("NAV_GITOPS_TOKEN", "").strip()
 BASE = os.environ.get("NAV_GITOPS_BASE", "main").strip() or "main"
 TF_DIR = os.environ.get("NAV_GITOPS_TF_DIR", "terraform/authentik").strip().strip("/")
+CF_FILE = os.environ.get("NAV_GITOPS_CF_FILE", "").strip().strip("/")
+CF_POLICY = os.environ.get("NAV_GITOPS_CF_POLICY", "").strip()
 
 BLOCK = re.compile(r'^resource "authentik_group" "([^"]+)" \{\n(.*?)^\}', re.M | re.S)
 NAME = re.compile(r'^\s*name\s*=\s*"([^"]+)"', re.M)
@@ -36,6 +48,10 @@ USERS = re.compile(r'^(\s*)users(\s*)=(\s*)\[(.*?)\]', re.M | re.S)
 
 def enabled() -> bool:
     return bool(REPO and TOKEN)
+
+
+def cf_enabled() -> bool:
+    return bool(enabled() and CF_FILE and CF_POLICY)
 
 
 # --- Terraform: read and edit membership -------------------------------------
@@ -118,8 +134,69 @@ def edit(files: dict[str, str], changes: list[dict[str, Any]]) -> dict[str, str]
     return {p: t for p, t in texts.items() if t != files[p]}
 
 
-def describe(changes: list[dict[str, Any]], gains: dict[int, list[str]], losses: dict[int, list[str]]) -> str:
-    """The pull request body: who changes, and the apps they gain or lose."""
+# --- Terraform: the edge's email allow-list ------------------------------------
+
+def _policy_re(resource: str) -> re.Pattern[str]:
+    return re.compile(rf'^resource "cloudflare_zero_trust_access_policy" "{re.escape(resource)}" \{{\n.*?^\}}',
+                      re.M | re.S)
+
+
+# One `include` entry: "    {" ... "    }," with an `email = { email = "..." }` inside.
+_CF_ENTRY = re.compile(r'^(?P<ind>[ \t]*)\{\n(?:(?!^(?P=ind)\},).)*?email = \{\n\s*email = "[^"]+"\n.*?^(?P=ind)\},\n',
+                       re.M | re.S)
+_CF_EMAIL = re.compile(r'email = \{\n\s*email = "([^"]+)"')
+
+
+def cf_emails(text: str, resource: str | None = None) -> list[str] | None:
+    """The addresses on the policy; None when the file has no such policy."""
+    m = _policy_re(resource or CF_POLICY).search(text)
+    return _CF_EMAIL.findall(m.group(0)) if m else None
+
+
+def cf_add(text: str, email: str, resource: str | None = None) -> str:
+    """The file with `email` added to the policy (unchanged when it's already
+    there). ValueError when the policy is missing, has no email entry to copy,
+    or re-reading the result disagrees."""
+    resource = resource or CF_POLICY
+    pr = _policy_re(resource)
+    pm = pr.search(text)
+    if not pm:
+        raise ValueError(f'no cloudflare_zero_trust_access_policy "{resource}" in {CF_FILE or "the file"}')
+    policy = pm.group(0)
+    have = _CF_EMAIL.findall(policy)
+    if email.lower() in (e.lower() for e in have):
+        return text
+    em = _CF_ENTRY.search(policy)
+    if not em:
+        raise ValueError(f"{resource}: no email entry to copy -- add the first address by hand")
+    entry = _CF_EMAIL.sub(lambda m: m.group(0).replace(f'"{m.group(1)}"', '"' + email.replace('"', "") + '"'),
+                          em.group(0), count=1)
+    out = text[:pm.start()] + policy[:em.end()] + entry + policy[em.end():] + text[pm.end():]
+    after = cf_emails(out, resource)
+    if sorted(after or []) != sorted(have + [email]):
+        raise ValueError(f"{resource}: editing the allow-list did not add exactly {email}")
+    return out
+
+
+def edit_all(files: dict[str, str], changes: list[dict[str, Any]],
+             emails: list[dict[str, Any]] | None = None) -> dict[str, str]:
+    """Membership changes, then outside-access addresses: the changed files."""
+    changed = edit(files, changes) if changes else {}
+    if emails:
+        if not CF_FILE or CF_FILE not in files:
+            raise ValueError("outside access is staged but NAV_GITOPS_CF_FILE isn't read")
+        text = changed.get(CF_FILE, files[CF_FILE])
+        for e in emails:
+            text = cf_add(text, e["email"])
+        if text != files[CF_FILE]:
+            changed[CF_FILE] = text
+    return changed
+
+
+def describe(changes: list[dict[str, Any]], gains: dict[int, list[str]], losses: dict[int, list[str]],
+             emails: list[dict[str, Any]] | None = None) -> str:
+    """The pull request body: who changes, the apps they gain or lose, and any
+    address added to the edge's allow-list."""
     by: dict[int, dict[str, Any]] = {}
     for c in changes:
         p = by.setdefault(c["pk"], {"name": c.get("name") or str(c["pk"]), "add": [], "remove": []})
@@ -131,7 +208,10 @@ def describe(changes: list[dict[str, Any]], gains: dict[int, list[str]], losses:
         apps = ([f"gains {', '.join(gains[pk])}"] if gains.get(pk) else []) + \
                ([f"loses {', '.join(losses[pk])}"] if losses.get(pk) else [])
         lines.append(f"- **{p['name']}** ({pk}): {'; '.join(bits)}" + (f". Apps: {'; '.join(apps)}" if apps else ""))
-    lines += ["", f"Takes effect after `terraform plan` / `apply` in `{TF_DIR}`.",
+    for e in emails or []:
+        lines.append(f"- **{e.get('name') or e['email']}**: outside access for `{e['email']}` ({CF_POLICY} in `{CF_FILE}`)")
+    where = f"`{TF_DIR}`" + (f" and `{CF_FILE.rsplit('/', 1)[0]}`" if emails else "")
+    lines += ["", f"Takes effect after `terraform plan` / `apply` in {where}.",
               "App lists are computed from Authentik's group bindings; direct user bindings aren't counted."]
     return "\n".join(lines)
 
@@ -161,6 +241,8 @@ async def read_tf() -> dict[str, str]:
         r = await gh.get(f"/repos/{REPO}/contents/{TF_DIR}", params={"ref": sha})
         r.raise_for_status()
         paths = [f["path"] for f in r.json() if f.get("type") == "file" and f["name"].endswith(".tf")]
+        if CF_FILE and CF_POLICY and CF_FILE not in paths:
+            paths.append(CF_FILE)
 
         async def one(path: str) -> tuple[str, str]:
             b = await gh.get(f"/repos/{REPO}/contents/{path}", params={"ref": sha})

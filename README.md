@@ -24,6 +24,11 @@ people in and tells nav who is asking.
   reaches. For labs that keep Authentik group membership in Terraform, a click
   stages a change and **Open PR** turns the staged changes into one pull request
   on the GitOps repo; nothing changes until it is merged and applied.
+  **+ Add person** creates the Authentik user straight away (users live in
+  Authentik, not Terraform), sets how they sign in (Google by email, a
+  set-password link, or a starting password shown once), and stages their
+  groups -- plus, for an address outside the household domain, the edge's
+  email allow-list -- for the same pull request.
 
 ## Layout
 
@@ -62,6 +67,10 @@ through Pomerium** — anyone who can reach it directly can name any user.
 | `NAV_ACCESS_GROUP` | group(s) allowed to use Access (default: the admin groups) |
 | `NAV_GITOPS_REPO`, `NAV_GITOPS_TOKEN` | `owner/name` of the repo holding the Authentik Terraform, and a token that may push branches and open PRs there (both unset: Access is off) |
 | `NAV_GITOPS_BASE`, `NAV_GITOPS_TF_DIR` | the branch to read and target (default `main`), and the `.tf` directory (default `terraform/authentik`) |
+| `NAV_GITOPS_CF_FILE`, `NAV_GITOPS_CF_POLICY` | the `.tf` file and resource name of the edge's email allow-list (a Cloudflare Access policy with `email = { email = "…" }` include entries). Add person stages a new outside address there in the same PR. Unset: the panel says to add it by hand |
+| `NAV_HOME_EMAIL_DOMAIN` | the household's own email domain. Add person treats any other address as outside (unset: no outside-access step) |
+| `NAV_NEW_PERSON_GROUPS` | groups Add person pre-selects (default `family`; only Terraform-managed ones are offered) |
+| `NAV_AUTHENTIK_PUBLIC_URL` | Authentik's public address. A set-password link is built from the in-cluster host nav calls, so it is re-rooted here |
 | `NAV_APP_DOMAIN` | apps' public links default to `https://<slug>.<this>` |
 | `NAV_<APP>_URL`, `_KEY`, `_PUBLIC` | per-app upstream URL, API key and public link (or set them in the UI) |
 | `NAV_SECRET_KEY` | encrypts API keys stored from the UI |

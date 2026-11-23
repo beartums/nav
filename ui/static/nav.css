@@ -1145,3 +1145,12 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 #adminpage-body .acc-pivot, #adminpage-body .acc-switch { justify-self:start; width:auto; }
 .acc-apps-table td.acc-cellind { min-width:34px; }
 .acc-apps-table tbody td:first-child, .acc-apps-table thead th:first-child { text-align:left; }
+.acc-add-person { justify-self:start; width:auto; margin:4px 0 8px; }
+.person-dlg label.person-field { display:grid; grid-template-columns:90px 1fr 20px; align-items:center; gap:8px; font-size:13px; }
+.person-dlg label.person-field input { width:100%; }
+.person-row { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-size:13px; }
+.person-lab { width:90px; color:var(--muted); }
+.person-choice[aria-pressed="true"] { background:color-mix(in srgb, var(--accent) 22%, transparent); border-color:var(--accent); font-weight:600; }
+.person-err:empty, .person-edge:empty { display:none; }
+.person-line { font-size:13px; }
+.person-secret { user-select:all; padding:1px 4px; border:1px solid var(--line); border-radius:4px; word-break:break-all; }

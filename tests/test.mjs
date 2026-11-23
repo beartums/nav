@@ -4112,6 +4112,70 @@ test('access: a click stages a change, and Open PR sends them', async () => {
   assert.ok(seen.some((r) => r.url === 'api/admin/access/pr' && r.method === 'POST'));
 });
 
+test('access: + Add person checks the name, creates, stages groups and outside access, and shows the result', async () => {
+  let pending = [], emails = [];
+  const view = () => ({
+    enabled: true, repo: 'o/lab', base: 'main', last_pr: null,
+    groups: [{ name: 'family', managed: true, path: 'tf/a.tf' }, { name: 'staff', managed: true, path: 'tf/a.tf' },
+             { name: 'legacy', managed: false, path: 'tf/a.tf' }],
+    users: [{ pk: 9, username: 'carol', name: 'Carol', email: 'c@example.com', groups: [], live: [], drift: [],
+              apps: [], gains: [], losses: [], unknown: [] }],
+    pending, pending_emails: emails,
+    add_person: { groups: ['family'], home_domain: 'home.test', outside_access: true, outside_file: 'cf/imported.tf' } });
+  const { window, doc, seen } = await boot(APPS, null, (u) => {
+    if (u.startsWith('api/admin/access/people/check')) {
+      const last = JSON.parse(seen[seen.length - 1].body);
+      return { taken: last.username === 'carol' ? ['username'] : [], outside: last.email ? !last.email.endsWith('@home.test') : null };
+    }
+    if (u === 'api/admin/access/people') {
+      pending = [{ id: 2, pk: 12, name: 'alex', group: 'family', action: 'add' }];
+      emails = [{ email: 'alex@mail.test', pk: 12, name: 'alex' }];
+      return { pk: 12, username: 'alex', name: 'Alex Doe', email: 'alex@mail.test', groups: ['family'],
+               signin: { way: 'password', password: 'Start1Pass2Word3' }, edge: { outside: true, status: 'staged', file: 'cf/imported.tf' } };
+    }
+    if (u.startsWith('api/admin/access')) { return view(); }
+    return null;
+  });
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.getElementById('acc-add-person'), 'add person button');
+  doc.getElementById('acc-add-person').click();
+  const dlg = doc.getElementById('person-dlg');
+  assert.ok(dlg, 'the dialog opens');
+  const create = doc.getElementById('person-create');
+  assert.ok(create.disabled, 'Create is greyed until the form is valid');
+  const groupBtns = [...dlg.querySelectorAll('.person-groups .person-choice')];
+  assert.deepEqual(groupBtns.map((b) => [b.textContent, b.getAttribute('aria-pressed')]),
+                   [['family', 'true'], ['staff', 'false']], 'managed groups only, the default pressed');
+  assert.deepEqual([...dlg.querySelectorAll('.person-signin .person-choice')].map((b) => b.getAttribute('aria-pressed')),
+                   ['true', 'false', 'false'], 'Google by default, as pressed buttons');
+  const type = (id, v) => { const i = doc.getElementById(id); i.value = v; i.dispatchEvent(new window.Event('input')); };
+  type('person-username', 'carol');
+  type('person-name', 'Alex Doe');
+  type('person-email', 'alex@mail.test');
+  await settle(window, () => dlg.querySelector('.person-ind-bad'), 'taken username flagged', 1000);
+  assert.match(dlg.querySelector('.person-ind-bad').title, /Already in Authentik/);
+  assert.ok(create.disabled, 'a taken username keeps Create greyed');
+  type('person-username', 'alex');
+  await settle(window, () => !create.disabled, 'Create enabled once the check clears', 1000);
+  assert.match(dlg.querySelector('.person-edge').textContent, /Outside access: staged/);
+  dlg.querySelectorAll('.person-signin .person-choice')[2].click();
+  create.click();
+  await settle(window, () => doc.getElementById('person-done'), 'result');
+  const post = seen.find((r) => r.url === 'api/admin/access/people' && r.method === 'POST');
+  assert.deepEqual(JSON.parse(post.body), { username: 'alex', name: 'Alex Doe', email: 'alex@mail.test',
+                                            signin: 'password', groups: ['family'] });
+  assert.equal(doc.getElementById('person-secret').textContent, 'Start1Pass2Word3', 'the starting password, shown once');
+  assert.match(dlg.textContent, /Authentik user alex \(12\)/);
+  assert.match(dlg.textContent, /Groups staged: family/);
+  assert.match(dlg.textContent, /Outside access staged/);
+  assert.match(dlg.textContent, /Open PR, then merge it and run terraform apply/);
+  doc.getElementById('person-done').click();
+  await settle(window, () => doc.getElementById('adminpage-save').textContent === 'Open PR (2)', 'two staged: a group and an address');
+  assert.ok(!doc.getElementById('person-dlg'), 'closed');
+  assert.match(doc.querySelector('.acc-edge-staged').textContent, /alex@mail.test/);
+});
+
 test('admin mode: tabs across the top; only Templates keeps the sidebar and tiles', async () => {
   const { window, doc } = await boot(APPS, null, (u) => u.startsWith('api/admin/connections') ? { can_store: false, connections: [] } : null);
   await enterAdmin(window, doc);
