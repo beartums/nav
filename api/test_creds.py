@@ -28,6 +28,7 @@ class Inputs(unittest.TestCase):
                 creds.clean_key(bad)
         self.assertEqual(creds.hint("0123456789abcdef"), "…cdef")
         self.assertEqual(creds.hint("short"), "…", "a short key gives nothing away")
+        self.assertEqual(creds.hint("admin:pass:word1234", login=True), "as admin", "a login key shows the login only")
 
 
 class Precedence(unittest.TestCase):

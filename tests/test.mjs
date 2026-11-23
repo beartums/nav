@@ -4322,6 +4322,36 @@ test('connections: Save waits for a change, Test checks what is typed and saves 
   assert.equal(save.disabled, false, "Mealie's edit is still unsaved");
 });
 
+test('connections: an app with no API keys asks for a login and a password, sent and saved as login:password', async () => {
+  const CONNS = { can_store: true, connections: [
+    { slug: 'navidrome', label: 'Navidrome', url: '', public_url: 'https://n.x', url_set: false, public_set: false,
+      default_url: 'http://nd:4533', key: 'none', hint: null, uses: ['accounts'], login: 'username',
+      note: "an admin's username:password" }] };
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
+    u === 'api/admin/connections' ? CONNS : /\/test$/.test(u) ? { ok: true, detail: '2 account(s) listed' }
+      : /^api\/admin\/connections\//.test(u) ? { ok: true } : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-users').click();
+  await settle(window, () => doc.querySelector('fieldset.conn'), 'connection');
+  const box = doc.querySelector('fieldset.conn');
+  assert.match(box.textContent, /Admin username/);
+  assert.match(box.textContent, /Password/);
+  assert.doesNotMatch(box.textContent, /API key/, 'no API key field');
+  const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new window.Event('input', { bubbles: true })); };
+  const [, , who, pw] = box.querySelectorAll('input');
+  typeIn(who, 'admin');
+  const testBtn = [...box.querySelectorAll('button')].find((b) => b.textContent === 'Test');
+  testBtn.click();
+  assert.match(box.querySelector('.conn-test').textContent, /both the login and the password/, 'half a login is refused');
+  typeIn(pw, 'pa:ss');
+  testBtn.click();
+  await settle(window, () => /saved/.test(box.querySelector('.conn-test').textContent), 'tested and saved');
+  const t = seen.find((r) => r.url === 'api/admin/connections/navidrome/test');
+  assert.deepEqual(JSON.parse(t.body), { key: 'admin:pa:ss' });
+  assert.match(box.querySelector('.conn-state').textContent, /as admin/, 'the badge names the login, none of the password');
+  assert.equal(who.value, '', 'cleared after saving');
+});
+
 test('Integrations and User management split the connections; a shared one is on both', async () => {
   const CONNS = { can_store: true, connections: [
     { slug: 'sonarr', label: 'Sonarr', url: 'http://s', public_url: 'https://s', default_url: 'http://s', key: 'stored', hint: '…1', uses: ['widgets'] },
