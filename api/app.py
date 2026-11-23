@@ -54,6 +54,7 @@ import appaccounts
 import creds
 import health
 import images
+import people
 import layouts
 from layouts import OVERRIDABLE, merge
 import widgets
@@ -2462,6 +2463,17 @@ async def _pending() -> list[dict[str, Any]]:
         return await cur.fetchall()
 
 
+async def _pending_emails() -> list[dict[str, Any]]:
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT email, user_pk AS pk, user_name AS name, by_whom, at"
+                                 " FROM access_emails ORDER BY at, email")
+        return await cur.fetchall()
+
+
+def _iso(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{k: v for k, v in c.items() if k != "at"} | {"at": c["at"].isoformat()} for c in rows]
+
+
 def _access_view(tf: dict[str, str], ak: dict[str, Any], pending: list[dict[str, Any]]) -> dict[str, Any]:
     tfg = access.groups(tf)
     groups_out = [{"name": n, "managed": g["members"] is not None, "path": g["path"]} for n, g in sorted(tfg.items())]
@@ -2500,6 +2512,11 @@ async def get_access(_: str = Depends(require_access_admin), fresh: bool = False
         return {"enabled": False}
     tf, ak = await asyncio.gather(access.read_tf(), _authentik_access(fresh))
     view = _access_view(tf, ak, await _pending())
+    view["pending_emails"] = _iso(await _pending_emails())
+    view["add_person"] = {"groups": [g for g in people.DEFAULT_GROUPS if any(
+        x["name"] == g and x["managed"] for x in view["groups"])],
+        "home_domain": people.HOME_DOMAIN or None, "outside_access": access.cf_enabled(),
+        "outside_file": access.CF_FILE or None}
     async with pool.connection() as conn:
         cur = await conn.execute("SELECT url, by_whom, at FROM access_prs ORDER BY at DESC LIMIT 1")
         last = await cur.fetchone()
@@ -2598,8 +2615,9 @@ async def stage_access_change(body: dict[str, Any], who: str = Depends(require_a
 async def clear_access_changes(who: str = Depends(require_access_admin)) -> dict[str, Any]:
     async with pool.connection() as conn:
         await conn.execute("DELETE FROM access_changes")
+        await conn.execute("DELETE FROM access_emails")
     print(f"access: {who} cleared the staged changes", flush=True)
-    return {"pending": []}
+    return {"pending": [], "pending_emails": []}
 
 
 @app.post("/api/admin/access/pr")
@@ -2607,12 +2625,12 @@ async def open_access_pr(who: str = Depends(require_access_admin)) -> dict[str, 
     """Every staged change as one pull request; the staged list is then cleared."""
     if not access.enabled():
         raise HTTPException(409, "the Access panel is off: NAV_GITOPS_REPO / NAV_GITOPS_TOKEN unset")
-    pending = await _pending()
-    if not pending:
+    pending, emails = await _pending(), await _pending_emails()
+    if not pending and not emails:
         raise HTTPException(400, "nothing staged")
     tf, ak = await asyncio.gather(access.read_tf(), _authentik_access(True))
     try:
-        changed = access.edit(tf, pending)
+        changed = access.edit_all(tf, pending, emails)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
     if not changed:
@@ -2620,17 +2638,108 @@ async def open_access_pr(who: str = Depends(require_access_admin)) -> dict[str, 
     view = _access_view(tf, ak, pending)
     gains = {u["pk"]: u["gains"] for u in view["users"]}
     losses = {u["pk"]: u["losses"] for u in view["users"]}
-    people = sorted({c["name"] for c in pending})
-    title = f"access: {', '.join(people[:3])}{' +' + str(len(people) - 3) if len(people) > 3 else ''} group membership"
+    names = sorted({c["name"] for c in pending} | {e["name"] for e in emails})
+    what = "group membership" + (" and outside access" if emails else "")
+    title = f"access: {', '.join(names[:3])}{' +' + str(len(names) - 3) if len(names) > 3 else ''} {what}"
     try:
-        url = await access.open_pr(changed, title, access.describe(pending, gains, losses), who)
+        url = await access.open_pr(changed, title, access.describe(pending, gains, losses, emails), who)
     except httpx.HTTPStatusError as exc:
         raise HTTPException(502, f"GitHub refused: {exc.response.status_code} {exc.response.text[:200]}") from None
     async with pool.connection() as conn:
         await conn.execute("INSERT INTO access_prs (url, by_whom) VALUES (%s, %s)", (url, who))
         await conn.execute("DELETE FROM access_changes")
-    print(f"access: {who} opened {url} ({len(pending)} change(s))", flush=True)
+        await conn.execute("DELETE FROM access_emails")
+    print(f"access: {who} opened {url} ({len(pending)} change(s), {len(emails)} address(es))", flush=True)
     return {"url": url}
+
+
+# --- add a person: the Authentik user now, their groups staged (people.py) ------
+
+def _ak_client(timeout: float = 20) -> httpx.AsyncClient:
+    if not AUTHENTIK_TOKEN:
+        raise HTTPException(503, "AUTHENTIK_TOKEN is not set")
+    return httpx.AsyncClient(base_url=AUTHENTIK_URL, timeout=timeout,
+                             headers={"Authorization": f"Bearer {AUTHENTIK_TOKEN}"})
+
+
+@app.post("/api/admin/access/people/check")
+async def check_person(body: dict[str, Any], _: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """Is the username or email taken? Asked as the form is filled, before Create."""
+    username, email = str(body.get("username") or "").strip(), str(body.get("email") or "").strip()
+    async with _ak_client() as client:
+        try:
+            taken = await people.conflicts(client, username, email)
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"Authentik: {exc}") from None
+    return {"taken": taken, "outside": people.outside(email) if people.EMAIL.match(email) else None}
+
+
+@app.post("/api/admin/access/people")
+async def add_person(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """Create the Authentik user now; stage their groups (and outside access) for the next PR.
+
+    Users live in Authentik's database, not Terraform, so this one write goes
+    straight to Authentik; membership still goes through the pull request."""
+    if not access.enabled():
+        raise HTTPException(409, "the Access panel is off: NAV_GITOPS_REPO / NAV_GITOPS_TOKEN unset")
+    try:
+        p = people.validate(body)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    tfg = access.groups(await access.read_tf())
+    bad = [g for g in p["groups"] if g not in tfg or tfg[g]["members"] is None]
+    if bad:
+        raise HTTPException(400, f"not a Terraform-managed group: {', '.join(bad)}")
+    async with _ak_client() as client:
+        try:
+            taken = await people.conflicts(client, p["username"], p["email"])
+            if taken:
+                raise HTTPException(409, f"already in Authentik: {' and '.join(taken)}")
+            user = await people.create(client, p)
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(502, f"Authentik refused: {exc.response.status_code} {exc.response.text[:200]}") from None
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, f"Authentik: {type(exc).__name__}") from None
+        pk = user["pk"]
+        print(f"access: {who} created Authentik user {pk} {p['username']}", flush=True)
+        # The user exists from here on: a failure below is reported, not raised.
+        signin: dict[str, Any] = {"way": p["signin"]}
+        try:
+            if p["signin"] == "link":
+                signin["link"] = await people.recovery_link(client, pk)
+            elif p["signin"] == "password":
+                pw = people.password()
+                await people.set_password(client, pk, pw)
+                signin["password"] = pw
+        except (ValueError, httpx.HTTPError) as exc:
+            signin["error"] = str(exc)[:300] or type(exc).__name__
+    async with pool.connection() as conn:
+        for g in p["groups"]:
+            await conn.execute(
+                "INSERT INTO access_changes (user_pk, user_name, group_name, action, by_whom)"
+                " VALUES (%s, %s, %s, 'add', %s) ON CONFLICT (user_pk, group_name) DO NOTHING",
+                (pk, p["username"], g, who))
+    edge: dict[str, Any] = {"outside": people.outside(p["email"])}
+    if edge["outside"]:
+        if not access.cf_enabled():
+            edge["status"] = "manual"
+        else:
+            tf = await access.read_tf()
+            have = access.cf_emails(tf.get(access.CF_FILE, ""))
+            if have is None:
+                edge["status"] = "manual"
+            elif p["email"].lower() in (e.lower() for e in have):
+                edge["status"] = "already"
+            else:
+                async with pool.connection() as conn:
+                    await conn.execute(
+                        "INSERT INTO access_emails (email, user_pk, user_name, by_whom) VALUES (%s, %s, %s, %s)"
+                        " ON CONFLICT (email) DO NOTHING", (p["email"], pk, p["username"], who))
+                edge["status"] = "staged"
+        edge["file"] = access.CF_FILE or None
+    _AK_CACHE["data"] = None       # the new person shows on the next read
+    return {"pk": pk, "username": p["username"], "name": p["name"], "email": p["email"],
+            "signin": signin, "groups": p["groups"], "edge": edge}
 
 
 # --- the page ------------------------------------------------------------------
