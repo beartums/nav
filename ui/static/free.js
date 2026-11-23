@@ -158,6 +158,7 @@ function renderFree() {
   ul.className = 'ugrid free free-cells';
   ul.dataset.cat = '__free__';
   ul.style.gridTemplateColumns = 'repeat(' + FREE_COLS + ', minmax(0, 1fr))';
+  ul.style.setProperty('--free-cols', FREE_COLS);   // the faint cell lines (nav.css)
   var bottom = 0;
   groups.forEach(function (g) {
     var el = groupEl(g);

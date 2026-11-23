@@ -3835,6 +3835,18 @@ test('a free dashboard draws placed things at their cells, and only those', asyn
   const li = g.querySelector('[data-key="app:sonarr"]');
   assert.equal(li.style.gridColumn, '5 / span 4');
   assert.equal(li.style.gridRow, '3 / span 2');
+  assert.equal(g.style.getPropertyValue('--free-cols'), '24', 'the cell lines follow the columns');
+});
+
+test('a 48-column free dashboard draws 48 columns and 48 columns of cell lines', async () => {
+  const routes = freeRoutes(placed({ sonarr: { x: 8, y: 2 } }));
+  const { window, doc } = await boot(USER, null,
+    (u) => (u.startsWith('api/apps') && /layout=7/.test(u)) ? { ...routes(u), layout: { ...FREE, free_cols: 48 } } : routes(u),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('ul.ugrid.free'), 'free grid');
+  const g = doc.querySelector('ul.ugrid.free');
+  assert.equal(g.style.gridTemplateColumns, 'repeat(48, minmax(0, 1fr))');
+  assert.equal(g.style.getPropertyValue('--free-cols'), '48');
 });
 
 test('arranging a free dashboard: drag an app from the panel to a cell; overlaps are refused', async () => {
