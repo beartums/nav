@@ -177,7 +177,11 @@ def unseal(token: str | None) -> str | None:
         return None
 
 
-def hint(plain: str) -> str:
+def hint(plain: str, login: bool = False) -> str:
+    """What the page may show of a stored key. A login key ("<login>:<password>")
+    shows the login, never any of the password."""
+    if login:
+        return "as " + plain.split(":", 1)[0][:60]
     return "…" + plain[-4:] if len(plain) >= 8 else "…"
 
 

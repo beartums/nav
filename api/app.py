@@ -1910,6 +1910,11 @@ async def load_connections() -> None:
                          if r["slug"] in creds.APPS or r["custom"]})
 
 
+def _login_key(slug: str) -> bool:
+    """Is this connection's key an admin's "<login>:<password>"?"""
+    return any(a.conn == slug and a.login for a in appaccounts.ADAPTERS.values())
+
+
 def known_app(slug: str) -> str:
     if not creds.exists(slug):
         raise HTTPException(404, f"no connection {slug!r}")
@@ -1920,6 +1925,7 @@ def known_app(slug: str) -> str:
 async def list_connections(_: str = Depends(require_admin)) -> dict[str, Any]:
     # An app read for its accounts says what its key must be (often: an admin's).
     notes = {a.conn: a.note for a in appaccounts.ADAPTERS.values() if a.note}
+    logins = {a.conn: a.login for a in appaccounts.ADAPTERS.values() if a.login}
 
     # Which admin page shows it: Integrations (widgets read it), User
     # management (its accounts are read), or both -- one key either way.
@@ -1929,6 +1935,7 @@ async def list_connections(_: str = Depends(require_admin)) -> dict[str, Any]:
 
     return {"can_store": creds.can_store(),
             "connections": [creds.describe(s) | {"uses": uses(s)} | ({"note": notes[s]} if s in notes else {})
+                            | ({"login": logins[s]} if s in logins else {})
                             for s in creds.slugs()]}
 
 
@@ -1996,7 +2003,7 @@ async def save_connection(slug: str, body: dict[str, Any],
                 row["secret"], row["hint"] = None, None
             else:
                 k = creds.clean_key(body["key"])
-                row["secret"], row["hint"] = creds.seal(k), creds.hint(k)
+                row["secret"], row["hint"] = creds.seal(k), creds.hint(k, login=_login_key(slug))
     except creds.CredError as exc:
         raise HTTPException(422, str(exc)) from None
     async with pool.connection() as conn:  # type: ignore[union-attr]

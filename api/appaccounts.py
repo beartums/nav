@@ -40,6 +40,7 @@ class Adapter:
     provision: str           # PROVISION
     fetch: Callable[[Any, str, str], Awaitable[list[dict[str, Any]]]]   # (client, base_url, key)
     note: str = ""           # what the key must be, for the Connections page
+    login: str = ""          # no API keys: the key is "<login>:<password>"; "username" or "email"
 
 
 ADAPTERS: dict[str, Adapter] = {}
@@ -382,7 +383,7 @@ adapter(Adapter("plex", "Plex", "plex", ("plex",), "manual", _plex,
 adapter(Adapter("audiobookshelf", "Audiobookshelf", "audiobookshelf", ("audiobookshelf",), "manual",
                 _audiobookshelf, "an API key made by an admin (Settings → API Keys)"))
 adapter(Adapter("navidrome", "Navidrome", "navidrome", ("music",), "manual", _navidrome,
-                "an admin's username:password (Navidrome has no API keys)"))
+                "an admin's username:password (Navidrome has no API keys)", login="username"))
 adapter(Adapter("immich", "Immich", "immich", ("immich",), "manual", _immich,
                 "an admin's API key with adminUser.read"))
 adapter(Adapter("filebrowser", "FileBrowser", "filebrowser", ("filebrowser",), "first", _filebrowser,
@@ -398,6 +399,6 @@ adapter(Adapter("memos", "Memos", "memos", ("memos",), "first", _memos,
 adapter(Adapter("aurral", "Aurral", "aurral", ("aurral",), "first", _aurral,
                 "the API key (Settings → General → API access)"))
 adapter(Adapter("affine", "AFFiNE", "affine", ("affine",), "first", _affine,
-                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)"))
+                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)", login="email"))
 adapter(Adapter("pingvin", "Pingvin Share", "pingvin", ("share",), "manual", _pingvin,
-                "an admin's username:password (Pingvin has no API tokens; no TOTP)"))
+                "an admin's username:password (Pingvin has no API tokens; no TOTP)", login="username"))

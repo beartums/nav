@@ -89,11 +89,30 @@ function connectionsPage(h, which) {
       legend.textContent = c.label + ' (' + c.slug + ')';
       auth = field('Sent as', c.auth, 'bearer, x-api-key, or header:<Name>');
     }
-    var key = field('API key', '', canStore ? (c.key === 'none' ? 'paste a key' : 'leave blank to keep') : 'needs NAV_SECRET_KEY');
+    var keep = canStore ? (c.key === 'none' ? '' : 'leave blank to keep') : 'needs NAV_SECRET_KEY';
+    // An app with no API keys (Navidrome, AFFiNE, Pingvin): an admin's login and
+    // password, stored together as the key "<login>:<password>".
+    var who = null, key;
+    if (c.login) {
+      who = field(c.login === 'email' ? 'Admin email' : 'Admin username', '', keep || c.login);
+      who.input.autocomplete = 'off';
+      who.input.disabled = !canStore;
+      key = field('Password', '', keep || 'their password');
+    } else {
+      key = field('API key', '', keep || 'paste a key');
+    }
     key.input.type = 'password';
     key.input.autocomplete = 'off';
     key.input.disabled = !canStore;
-    [url, pub, auth, key].forEach(function (f) { if (f) { box.appendChild(f.label); } });
+    [url, pub, auth, who, key].forEach(function (f) { if (f) { box.appendChild(f.label); } });
+    // The key as typed: '' when nothing (or only half a login) is entered.
+    function typedKey() {
+      var k = key.input.value.trim();
+      if (!who) { return k; }
+      var w = who.input.value.trim();
+      return w && k ? w + ':' + key.input.value : '';
+    }
+    function halfLogin() { return !!who && !!who.input.value.trim() !== !!key.input.value.trim(); }
     // Say which address is in use: a grey placeholder read as "none".
     if (!c.custom) {
       var used = div('note conn-default');
@@ -115,7 +134,8 @@ function connectionsPage(h, which) {
     // Tests what is in the boxes now, saved or not; a blank box means the saved value.
     test.addEventListener('click', function () {
       var tb = {};
-      var u = url.input.value.trim(), k = key.input.value.trim();
+      var u = url.input.value.trim(), k = typedKey();
+      if (halfLogin()) { out.textContent = '✗ enter both the login and the password'; out.classList.add('conn-bad'); return; }
       if (u) { tb.url = u; }
       if (k) { tb.key = k; }
       if (auth && auth.input.value.trim()) { tb.auth = auth.input.value.trim(); }
@@ -136,7 +156,7 @@ function connectionsPage(h, which) {
           if ('url' in b) { c.url_set = !!b.url; if (b.url) { c.url = b.url; } }
           if ('public_url' in b) { c.public_set = !!b.public_url; if (b.public_url) { c.public_url = b.public_url; } }
           if ('auth' in b) { c.auth = b.auth; }
-          if ('key' in b) { c.key = b.key ? 'stored' : 'none'; c.hint = b.key ? '\u2026' + b.key.slice(-4) : null; key.input.value = ''; removing = false; }
+          if ('key' in b) { c.key = b.key ? 'stored' : 'none'; c.hint = !b.key ? null : who ? 'as ' + b.key.split(':')[0] : '\u2026' + b.key.slice(-4); key.input.value = ''; if (who) { who.input.value = ''; } removing = false; }
           if (rm) { rm.textContent = 'Remove key'; }
           paintKey();
           out.textContent += ' \u2014 saved';
@@ -180,7 +200,7 @@ function connectionsPage(h, which) {
       // Only what changed: a field left out is unchanged on the server.
       body: function () {
         var b = {};
-        var u = url.input.value.trim(), p = pub.input.value.trim(), k = key.input.value.trim();
+        var u = url.input.value.trim(), p = pub.input.value.trim(), k = typedKey();
         if (u !== (c.url_set ? c.url : '')) { b.url = u; }
         if (p !== (c.public_set ? c.public_url : '')) { b.public_url = p; }
         if (auth && auth.input.value.trim() !== c.auth) { b.auth = auth.input.value.trim(); }
