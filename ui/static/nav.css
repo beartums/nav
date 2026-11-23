@@ -560,9 +560,38 @@ fieldset.conn legend { font-weight:600; padding:0 4px; }
 .conn-actions .danger { color:var(--status-crit); }
 .conn-test { flex:1; min-width:0; margin:0; }
 .conn-bad { color:var(--status-crit); }
-details.conn-add { margin-top:12px; }
-details.conn-add summary { cursor:pointer; color:var(--accent); }
-details.conn-add #conn-add-btn { margin-top:6px; }
+fieldset.conn-add { border:1px dashed var(--line); border-radius:8px; margin:0; padding:6px 12px 10px; display:grid; gap:8px; }
+fieldset.conn-add legend { font-weight:600; padding:0 4px; }
+fieldset.conn-add[hidden] { display:none; }
+fieldset.conn-add #conn-add-btn { justify-self:start; }
+/* Master-detail: the sidebar lists every connection's state; its card on click. */
+.conn-md { display:grid; grid-template-columns:minmax(170px, 230px) minmax(0, 1fr); gap:16px; align-items:start; }
+.conn-side { position:sticky; top:8px; }
+.conn-list { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+.conn-item { width:100%; display:flex; align-items:center; gap:8px; text-align:left; background:none;
+  border:1px solid transparent; border-left:3px solid transparent; border-radius:6px; padding:6px 8px;
+  font:inherit; font-size:13px; color:inherit; cursor:pointer; }
+.conn-item:hover { background:color-mix(in srgb, var(--accent) 8%, transparent); }
+.conn-item[aria-current="true"] { background:color-mix(in srgb, var(--accent) 15%, transparent); font-weight:600; }
+.conn-item.conn-healthy { border-left-color:#2f8a4a; }
+.conn-item-add { color:var(--accent); }
+.conn-item-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.conn-ind { flex:none; width:18px; height:18px; border-radius:50%; display:inline-grid; place-items:center;
+  font-size:11px; font-weight:700; color:var(--muted); border:1px solid var(--line); }
+.conn-ind.conn-key-stored, .conn-ind.conn-key-env { background:color-mix(in srgb, #2f8a4a 18%, transparent); color:#2f8a4a; border-color:transparent; }
+.conn-ind.conn-key-unreadable { background:color-mix(in srgb, #c0392b 16%, transparent); color:#c0392b; border-color:transparent; }
+.conn-item .conn-dot { margin-left:0; flex:none; }
+.conn-dirty { color:var(--accent); font-size:10px; flex:none; }
+.conn-dirty[hidden] { display:none; }
+.conn-detail { display:grid; gap:10px; min-width:0; }
+.conn-detail fieldset.conn { margin:0; }
+.conn-back { display:none; justify-self:start; }
+@media (max-width: 700px) {
+  .conn-md { grid-template-columns:minmax(0, 1fr); }
+  .conn-md.conn-has-sel .conn-side { display:none; }
+  .conn-md:not(.conn-has-sel) .conn-detail { display:none; }
+  .conn-back { display:inline-block; }
+}
 #wd-preview { margin-top:10px; }
 
 /* Placed widgets lead their group. A chart takes two columns where there is

@@ -23,6 +23,7 @@ try { ADMIN_TEMPLATE = JSON.parse(localStorage.getItem('nav.admintpl') || 'null'
 function setAdminTemplate(id) {
   ADMIN_TEMPLATE = id;
   try { localStorage.setItem('nav.admintpl', JSON.stringify(id)); } catch (e) {}
+  syncURL(true);
 }
 
 /** The layout id to ask for: the template being edited in admin mode, else
@@ -205,6 +206,7 @@ try {
 function setUserLayout(id) {
   USER_LAYOUT = id;
   try { localStorage.setItem('nav.layout', JSON.stringify(id)); } catch (e) {}
+  syncURL(true);
   if (DEVICE_ID) {
     // On record only; a failure costs nothing the page needs.
     api('PUT', 'api/device/' + encodeURIComponent(DEVICE_ID), { layout_id: id }).catch(function () {});
@@ -226,11 +228,12 @@ function openDashboard(id) {
   window.scrollTo(0, 0);
   refresh();
 }
+// Opened with ?dashboard= (a bookmark, a link from outside): this device moves
+// to it. The URL then keeps saying where you are (urlstate.js).
 (function () {
-  var id = dashboardLinkId('/' + location.search);
-  if (!id) { return; }
-  setUserLayout(id === 'default' ? null : Number(id));
-  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  var id = URL_START.get('dashboard');
+  if (!id || URL_START.get('admin')) { return; }
+  setUserLayout(urlLayoutId(id));
 })();
 
 /** Arranging a layout: the admin on a template, or a user on their own. */

@@ -49,10 +49,23 @@ function accessPage(h) {
   var PREF = 'nav.accessView';
   var pref = {};
   try { pref = JSON.parse(localStorage.getItem(PREF) || '{}') || {}; } catch (e) {}
-  var mode = pref.mode === 'apps' ? 'apps' : 'groups', pivot = !!pref.pivot, apps = null;
+  // A link (?admin=access&view=apps&pivot=1) wins over what this browser remembers.
+  var want = h.want || {};
+  var mode = (want.view || pref.mode) === 'apps' ? 'apps' : 'groups';
+  var pivot = 'pivot' in want ? want.pivot === '1' : !!pref.pivot, apps = null;
   function savePref() {
     try { localStorage.setItem(PREF, JSON.stringify({ mode: mode, pivot: pivot })); } catch (e) {}
   }
+  function place() { return { view: mode, pivot: mode === 'apps' && pivot }; }
+  urlPageSet(place());
+  // Back/Forward within the page: another view, or the other way round.
+  h.onURL = function (w) {
+    mode = w.view === 'apps' ? 'apps' : 'groups';
+    pivot = w.pivot === '1';
+    urlPageSet(place());
+    if (!view) { return; }            // still loading: it draws the chosen view when done
+    if (mode === 'apps' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
+  };
 
   function switcher() {
     var sw = div('acc-switch');
@@ -64,6 +77,7 @@ function accessPage(h) {
         if (mode === m[0]) { return; }
         mode = m[0];
         savePref();
+        urlPage(place(), true);
         if (mode === 'apps' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
       });
       sw.appendChild(b);
@@ -181,7 +195,7 @@ function accessPage(h) {
     flip.textContent = '⇄ ' + (pivot ? 'People across' : 'Apps across');
     flip.title = 'Swap rows and columns';
     flip.setAttribute('aria-pressed', String(pivot));
-    flip.addEventListener('click', function () { pivot = !pivot; savePref(); render(); });
+    flip.addEventListener('click', function () { pivot = !pivot; savePref(); urlPage(place(), false); render(); });
     h.body.appendChild(flip);
     legend();
 

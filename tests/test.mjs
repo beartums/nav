@@ -75,7 +75,7 @@ const LAYOUT_LIST = { templates: [{ id: 1, name: 'Default', is_default: true },
                                   { id: 2, name: 'Family', is_default: false }], dashboards: [] };
 
 /** Boot the page with every network call stubbed, and wait for first paint. */
-async function boot(payload = APPS, fail = null, bodyFor = null, setup = null) {
+async function boot(payload = APPS, fail = null, bodyFor = null, setup = null, url = 'https://nav.example.com/') {
   const seen = [];
   // beforeParse, NOT after construction: the page fetches as soon as its
   // script runs, which is during parsing. Installing the stub afterwards left
@@ -83,7 +83,7 @@ async function boot(payload = APPS, fail = null, bodyFor = null, setup = null) {
   // assertion failed on an empty page for the wrong reason.
   const dom = new JSDOM(pageHtml(), {
     runScripts: 'dangerously',
-    url: 'https://nav.example.com/',
+    url,
     pretendToBeVisual: true,
     beforeParse(window) {
       // `setup` runs before the page does: seed localStorage, stub confirm.
@@ -2686,7 +2686,11 @@ test('connections: a custom one is added for remote widgets, and can be deleted'
   doc.getElementById('admin-tab-integrations').click();
   await settle(window, () => doc.querySelector('fieldset.conn legend'), 'connections');
   assert.equal(doc.querySelector('fieldset.conn legend').textContent, 'Printer (printer)');
-  const form = doc.querySelector('details.conn-add');
+  doc.querySelector('.conn-item[data-slug="_new"]').click();
+  const form = doc.querySelector('fieldset.conn-add');
+  assert.equal(form.hidden, false, 'the sidebar\'s Add item shows the form');
+  assert.equal(doc.querySelector('fieldset.conn').hidden, true, 'in place of the connection');
+  assert.equal(new window.URL(window.location.href).searchParams.get('conn'), '_new');
   const inputs = form.querySelectorAll('input');
   inputs[0].value = 'nas'; inputs[2].value = 'https://nas.lan'; inputs[4].value = 'k1';
   doc.getElementById('conn-add-btn').click();
@@ -4239,6 +4243,115 @@ test('a tile whose address is /?dashboard=<id> switches dashboards in place', as
   click(t);
   await settle(window, () => seen.some((r) => /api\/apps\?.*layout=7/.test(r.url)), 'reload with layout 7');
   assert.equal(window.localStorage.getItem('nav.layout'), '7', 'this device now shows dashboard 7');
+});
+
+// --- where you are, in the URL (urlstate.js) ---------------------------------
+
+const qOf = (window) => new window.URL(window.location.href).searchParams;
+const URL_CONNS = { can_store: true, connections: [
+  { slug: 'sonarr', label: 'Sonarr', url: 'http://s', public_url: 'https://s', default_url: 'http://s', key: 'stored', hint: '…1',
+    uses: ['widgets'], health: { tries: 3, errors: 0, last_error: null, last_ok: 1 } },
+  { slug: 'mealie', label: 'Mealie', url: 'http://m', public_url: 'https://m', default_url: 'http://m', key: 'none', hint: null,
+    uses: ['widgets', 'accounts'], note: 'an admin token',
+    health: { tries: 4, errors: 1, last_error: { at: 1700000000, ok: false, detail: 'HTTP 401' }, last_ok: 1 } },
+  { slug: 'immich', label: 'Immich', url: 'http://i', public_url: 'https://i', default_url: 'http://i', key: 'unreadable', hint: null,
+    uses: ['accounts'], note: 'an admin key' }] };
+const urlBodies = (u) => u === 'api/admin/connections' ? URL_CONNS
+  : u === 'api/admin/access' ? { enabled: false }
+  : u.startsWith('api/admin/access/apps') ? { apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', error: null, count: 0 }], people: [], orphans: {} }
+  : null;
+
+test('a link to an admin page opens it: tab, connection, and the sidebar shows each one\'s state', async () => {
+  const { window, doc } = await boot(APPS, null, urlBodies, null, 'https://nav.example.com/?admin=users&conn=mealie');
+  await settle(window, () => doc.querySelector('.conn-item[aria-current="true"]'), 'connection chosen');
+  assert.ok(doc.body.classList.contains('admin-mode'), 'admin mode from the link');
+  assert.equal(doc.getElementById('adminpage-title').textContent, 'User management');
+  assert.deepEqual([...doc.querySelectorAll('.conn-item')].map((b) => b.dataset.slug), ['mealie', 'immich'], 'only this page\'s');
+  assert.equal(doc.querySelector('.conn-item[aria-current="true"]').dataset.slug, 'mealie');
+  const cards = [...doc.querySelectorAll('fieldset.conn')];
+  assert.deepEqual(cards.map((c) => [c.dataset.slug, c.hidden]), [['mealie', false], ['immich', true]], 'its card alone');
+  // State as indicators with words on hover (and press-and-hold).
+  const mealie = doc.querySelector('.conn-item[data-slug="mealie"]');
+  assert.ok(mealie.querySelector('.conn-ind').classList.contains('conn-key-none'));
+  assert.equal(mealie.querySelector('.conn-ind').title, 'No key');
+  assert.equal(mealie.querySelector('.conn-dot').hidden, false, 'a recent failure: red dot');
+  assert.match(mealie.querySelector('.conn-dot').title, /1 of the last 4 tries failed/);
+  const immich = doc.querySelector('.conn-item[data-slug="immich"]');
+  assert.ok(immich.querySelector('.conn-ind').classList.contains('conn-key-unreadable'));
+  assert.equal(qOf(window).get('conn'), 'mealie', 'the URL keeps saying so');
+  assert.equal(qOf(window).get('admin'), 'users');
+});
+
+test('a link to App accounts, pivoted, wins over what the browser remembers', async () => {
+  const { window, doc } = await boot(APPS, null, urlBodies,
+    (w) => { w.localStorage.setItem('nav.accessView', JSON.stringify({ mode: 'groups', pivot: false })); },
+    'https://nav.example.com/?admin=access&view=apps&pivot=1');
+  await settle(window, () => doc.querySelector('.acc-apps-table'), 'app accounts');
+  assert.ok(doc.querySelector('.acc-apps-table').classList.contains('acc-pivoted'));
+  assert.equal(qOf(window).get('view'), 'apps');
+  doc.querySelector('.acc-switch [data-view="groups"]').click();
+  assert.equal(qOf(window).get('view'), 'groups', 'a move writes the URL');
+  assert.equal(qOf(window).get('pivot'), null, 'pivot only means something for App accounts');
+});
+
+test('Back and Forward move between admin pages and connections; a URL for an admin is ignored for others', async () => {
+  const { window, doc } = await boot(APPS, null, urlBodies);
+  await enterAdmin(window, doc);
+  assert.equal(qOf(window).get('admin'), 'templates');
+  doc.getElementById('admin-tab-integrations').click();
+  await settle(window, () => doc.querySelector('.conn-item[aria-current="true"]'), 'integrations');
+  assert.equal(qOf(window).get('conn'), 'sonarr', 'the first connection, shown');
+  doc.querySelector('.conn-item[data-slug="mealie"]').click();
+  assert.equal(qOf(window).get('conn'), 'mealie');
+  window.history.back();
+  await settle(window, () => qOf(window).get('conn') === 'sonarr' &&
+    doc.querySelector('.conn-item[aria-current="true"]').dataset.slug === 'sonarr', 'back to Sonarr');
+  window.history.back();
+  await settle(window, () => doc.getElementById('adminpage').hidden, 'back to Templates');
+  assert.equal(qOf(window).get('admin'), 'templates');
+  window.history.forward();
+  await settle(window, () => doc.getElementById('adminpage-title').textContent === 'Integrations' &&
+    !doc.getElementById('adminpage').hidden, 'forward to Integrations');
+
+  const other = await boot({ ...APPS, admin: false }, null, urlBodies, null, 'https://nav.example.com/?admin=users&conn=mealie');
+  await settle(other.window, () => other.window.location.search === '', 'URL tidied');
+  assert.ok(!other.doc.body.classList.contains('admin-mode'), 'no admin UI for a non-admin');
+});
+
+test('Back from a page with unsaved changes asks; staying keeps the page and its URL', async () => {
+  let asked = 0;
+  const { window, doc } = await boot(APPS, null, urlBodies, (w) => { w.confirm = () => { asked++; return false; }; });
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-integrations').click();
+  await settle(window, () => doc.querySelector('.conn-item[aria-current="true"]'), 'integrations');
+  const card = doc.querySelector('fieldset.conn[data-slug="sonarr"]');
+  const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new window.Event('input', { bubbles: true })); };
+  typeIn(card.querySelectorAll('input')[0], 'http://elsewhere');
+  assert.equal(doc.querySelector('.conn-item[data-slug="sonarr"] .conn-dirty').hidden, false, 'marked unsaved');
+  // Looking at another connection keeps the edit.
+  doc.querySelector('.conn-item[data-slug="mealie"]').click();
+  assert.equal(card.hidden, true);
+  assert.equal(card.querySelectorAll('input')[0].value, 'http://elsewhere', 'the edit survives');
+  assert.equal(doc.getElementById('adminpage-save').disabled, false);
+  window.history.back();   // to sonarr: same page, no question
+  await settle(window, () => qOf(window).get('conn') === 'sonarr', 'back within the page');
+  assert.equal(asked, 0);
+  window.history.back();   // to Templates: leaving the page
+  await settle(window, () => asked === 1, 'asked');
+  await settle(window, () => qOf(window).get('admin') === 'integrations', 'URL put back');
+  assert.equal(doc.getElementById('adminpage-title').textContent, 'Integrations', 'stayed');
+  assert.equal(card.querySelectorAll('input')[0].value, 'http://elsewhere');
+});
+
+test('a dashboard stays in the URL, and leaving admin returns to it', async () => {
+  const { window, doc } = await boot(APPS, null, urlBodies, null, 'https://nav.example.com/?dashboard=7');
+  await settle(window, () => doc.querySelector('a.app'), 'tiles');
+  assert.equal(qOf(window).get('dashboard'), '7', 'kept, so a refresh shows the same one');
+  await enterAdmin(window, doc);
+  assert.equal(qOf(window).get('dashboard'), null);
+  assert.equal(qOf(window).get('admin'), 'templates');
+  doc.getElementById('admin-done').click();
+  await settle(window, () => qOf(window).get('dashboard') === '7', 'back to the dashboard URL');
 });
 
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {

@@ -30,6 +30,23 @@ people in and tells nav who is asking.
   groups -- plus, for an address outside the household domain, the edge's
   email allow-list -- for the same pull request.
 
+## Links to a place
+
+The address bar says where you are, so a refresh stays put and a link opens the
+same place (query parameters only; `ui/static/urlstate.js`):
+
+| URL | Opens |
+|---|---|
+| `/?dashboard=5` | dashboard 5 (`default`: the shared one) |
+| `/?admin=templates&template=3` | admin mode, template 3 |
+| `/?admin=access&view=apps&pivot=1` | Access → App accounts, one row per app |
+| `/?admin=users&conn=plex` | User management, the Plex connection |
+
+Back and Forward move between them; leaving a page with unsaved changes asks
+first. A link beats what the browser remembers (view, pivot), which still
+applies when the link says nothing. An `?admin=` link opens the dashboard for
+someone who isn't an admin.
+
 ## Layout
 
 ```

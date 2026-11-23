@@ -44,12 +44,84 @@ function connectionsPage(h, which) {
   // Save only when something differs from what is stored; leaving with a
   // difference asks first (admin-pages.js setDirty).
   function changed() {
-    var dirty = rows.some(function (r) { return Object.keys(r.body()).length; });
+    var dirty = false;
+    rows.forEach(function (r) {
+      var d = Object.keys(r.body()).length > 0;
+      if (items[r.slug]) { items[r.slug].dirty(d); }
+      dirty = dirty || d;
+    });
     h.save.disabled = !dirty;
     h.setDirty(dirty);
   }
 
-  function row(c, canStore) {
+  // --- the sidebar: every connection's state at a glance; its card on click.
+  // Cards stay built (hidden) when another is chosen, so unsaved edits of one
+  // survive looking at another; the sidebar marks the ones with edits.
+  var items = {}, cards = {}, order = [], sel = null, md = null;
+  var NEW = '_new';     // the Add form's place in the URL (no slug starts with "_")
+  function narrow() {
+    return !!(window.matchMedia && window.matchMedia('(max-width: 700px)').matches);
+  }
+  function sideItem(slug, label) {
+    var li = document.createElement('li');
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'conn-item';
+    b.dataset.slug = slug;
+    var name = document.createElement('span');
+    name.className = 'conn-item-name';
+    name.textContent = label;
+    var key = document.createElement('span');
+    key.className = 'conn-ind';
+    key.setAttribute('role', 'img');
+    var dot = document.createElement('span');
+    dot.className = 'conn-dot';
+    dot.setAttribute('role', 'img');
+    dot.hidden = true;
+    var dirty = document.createElement('span');
+    dirty.className = 'conn-dirty';
+    dirty.textContent = '\u25cf';
+    dirty.title = 'Unsaved changes';
+    dirty.setAttribute('role', 'img');
+    dirty.setAttribute('aria-label', dirty.title);
+    dirty.hidden = true;
+    b.appendChild(key); b.appendChild(name); b.appendChild(dirty); b.appendChild(dot);
+    b.addEventListener('click', function () { select(slug, true); });
+    li.appendChild(b);
+    return {
+      li: li, button: b,
+      paintKey: function (c) {
+        var words = CONN_KEY_WORDS[c.key](c);
+        key.className = 'conn-ind conn-key-' + c.key;
+        key.textContent = c.key === 'stored' || c.key === 'env' ? '\u2713' : c.key === 'unreadable' ? '\u2715' : '\u25cb';
+        key.title = words;
+        key.setAttribute('aria-label', words);
+      },
+      paintHealth: function (hl) {
+        b.classList.toggle('conn-healthy', hl.tries > 0 && hl.errors === 0);
+        dot.hidden = !hl.errors;
+        dot.title = hl.errors ? hl.errors + ' of the last ' + hl.tries + ' tries failed. Latest: ' + hl.last_error.detail
+          : '';
+        dot.setAttribute('aria-label', dot.title);
+        b.title = hl.tries && !hl.errors ? 'The last ' + hl.tries + ' tries worked' : '';
+      },
+      dirty: function (on) { dirty.hidden = !on; }
+    };
+  }
+  /** Show one connection's card (null: the list alone, on a narrow screen). */
+  function select(slug, push) {
+    if (slug != null && !cards[slug]) { slug = null; }
+    if (slug == null && !narrow()) { slug = order[0] || null; }
+    sel = slug;
+    Object.keys(cards).forEach(function (k) { cards[k].hidden = k !== slug; });
+    Object.keys(items).forEach(function (k) { items[k].button.setAttribute('aria-current', String(k === slug)); });
+    if (md) { md.classList.toggle('conn-has-sel', !!slug); }
+    urlPage({ conn: slug }, push);
+  }
+  // Back/Forward between connections: move, don't rebuild (edits stay).
+  h.onURL = function (w) { select(w.conn || null, false); };
+
+  function row(c, canStore, item) {
     var box = document.createElement('fieldset');
     box.className = 'conn';
     box.dataset.slug = c.slug;
@@ -61,6 +133,7 @@ function connectionsPage(h, which) {
     function paintKey() {
       state.className = 'conn-state conn-key-' + c.key;
       state.textContent = (c.key === 'stored' ? '\u2713 ' : c.key === 'unreadable' ? '\u2715 ' : '') + CONN_KEY_WORDS[c.key](c);
+      if (item) { item.paintKey(c); }
     }
     paintKey();
     box.appendChild(state);
@@ -77,6 +150,7 @@ function connectionsPage(h, which) {
         hl.last_error.detail + ' (' + new Date(hl.last_error.at * 1000).toLocaleString() + ')' : '';
       dot.setAttribute('aria-label', dot.title);
       box.title = hl.tries && !hl.errors ? 'The last ' + hl.tries + ' tries worked' : '';
+      if (item) { item.paintHealth(hl); }
     }
     paintHealth(c.health);
     // What the key must be, for an app read for its accounts (Access → App accounts).
@@ -214,9 +288,9 @@ function connectionsPage(h, which) {
   // A custom connection, for remote widgets (docs/widgets.md). Created at
   // once, not on Save: it needs a name before anything can refer to it.
   function addForm(canStore) {
-    var box = document.createElement('details');
+    var box = document.createElement('fieldset');
     box.className = 'conn-add';
-    var sum = document.createElement('summary');
+    var sum = document.createElement('legend');
     sum.textContent = 'Add a connection for a remote widget';
     box.appendChild(sum);
     var f = {
@@ -238,7 +312,10 @@ function connectionsPage(h, which) {
       var body = {};
       Object.keys(f).forEach(function (k) { var v = f[k].input.value.trim(); if (v) { body[k] = v; } });
       connSend('POST', 'api/admin/connections', body)
-        .then(function () { return load().then(function () { note.textContent = 'Added.'; }); })
+        .then(function () {
+          sel = body.slug || sel;
+          return load().then(function () { note.textContent = 'Added.'; });
+        })
         .catch(function (e) { note.textContent = e.message; });
     });
     box.appendChild(add);
@@ -260,18 +337,56 @@ function connectionsPage(h, which) {
           : 'Widgets use these to reach each app. Test checks what is typed and, when it works, keeps it. ' +
             'Keys are encrypted in nav’s database and never shown again.');
       h.body.appendChild(intro);
+      items = {}; cards = {}; order = [];
+      md = div('conn-md');
+      var side = document.createElement('nav');
+      side.className = 'conn-side';
+      side.setAttribute('aria-label', 'Connections');
+      var list = document.createElement('ul');
+      list.className = 'conn-list';
+      side.appendChild(list);
+      var detail = div('conn-detail');
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'conn-back';
+      back.textContent = '\u2190 All connections';
+      back.addEventListener('click', function () { select(null, true); });
+      detail.appendChild(back);
+      md.appendChild(side);
+      md.appendChild(detail);
+      h.body.appendChild(md);
       var want = which === 'users' ? 'accounts' : 'widgets';
       b.connections.forEach(function (c) {
         var uses = c.uses || (c.custom ? ['widgets'] : ['widgets']);
         if (uses.indexOf(want) === -1) { return; }
-        var box = row(c, b.can_store);
+        var it = sideItem(c.slug, c.label);
+        list.appendChild(it.li);
+        items[c.slug] = it;
+        var box = row(c, b.can_store, it);
         if (uses.length > 1) {
           box.querySelector('legend').appendChild(document.createTextNode(
             which === 'users' ? ' \u00b7 also used by widgets' : ' \u00b7 also read for its accounts'));
         }
-        h.body.appendChild(box);
+        box.hidden = true;
+        detail.appendChild(box);
+        cards[c.slug] = box;
+        order.push(c.slug);
       });
-      if (which === 'integrations') { h.body.appendChild(addForm(b.can_store)); }
+      if (which === 'integrations') {
+        var add = sideItem(NEW, '+ Add a connection');
+        add.button.classList.add('conn-item-add');
+        add.button.querySelector('.conn-ind').remove();
+        list.appendChild(add.li);
+        items[NEW] = add;
+        var form = addForm(b.can_store);
+        form.hidden = true;
+        detail.appendChild(form);
+        cards[NEW] = form;
+      }
+      // Where to start: the one in the URL, else the one shown before a reload
+      // (Save, Add), else the first -- or, on a narrow screen, the list.
+      var start = sel || (h.want || {}).conn || null;
+      select(start, false);
     });
   }
 

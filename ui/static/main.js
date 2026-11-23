@@ -371,6 +371,8 @@ function refresh() {
       OVERRIDES = {};
       APPS.forEach(function (a) { if (a.override) { OVERRIDES[a.slug] = a.override; } });
       if (!IS_ADMIN && ADMIN_MODE) { setAdminMode(false); return; }
+      // The first answer: open the place the URL names (admin pages need IS_ADMIN).
+      if (urlStartApplied()) { return; }
       buildMenu();
       // Edit mode needs a dashboard of the caller's own: one deleted elsewhere
       // ends it rather than editing the shared template by accident.
