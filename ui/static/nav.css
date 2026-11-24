@@ -165,12 +165,17 @@ body.edit-mode #editbar { display:flex; }
 .tb-info { cursor:help; opacity:.85; font-size:15px; }
 .tb-spacer { flex:1 1 auto; }
 
+/* Arranging: the bars run the window's full width (--wrap-l/--wrap-r, groups.js),
+   and the sidebar starts below them. */
+body.admin-mode #admintabs, body.admin-mode:not(.admin-page) #adminbar, body.edit-mode #editbar {
+  margin-left:calc(-1 * var(--wrap-l, 16px)); margin-right:calc(-1 * var(--wrap-r, 16px));
+  padding-left:16px; padding-right:16px; }
 /* Sidebar folded away: the page takes the full width. */
 body.side-collapsed #groups, body.side-collapsed #side-grip { display:none !important; }
 body.side-collapsed.admin-mode .wrap, body.side-collapsed.edit-mode .wrap { margin-left:auto; max-width:1100px; }
 
 /* The widget palette: a panel down the right while arranging. */
-#widget-palette { display:none; position:fixed; top:56px; right:12px; bottom:12px; width:280px; z-index:30;
+#widget-palette { display:none; position:fixed; top:calc(var(--bars-h, 44px) + 12px); right:12px; bottom:12px; width:280px; z-index:30;
   flex-direction:column; background:var(--card); border:1px solid var(--line); border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,.18); }
 body.admin-mode #widget-palette:not([hidden]), body.edit-mode #widget-palette:not([hidden]) { display:flex; }
@@ -204,13 +209,16 @@ body.admin-mode #widget-palette:not([hidden]), body.edit-mode #widget-palette:no
                   text-overflow:ellipsis; }
 
 /* --side-w is set by groups.js from the grip's drag, per viewer. */
-#groups { display:none; position:fixed; left:0; top:0; bottom:0; width:var(--side-w, 210px);
+/* It floats over the page's left margin, below the bars (--bars-h, groups.js):
+   the page keeps the dashboard's width and place, so arranging shows it as it
+   will look. Only a window too narrow for both pushes the page right. */
+#groups { display:none; position:fixed; left:0; top:var(--bars-h, 0px); bottom:0; width:var(--side-w, 210px);
           padding:16px 12px; overflow:auto; background:var(--card);
           border-right:1px solid var(--line); z-index:24; }
 body.admin-mode #groups, body.edit-mode #groups { display:block; }
-body.admin-mode .wrap, body.edit-mode .wrap { margin-left:var(--side-w, 210px);
-                                              max-width:calc(1100px + var(--side-w, 210px)); }
-#side-grip { position:fixed; top:0; bottom:0; left:calc(var(--side-w, 210px) - 3px); width:6px;
+body.admin-mode .wrap, body.edit-mode .wrap {
+  margin-left:max(calc(var(--side-w, 210px) - 8px), calc((100% - 1100px) / 2)); margin-right:auto; }
+#side-grip { position:fixed; top:var(--bars-h, 0px); bottom:0; left:calc(var(--side-w, 210px) - 3px); width:6px;
              cursor:col-resize; z-index:26; }
 #side-grip:hover, #side-grip:focus-visible, body.side-dragging #side-grip {
   background:color-mix(in srgb, var(--accent) 40%, transparent); outline:none; }
@@ -1033,7 +1041,31 @@ ul.ugrid.free > li.fgroup { display:flex; flex-direction:column; gap:10px; min-w
   background:color-mix(in srgb, var(--card) 55%, transparent); box-shadow:inset 0 0 0 1px var(--line); z-index:0; }
 ul.ugrid.free > li.fg-static { pointer-events:none; }
 ul.ugrid.free > li.fg-static > .fg-title, ul.ugrid.free > li.fg-static > .resize-handle { pointer-events:auto; }
-ul.ugrid.free > li:not(.fgroup):not(.free-ghost) { z-index:1; }
+ul.ugrid.free > li:not(.fgroup):not(.free-ghost):not(.fshape) { z-index:2; }
+/* Shapes (shapes.js): the layers bottom to top are group frames (0), shapes
+   behind (1), tiles and widgets (2), shapes in front (3); page order within. */
+ul.ugrid.free { isolation:isolate; }
+ul.ugrid.free > li.fshape { position:relative; display:flex; min-width:0; min-height:0; pointer-events:none; }
+ul.ugrid.free > li.fshape.fs-back { z-index:1; }
+ul.ugrid.free > li.fshape.fs-front { z-index:3; }
+.fs-art { flex:1 1 auto; box-sizing:border-box; min-width:0; }
+.fs-round { border-radius:12px; }
+.fs-ellipse { border-radius:50%; }
+.fs-hline { align-self:center; height:0; }
+.fs-vline { flex:0 0 0; width:0; margin:0 auto; }
+body.admin-mode li.fshape, body.edit-mode li.fshape { outline:1px dashed color-mix(in srgb, var(--muted) 45%, transparent); }
+li.fshape > .fs-tools { position:absolute; top:3px; left:3px; display:flex; align-items:center; gap:1px; padding:1px 3px;
+  pointer-events:auto; background:var(--card); border:1px solid var(--line); border-radius:6px; opacity:.7; }
+li.fshape:hover > .fs-tools, li.fshape > .fs-tools:focus-within { opacity:1; }
+li.fshape > .resize-handle { pointer-events:auto; }
+.fs-move { cursor:move; padding:0 3px; color:var(--muted); user-select:none; }
+.shape-picker .fs-pressed { display:flex; gap:4px; flex-wrap:wrap; }
+.shape-picker .fs-pressed button { min-width:30px; padding:3px 8px; font-size:13px; }
+.shape-picker .fs-pressed button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+.shape-picker .fs-slider { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+.shape-picker .fs-slider input { flex:1; }
+.shape-picker .fs-slider span { min-width:38px; text-align:right; }
+.shape-picker [hidden] { display:none !important; }
 .fg-title { height:var(--fg-title-h, 33px); flex:0 0 var(--fg-title-h, 33px); display:flex; align-items:center; gap:6px; padding:0 12px;
   font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .fg-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

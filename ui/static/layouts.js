@@ -249,6 +249,7 @@ function setEditMode(on) {
   if (on && ADMIN_MODE) { setAdminMode(false); }
   EDIT_MODE = !!on;
   document.body.classList.toggle('edit-mode', EDIT_MODE);
+  if (typeof syncChrome === 'function') { syncChrome(); }
   closeEditor();
   refresh();
 }

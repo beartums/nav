@@ -168,6 +168,35 @@ document.getElementById('group-add').addEventListener('click', function () {
   saveGroups(categoriesOf(APPS, true).concat([name.trim()]), groupHiddenList());
 });
 
+// While arranging, the bars span the window and the sidebar starts below them.
+// CSS can't know either measure, so: --wrap-l/--wrap-r, the page column's
+// distance from the window's edges, and --bars-h, where the bars end.
+function syncChrome() {
+  var st = document.body.style, wrap = document.querySelector('.wrap');
+  if (!wrap) { return; }
+  var r = wrap.getBoundingClientRect();
+  st.setProperty('--wrap-l', Math.max(0, r.left) + 'px');
+  st.setProperty('--wrap-r', Math.max(0, document.documentElement.clientWidth - r.right) + 'px');
+  var h = 0;
+  ['admintabs', 'adminbar', 'editbar'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el && el.offsetHeight) { h = Math.max(h, el.getBoundingClientRect().bottom); }
+  });
+  st.setProperty('--bars-h', h + 'px');
+}
+(function () {
+  window.addEventListener('resize', syncChrome);
+  if (typeof ResizeObserver !== 'function') { return; }
+  // Also fires when a bar appears or goes (entering and leaving a mode).
+  var ro = new ResizeObserver(syncChrome);
+  ['admintabs', 'adminbar', 'editbar'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) { ro.observe(el); }
+  });
+  var wrap = document.querySelector('.wrap');
+  if (wrap) { ro.observe(wrap); }
+})();
+
 // The sidebar's width: drag its edge (or arrow keys on the grip). Per viewer,
 // in localStorage -- a convenience; it falls back to the default.
 (function () {
@@ -177,6 +206,7 @@ document.getElementById('group-add').addEventListener('click', function () {
   function set(w, save) {
     w = Math.max(MIN, Math.min(max(), Math.round(w)));
     document.body.style.setProperty('--side-w', w + 'px');
+    syncChrome();
     if (save) { try { localStorage.setItem(KEY, String(w)); } catch (e) { /* none */ } }
     return w;
   }
@@ -200,6 +230,7 @@ document.getElementById('group-add').addEventListener('click', function () {
   });
   grip.addEventListener('dblclick', function () {
     document.body.style.removeProperty('--side-w');
+    syncChrome();
     try { localStorage.removeItem(KEY); } catch (e) { /* none */ }
   });
   grip.addEventListener('keydown', function (ev) {
