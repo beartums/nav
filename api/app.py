@@ -2617,11 +2617,25 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
     Read-only; reused for a minute (?fresh=1 reads again)."""
     ak, got = await asyncio.gather(_authentik_access(fresh), _read_apps(fresh))
     links: dict[str, dict[str, int]] = {}
+    only: dict[str, dict[str, dict[str, Any]]] = {}
     async with pool.connection() as conn:  # type: ignore[union-attr]
         for r in await (await conn.execute("SELECT app, account, person_pk FROM account_links")).fetchall():
             links.setdefault(r["app"], {})[r["account"]] = r["person_pk"]
+        for r in await (await conn.execute("SELECT app, account, note, by_whom, at FROM app_only_accounts")).fetchall():
+            only.setdefault(r["app"], {})[r["account"]] = r
     m = appaccounts.match(ak["users"], {k: v["accounts"] for k, v in got.items() if not v["error"]},
                           ak["reach"], links=links)
+    # App-only accounts (made by nav for someone outside Authentik) aren't strays:
+    # out of the orphans, into their own list -- with any that the app no longer has.
+    app_only: dict[str, list[dict[str, Any]]] = {}
+    for app_key, rows in only.items():
+        listed = {appaccounts.acct_key(a): a for a in (got.get(app_key) or {}).get("accounts") or []}
+        app_only[app_key] = [{"account": k, "note": r["note"], "by": r["by_whom"], "at": r["at"].isoformat(),
+                              "gone": k not in listed and not (got.get(app_key) or {}).get("error"),
+                              **({kk: listed[k].get(kk) for kk in ("login", "disabled", "last_seen")} if k in listed else {})}
+                             for k, r in sorted(rows.items())]
+        if app_key in m["orphans"]:
+            m["orphans"][app_key] = [o for o in m["orphans"][app_key] if o["key"] not in rows]
     print(f"access: {who} read app accounts", flush=True)
     return {
         "apps": [{"key": a.key, "label": a.label, "conn": a.conn, "apps": list(a.apps), "provision": a.provision,
@@ -2635,6 +2649,8 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
                            "cells": m["people"].get(u["pk"], {})} for u in ak["users"]),
                          key=lambda x: (x["name"] or "").lower()),
         "orphans": {k: v for k, v in m["orphans"].items() if v},
+        "app_only": app_only,
+        "jellyfin_only": True,
         "as_of": min(_AK_CACHE.get("wall") or time.time(), _APPS_CACHE.get("wall") or time.time()),
     }
 
@@ -2737,6 +2753,83 @@ async def set_app_admins(body: dict[str, Any], who: str = Depends(require_access
           + ", ".join(f"{r['app']} {'grant' if r['admin'] else 'revoke'} {'ok' if r['ok'] else 'failed'}" for r in results),
           flush=True)
     return {"results": results}
+
+
+def _jellyfin_conn() -> tuple[str, str]:
+    url, key, _ = creds.resolve(appaccounts.ADAPTERS["jellyfin"].conn)
+    if not url or not key:
+        raise HTTPException(409, "no address or key -- set it in User management → Jellyfin")
+    return url, key
+
+
+@app.get("/api/admin/access/apps/jellyfin-only/libraries")
+async def jellyfin_only_libraries(who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    url, key = _jellyfin_conn()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            return {"libraries": await appaccounts.jellyfin_libraries(client, url, key)}
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(502, f"Jellyfin: {_http_why(exc, url)}") from None
+
+
+@app.post("/api/admin/access/apps/jellyfin-only")
+async def make_jellyfin_only(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """{username, password, note, libraries: [folder id] | null}: a Jellyfin account for
+    someone with no Authentik user -- Jellyfin's own sign-in, from outside the house
+    too. A regular user with the deployment's user rule (lockout, remote ok)."""
+    name, pw = str(body.get("username") or "").strip(), str(body.get("password") or "")
+    note = str(body.get("note") or "").strip()[:120]
+    libs = body.get("libraries")
+    if not appaccounts.JF_NAME.match(name):
+        raise HTTPException(422, "the username is 2-32 letters, digits, '.', '_' or '-' (starting with a letter or digit)")
+    if len(pw) < appaccounts.MIN_PASSWORD:
+        raise HTTPException(422, f"the password needs at least {appaccounts.MIN_PASSWORD} characters")
+    if libs is not None and (not isinstance(libs, list) or not libs or not all(isinstance(x, str) for x in libs)):
+        raise HTTPException(422, "libraries is a list of library ids, or null for every library")
+    url, key = _jellyfin_conn()
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            have = await appaccounts.ADAPTERS["jellyfin"].fetch(client, url, key)
+            if any((a.get("login") or "").lower() == name.lower() for a in have):
+                raise HTTPException(409, f"Jellyfin already has {name}")
+            await appaccounts.make_jellyfin_only(client, url, key, name, pw, libs)
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Jellyfin: {_http_why(exc, url)}") from None
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(502, f"Jellyfin: {exc}") from None
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        await conn.execute("INSERT INTO app_only_accounts (app, account, note, by_whom) VALUES ('jellyfin', %s, %s, %s) "
+                           "ON CONFLICT (app, account) DO UPDATE SET note = EXCLUDED.note", (name.lower(), note, who))
+    _APPS_CACHE["data"] = None
+    print(f"access: {who} made a Jellyfin-only account", flush=True)
+    return {"ok": True, "detail": f"made {name} in Jellyfin" + ("" if libs is None else f" ({len(libs)} libraries)")}
+
+
+@app.delete("/api/admin/access/apps/jellyfin-only")
+async def remove_jellyfin_only(account: str, who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """Delete a Jellyfin-only account from Jellyfin (only one nav made that way)."""
+    account = account.strip().lower()
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        row = await (await conn.execute("SELECT 1 FROM app_only_accounts WHERE app = 'jellyfin' AND account = %s",
+                                        (account,))).fetchone()
+    if not row:
+        raise HTTPException(404, "not a Jellyfin-only account nav made")
+    url, key = _jellyfin_conn()
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            acc = next((a for a in await appaccounts.ADAPTERS["jellyfin"].fetch(client, url, key)
+                        if appaccounts.acct_key(a) == account), None)
+            if acc and acc.get("role") == "admin":
+                raise HTTPException(409, "it is an admin now; remove admin first")
+            if acc:
+                await appaccounts.delete_jellyfin_user(client, url, key, str(acc["id"]))
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Jellyfin: {_http_why(exc, url)}") from None
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        await conn.execute("DELETE FROM app_only_accounts WHERE app = 'jellyfin' AND account = %s", (account,))
+    _APPS_CACHE["data"] = None
+    print(f"access: {who} removed a Jellyfin-only account", flush=True)
+    return {"ok": True, "detail": "removed from Jellyfin" if acc else "Jellyfin no longer had it; forgotten"}
 
 
 @app.post("/api/admin/access/apps/create")

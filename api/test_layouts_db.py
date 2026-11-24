@@ -26,6 +26,7 @@ import psycopg  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app as nav  # noqa: E402
+import layouts  # noqa: E402
 
 SCHEMA = pathlib.Path(__file__).with_name("schema.sql").read_text()
 # Everything before the layouts section IS the pre-template schema.
@@ -359,7 +360,7 @@ class Layouts(unittest.TestCase):
         self.assertEqual((p["x"], p["y"]), (8, 6))
         # Out of range, and the things a free dashboard can't be.
         self.assertEqual(self.c.put(f"/api/layouts/{d}/placements/{pid}", headers=F,
-                                    json={"x": 24}).status_code, 422)
+                                    json={"x": layouts.FREE_COLS_MAX}).status_code, 422)
         self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
                                     json={"tiles": {"plex": {"x": -1}}}).status_code, 422)
         # A tile on a free dashboard may be any span; a nonsense size is still refused.
@@ -368,8 +369,10 @@ class Layouts(unittest.TestCase):
         self.assertEqual(self.c.put(f"/api/layouts/{d}/tiles", headers=F,
                                     json={"tiles": {"plex": {"size": "huge"}}}).status_code, 422)
         self.assertEqual(self.c.post(f"/api/layouts/{d}/revert", headers=F).status_code, 422)
-        self.assertEqual(self.c.post("/api/layouts", headers=ADMIN,
-                                     json={"kind": "template", "name": "T", "mode": "free"}).status_code, 422)
+        # A template may be free too (v1.15); gone again so the restart test counts one.
+        t = self.c.post("/api/layouts", headers=ADMIN, json={"kind": "template", "name": "T", "mode": "free"})
+        self.assertEqual(t.status_code, 200, t.text)
+        self.assertEqual(self.c.delete(f"/api/layouts/{t.json()['id']}", headers=ADMIN).status_code, 200)
         self.assertEqual(self.c.post("/api/layouts", headers=F, json={"kind": "dashboard", "name": "F2",
                                      "mode": "free", "from_id": d}).status_code, 422)
         # Groups on the page: stored whole, read back on the layout.

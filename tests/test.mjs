@@ -4644,6 +4644,55 @@ test('access: Admins page — toggle cells, Apply makes every change at once; gr
   assert.ok(!make.querySelector('.make-app[data-app="plex"] .make-admin'), 'Plex: no admin to set');
 });
 
+test('access: + Jellyfin-only makes an account outside Authentik; they list on their own and can be removed', async () => {
+  const APPV = {
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2,
+             admin: { how: 'app' }, create: [{ id: 'create', label: 'Create', needs: 'password', login: 'username', hint: '' }] }],
+    people: [{ pk: 5, name: 'Bear', email: 'b@x', username: 'bear',
+               cells: { jellyfin: { status: 'account', role: 'admin', disabled: false, login: 'bear', key: 'bear' } } }],
+    orphans: {}, jellyfin_only: true,
+    app_only: { jellyfin: [{ account: 'gran', login: 'gran', note: 'Grandma', by: 'admin@x', at: '2026-11-24T20:00:00+00:00',
+                             gone: false, disabled: false, last_seen: null }] }
+  };
+  const { window, doc, seen } = await boot(APPS, null, (u, o) =>
+    u === 'api/admin/access' ? { enabled: false }
+      : u.startsWith('api/admin/access/apps/jellyfin-only/libraries') ? { libraries: [{ id: 'm', name: 'Movies' }, { id: 'k', name: 'Kids' }] }
+      : u.startsWith('api/admin/access/apps/jellyfin-only') ? { ok: true, detail: 'made it' }
+      : u.startsWith('api/admin/access/apps') ? APPV : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-switch [data-view="apps"]'), 'switch');
+  doc.querySelector('.acc-switch [data-view="apps"]').click();
+  await settle(window, () => doc.getElementById('acc-jf-only'), 'the button');
+  assert.match(doc.querySelector('.acc-app-only').textContent, /gran — Grandma/, 'listed apart from strays');
+
+  doc.getElementById('acc-jf-only').click();
+  await settle(window, () => doc.querySelectorAll('.jfo-lib').length === 2, 'libraries');
+  const go = doc.getElementById('jfo-create');
+  const set = (id, v) => { const i = doc.getElementById(id); i.value = v; i.dispatchEvent(new window.Event('input')); };
+  set('jfo-user', 'bad name');
+  set('jfo-pw', 'correct horse');
+  assert.equal(go.disabled, true, 'a username with a space is refused');
+  set('jfo-user', 'pops');
+  doc.getElementById('jfo-note').value = 'Grandpa';
+  assert.equal(go.disabled, false);
+  const all = doc.querySelector('.jfo-libs > .person-choice');
+  all.click();                                          // choose libraries instead of all
+  doc.querySelectorAll('.jfo-lib')[1].click();          // Kids off
+  go.click();
+  await settle(window, () => doc.querySelector('#jfo-dlg .make-result'), 'made');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'POST' && r.url === 'api/admin/access/apps/jellyfin-only').body),
+                   { username: 'pops', password: 'correct horse', note: 'Grandpa', libraries: ['m'] });
+  assert.equal(doc.getElementById('jfo-pw').value, '', 'the password is cleared once sent');
+  doc.querySelector('#jfo-dlg .smalldlg-foot button').click();   // Close
+
+  window.confirm = () => true;
+  await settle(window, () => doc.querySelector('.acc-jf-remove'), 'the list again');
+  doc.querySelector('.acc-jf-remove').click();
+  await settle(window, () => seen.some((r) => r.method === 'DELETE'), 'removed');
+  assert.equal(seen.find((r) => r.method === 'DELETE').url, 'api/admin/access/apps/jellyfin-only?account=gran');
+});
+
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
   const APPV = {
     apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2 },
