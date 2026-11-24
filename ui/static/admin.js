@@ -387,6 +387,7 @@ function setAdminMode(on, tab, want) {
   // One editor at a time: a template, or your own dashboard.
   if (ADMIN_MODE && EDIT_MODE) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
   document.body.classList.toggle('admin-mode', ADMIN_MODE);
+  if (typeof syncChrome === 'function') { syncChrome(); }
   closeEditor();
   // A visit starts on Templates (admin-pages.js) unless a link names a page;
   // leaving drops any page.

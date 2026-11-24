@@ -165,12 +165,17 @@ body.edit-mode #editbar { display:flex; }
 .tb-info { cursor:help; opacity:.85; font-size:15px; }
 .tb-spacer { flex:1 1 auto; }
 
+/* Arranging: the bars run the window's full width (--wrap-l/--wrap-r, groups.js),
+   and the sidebar starts below them. */
+body.admin-mode #admintabs, body.admin-mode:not(.admin-page) #adminbar, body.edit-mode #editbar {
+  margin-left:calc(-1 * var(--wrap-l, 16px)); margin-right:calc(-1 * var(--wrap-r, 16px));
+  padding-left:16px; padding-right:16px; }
 /* Sidebar folded away: the page takes the full width. */
 body.side-collapsed #groups, body.side-collapsed #side-grip { display:none !important; }
 body.side-collapsed.admin-mode .wrap, body.side-collapsed.edit-mode .wrap { margin-left:auto; max-width:1100px; }
 
 /* The widget palette: a panel down the right while arranging. */
-#widget-palette { display:none; position:fixed; top:56px; right:12px; bottom:12px; width:280px; z-index:30;
+#widget-palette { display:none; position:fixed; top:calc(var(--bars-h, 44px) + 12px); right:12px; bottom:12px; width:280px; z-index:30;
   flex-direction:column; background:var(--card); border:1px solid var(--line); border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,.18); }
 body.admin-mode #widget-palette:not([hidden]), body.edit-mode #widget-palette:not([hidden]) { display:flex; }
@@ -204,13 +209,16 @@ body.admin-mode #widget-palette:not([hidden]), body.edit-mode #widget-palette:no
                   text-overflow:ellipsis; }
 
 /* --side-w is set by groups.js from the grip's drag, per viewer. */
-#groups { display:none; position:fixed; left:0; top:0; bottom:0; width:var(--side-w, 210px);
+/* It floats over the page's left margin, below the bars (--bars-h, groups.js):
+   the page keeps the dashboard's width and place, so arranging shows it as it
+   will look. Only a window too narrow for both pushes the page right. */
+#groups { display:none; position:fixed; left:0; top:var(--bars-h, 0px); bottom:0; width:var(--side-w, 210px);
           padding:16px 12px; overflow:auto; background:var(--card);
           border-right:1px solid var(--line); z-index:24; }
 body.admin-mode #groups, body.edit-mode #groups { display:block; }
-body.admin-mode .wrap, body.edit-mode .wrap { margin-left:var(--side-w, 210px);
-                                              max-width:calc(1100px + var(--side-w, 210px)); }
-#side-grip { position:fixed; top:0; bottom:0; left:calc(var(--side-w, 210px) - 3px); width:6px;
+body.admin-mode .wrap, body.edit-mode .wrap {
+  margin-left:max(calc(var(--side-w, 210px) - 8px), calc((100% - 1100px) / 2)); margin-right:auto; }
+#side-grip { position:fixed; top:var(--bars-h, 0px); bottom:0; left:calc(var(--side-w, 210px) - 3px); width:6px;
              cursor:col-resize; z-index:26; }
 #side-grip:hover, #side-grip:focus-visible, body.side-dragging #side-grip {
   background:color-mix(in srgb, var(--accent) 40%, transparent); outline:none; }
