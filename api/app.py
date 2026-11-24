@@ -2587,6 +2587,7 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
     print(f"access: {who} read app accounts", flush=True)
     return {
         "apps": [{"key": a.key, "label": a.label, "conn": a.conn, "apps": list(a.apps), "provision": a.provision,
+                  "signin": appaccounts.signin_of(a.key, os.environ.get("NAV_APP_SIGNIN", "")),
                   "error": got[a.key]["error"], "count": len(got[a.key]["accounts"])}
                  for a in appaccounts.ADAPTERS.values()],
         "people": sorted(({"pk": u["pk"], "name": u.get("name") or u.get("username"), "email": u.get("email"),

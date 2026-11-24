@@ -142,14 +142,35 @@ function accessPage(h) {
       var kind = c.status === 'stale' ? 'stale' : c.disabled ? 'disabled' : c.role === 'admin' ? 'admin' : 'user';
       td.appendChild(ind(kind, (c.status === 'stale' ? 'Leftover account: Authentik no longer lets ' + p.name + ' open ' + a.label
                                 : (c.disabled ? 'Disabled ' : '') + (c.role === 'admin' ? 'Admin account' : 'Account')) +
-        (c.login ? ' · ' + c.login : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
+        (c.login ? ' · ' + c.login : '') + (c.note ? ' · ' + c.note : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
         (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '')));
     }
     return td;
   }
+  // How people sign in to each app, as a small tag on its heading (hover: what it means).
+  var SIGNIN = {
+    header:   ['auto', 'Signed in automatically: the app trusts the gateway, no second login'],
+    oidc:     ['SSO', 'Signs in with Authentik: the app\u2019s own \u201cSign in with Authentik\u201d (or straight there)'],
+    own:      ['pw', 'Its own username and password: a second login, made in the app'],
+    plex:     ['Plex', 'A plex.tv account shared this server, or a managed Plex Home profile picked on a device signed in as the owner (optional PIN)'],
+    jellyfin: ['JF', 'A Jellyfin account (its username and password)']
+  };
+  function signinTag(m) {
+    var s = SIGNIN[m];
+    if (!s) { return null; }
+    var t = document.createElement('span');
+    t.className = 'acc-signin acc-signin-' + m;
+    t.textContent = s[0];
+    t.title = s[1];
+    t.setAttribute('role', 'img');
+    t.setAttribute('aria-label', s[1]);
+    return t;
+  }
   function appHead(a, tag) {
     var th = document.createElement(tag || 'th');
     th.textContent = a.label;
+    var st = signinTag(a.signin);
+    if (st) { th.appendChild(st); }
     if (a.error) {
       // Coloured, with a warning icon; the reason is its hover text.
       th.classList.add('acc-app-err');
@@ -163,7 +184,8 @@ function accessPage(h) {
       th.title = d.title;
     } else {
       th.title = a.count + ' account(s) · Authentik app: ' + a.apps.join(', ') +
-        (a.provision === 'first' ? ' · accounts are made at first sign-in' : ' · an admin makes the accounts');
+        (a.provision === 'first' ? ' · accounts are made at first sign-in' : ' · an admin makes the accounts') +
+        (SIGNIN[a.signin] ? ' · ' + SIGNIN[a.signin][1] : '');
     }
     return th;
   }

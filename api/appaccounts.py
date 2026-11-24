@@ -30,6 +30,16 @@ from typing import Any, Awaitable, Callable
 #   first     made at first sign-in, OIDC or a trusted header (missing = not signed in yet)
 PROVISION = ("manual", "first")
 
+# How a person signs in once past the gateway (the App accounts column headers).
+#   header    the app trusts the gateway's identity header: no second login
+#   oidc      the app's own "Sign in with <IdP>" button (or an automatic redirect)
+#   own       the app's own username and password: a second login
+#   plex      a plex.tv account
+#   jellyfin  a Jellyfin account (Jellyseerr)
+# The defaults below are how each app is usually wired here; a deployment
+# sets its own with NAV_APP_SIGNIN="mealie=oidc,navidrome=header".
+SIGNIN = ("header", "oidc", "own", "plex", "jellyfin")
+
 
 @dataclass(frozen=True)
 class Adapter:
@@ -41,20 +51,21 @@ class Adapter:
     fetch: Callable[[Any, str, str], Awaitable[list[dict[str, Any]]]]   # (client, base_url, key)
     note: str = ""           # what the key must be, for the Connections page
     login: str = ""          # no API keys: the key is "<login>:<password>"; "username" or "email"
+    signin: str = "own"      # SIGNIN
 
 
 ADAPTERS: dict[str, Adapter] = {}
 
 
 def adapter(a: Adapter) -> Adapter:
-    if a.key in ADAPTERS or a.provision not in PROVISION:
-        raise ValueError(f"adapter {a.key!r}: duplicate, or provision not in {PROVISION}")
+    if a.key in ADAPTERS or a.provision not in PROVISION or a.signin not in SIGNIN:
+        raise ValueError(f"adapter {a.key!r}: duplicate, or provision/signin not in {PROVISION}/{SIGNIN}")
     ADAPTERS[a.key] = a
     return a
 
 
 def account(login: Any = None, email: Any = None, name: Any = None, admin: bool = False,
-            disabled: bool = False, last_seen: Any = None) -> dict[str, Any]:
+            disabled: bool = False, last_seen: Any = None, note: str = "") -> dict[str, Any]:
     """One account in the common shape."""
     def s(v: Any) -> str | None:
         v = str(v).strip() if v not in (None, "") else ""
@@ -64,14 +75,17 @@ def account(login: Any = None, email: Any = None, name: Any = None, admin: bool 
     if not s(email) and "@" in (s(login) or ""):
         email = login
     return {"login": s(login), "email": (s(email) or "").lower() or None, "name": s(name),
-            "role": "admin" if admin else "user", "disabled": bool(disabled), "last_seen": s(last_seen)}
+            "role": "admin" if admin else "user", "disabled": bool(disabled), "last_seen": s(last_seen)} \
+        | ({"note": note} if note else {})
 
 
-def _keys(person: dict[str, Any]) -> tuple[set[str], set[str]]:
+def _keys(person: dict[str, Any]) -> tuple[set[str], set[str], set[str]]:
     email = (person.get("email") or "").strip().lower()
     logins = {x for x in ((person.get("username") or "").strip().lower(),
                           email.split("@")[0] if "@" in email else "") if x}
-    return ({email} if email else set()), logins
+    full = " ".join((person.get("name") or "").lower().split())
+    names = {x for x in (full, full.split(" ")[0] if full else "") if x}
+    return ({email} if email else set()), logins, names
 
 
 def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
@@ -79,8 +93,10 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
     """{people: {pk: {key: cell}}, orphans: {key: [account]}} for the apps in `found`.
 
     `people` are Authentik users ({pk, username, email}); `reach` is each one's
-    Authentik application slugs. An email match wins over a login match, and an
-    account is given to one person at most."""
+    Authentik application slugs. Email always first: every email match is made
+    before any login match, and a name match (full or first name) is tried last,
+    only for an account with no email at all (a Plex managed profile). An account
+    is given to one person at most."""
     adapters = adapters or ADAPTERS
     out: dict[int, dict[str, Any]] = {p["pk"]: {} for p in people}
     orphans: dict[str, list[dict[str, Any]]] = {}
@@ -88,19 +104,22 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
         ad = adapters[key]
         taken: set[int] = set()
         by_person: dict[int, dict[str, Any]] = {}
-        # Two passes: every email match first, so a login match can't steal one.
-        for pass_ in ("email", "login"):
+        # Every email match first, so a weaker match can't steal one.
+        for pass_ in ("email", "login", "name"):
             for i, acc in enumerate(accounts):
                 if i in taken:
                     continue
                 for p in people:
                     if p["pk"] in by_person:
                         continue
-                    emails, logins = _keys(p)
+                    emails, logins, names = _keys(p)
                     if pass_ == "email":
                         hit = bool(acc["email"]) and acc["email"] in emails
-                    else:
+                    elif pass_ == "login":
                         hit = bool(acc["login"]) and acc["login"].lower() in logins
+                    else:
+                        nm = " ".join((acc.get("name") or acc["login"] or "").lower().split())
+                        hit = not acc["email"] and bool(nm) and nm in names
                     if hit:
                         by_person[p["pk"]] = acc
                         taken.add(i)
@@ -112,7 +131,7 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
             if acc:
                 out[p["pk"]][key] = {"status": "account" if can else "stale", "role": acc["role"],
                                      "disabled": acc["disabled"], "last_seen": acc["last_seen"],
-                                     "login": acc["login"]}
+                                     "login": acc["login"]} | ({"note": acc["note"]} if acc.get("note") else {})
             elif can:
                 out[p["pk"]][key] = {"status": "missing", "provision": ad.provision}
     return {"people": out, "orphans": orphans}
@@ -131,7 +150,7 @@ async def _choreboard(client: Any, base: str, key: str) -> list[dict[str, Any]]:
 
 
 adapter(Adapter("choreboard", "Choreboard", "choreboard", ("choreboard",), "manual", _choreboard,
-                "a choreboard API token (read scope is enough)"))
+                "a choreboard API token (read scope is enough)", signin="header"))
 
 
 def _iso_ms(ms: Any) -> str | None:
@@ -221,6 +240,21 @@ async def _plex(client: Any, base: str, key: str) -> list[dict[str, Any]]:
         if machine and not any(s.get("machineIdentifier") == machine for s in u.iter("Server")):
             continue
         out.append(account(login=u.get("username") or u.get("title"), email=u.get("email"), name=u.get("title")))
+    # Plex Home: managed profiles (restricted, no plex.tv login of their own) aren't in
+    # the friends list. Full Home members are, or are the owner; skip those already listed.
+    seen = {(a["email"] or "", (a["login"] or "").lower()) for a in out}
+    r = await client.get(PLEX_TV + "/api/home/users", headers=h)
+    if r.status_code == 200:
+        for u in ET.fromstring(r.text).iter("User"):
+            if u.get("admin") == "1":
+                continue
+            email, login = (u.get("email") or "").lower(), (u.get("username") or u.get("title") or "")
+            if (email, login.lower()) in seen:
+                continue
+            managed = u.get("restricted") == "1" and not email
+            out.append(account(login=login, email=email or None, name=u.get("title"),
+                               note="managed Plex Home profile (picked on a device signed in as the owner)"
+                               if managed else "Plex Home member"))
     return out
 
 
@@ -372,33 +406,42 @@ async def _pingvin(client: Any, base: str, key: str) -> list[dict[str, Any]]:
 
 
 adapter(Adapter("mealie", "Mealie", "mealie", ("mealie",), "first", _mealie,
-                "an admin's API token (profile → API Tokens)"))
-adapter(Adapter("seerr", "Seerr", "seerr", ("seerr",), "first", _seerr, "the API key (Settings → General)"))
+                "an admin's API token (profile → API Tokens)", signin="header"))
+adapter(Adapter("seerr", "Seerr", "seerr", ("seerr",), "first", _seerr, "the API key (Settings → General)", signin="plex"))
 adapter(Adapter("jellyseerr", "Jellyseerr", "jellyseerr", ("jellyseerr",), "first", _seerr,
-                "the API key (Settings → General)"))
+                "the API key (Settings → General)", signin="jellyfin"))
 adapter(Adapter("jellyfin", "Jellyfin", "jellyfin", ("jellyfin",), "manual", _jellyfin,
-                "an API key (Dashboard → API Keys)"))
+                "an API key (Dashboard → API Keys)", signin="own"))
 adapter(Adapter("plex", "Plex", "plex", ("plex",), "manual", _plex,
-                "the server owner's Plex token (address: the local Plex server)"))
+                "the server owner's Plex token (address: the local Plex server)", signin="plex"))
 adapter(Adapter("audiobookshelf", "Audiobookshelf", "audiobookshelf", ("audiobookshelf",), "manual",
-                _audiobookshelf, "an API key made by an admin (Settings → API Keys)"))
+                _audiobookshelf, "an API key made by an admin (Settings → API Keys)", signin="oidc"))
 adapter(Adapter("navidrome", "Navidrome", "navidrome", ("music",), "manual", _navidrome,
-                "an admin's username:password (Navidrome has no API keys)", login="username"))
+                "an admin's username:password (Navidrome has no API keys)", login="username", signin="own"))
 adapter(Adapter("immich", "Immich", "immich", ("immich",), "manual", _immich,
-                "an admin's API key with adminUser.read"))
+                "an admin's API key with adminUser.read", signin="oidc"))
 adapter(Adapter("filebrowser", "FileBrowser", "filebrowser", ("filebrowser",), "first", _filebrowser,
-                "an admin's API token with admin checked"))
+                "an admin's API token with admin checked", signin="header"))
 adapter(Adapter("grafana", "Grafana", "grafana", ("grafana",), "first", _grafana,
-                "a service account token with org role Admin"))
+                "a service account token with org role Admin", signin="oidc"))
 adapter(Adapter("paperless", "Paperless", "paperless", ("paperless-ngx",), "first", _paperless,
-                "a superuser's API token"))
+                "a superuser's API token", signin="oidc"))
 adapter(Adapter("music-assistant", "Music Assistant", "music-assistant", ("speakers",), "manual", _music_assistant,
-                "an admin's long-lived token (profile → long-lived tokens; it lasts a year)"))
+                "an admin's long-lived token (profile → long-lived tokens; it lasts a year)", signin="own"))
 adapter(Adapter("memos", "Memos", "memos", ("memos",), "first", _memos,
-                "an admin's access token (Settings → Access Tokens)"))
+                "an admin's access token (Settings → Access Tokens)", signin="oidc"))
 adapter(Adapter("aurral", "Aurral", "aurral", ("aurral",), "first", _aurral,
-                "the API key (Settings → General → API access)"))
+                "the API key (Settings → General → API access)", signin="oidc"))
 adapter(Adapter("affine", "AFFiNE", "affine", ("affine",), "first", _affine,
-                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)", login="email"))
+                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)", login="email", signin="oidc"))
 adapter(Adapter("pingvin", "Pingvin Share", "pingvin", ("share",), "manual", _pingvin,
-                "an admin's username:password (Pingvin has no API tokens; no TOTP)", login="username"))
+                "an admin's username:password (Pingvin has no API tokens; no TOTP)", login="username", signin="own"))
+
+
+def signin_of(key: str, env: str = "") -> str:
+    """An adapter's sign-in method, NAV_APP_SIGNIN ("key=method,...") first."""
+    for part in env.split(","):
+        k, _, v = part.strip().partition("=")
+        if k.strip() == key and v.strip() in SIGNIN:
+            return v.strip()
+    return ADAPTERS[key].signin

@@ -1167,6 +1167,11 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 /* An app that couldn't be read: a coloured heading and a warning icon. */
 .acc-app-err { color:#b26b00 !important; }
 .acc-head-warn { margin-left:5px; cursor:help; }
+.acc-signin { margin-left:5px; padding:0 4px; border-radius:4px; font-size:10px; font-weight:600;
+  border:1px solid currentColor; opacity:.75; cursor:help; vertical-align:1px; }
+.acc-signin-header { color:#2f8a4a; }
+.acc-signin-oidc { color:var(--accent); }
+.acc-signin-own { color:#b26b00; }
 .acc-info { cursor:help; color:var(--muted); }
 /* holdtip.js: hover text, on a press-and-hold. */
 .holdtip { position:fixed; z-index:90; max-width:min(320px, 90vw); padding:7px 10px; border-radius:8px;
