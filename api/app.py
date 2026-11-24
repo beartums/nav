@@ -2648,7 +2648,10 @@ def _admin_how(key: str) -> dict[str, Any] | None:
         g = groups[key]
         also = [appaccounts.ADAPTERS[k].label for k, v in groups.items() if v == g and k != key]
         return {"how": "group", "group": g, "also": also + (["nav"] if g.lower() in ADMIN_GROUPS else [])}
-    return {"how": "app"} if key in appaccounts.ROLES else None
+    if key not in appaccounts.ROLES:
+        return None
+    notes = {k: n for k, n in (("grant", appaccounts.role_note(key, True)), ("revoke", appaccounts.role_note(key, False))) if n}
+    return {"how": "app"} | notes
 
 
 async def _set_admin(client: Any, app_key: str, url: str, key: str, find: Callable[[dict[str, Any]], bool],

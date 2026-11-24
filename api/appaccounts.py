@@ -517,12 +517,48 @@ def creatable(key: str) -> list[dict[str, Any]] | None:
 # makes an ordinary (non-admin) account; the person's name goes along where the app
 # keeps one.
 
+def jellyfin_rule(admin: bool, env: dict[str, str] | None = None) -> dict[str, Any]:
+    """The policy fields a deployment wants for a Jellyfin admin or user, from
+    NAV_JELLYFIN_LOCKOUT ("admin=3,user=5": failed sign-ins before lockout) and
+    NAV_JELLYFIN_ADMIN_LAN_ONLY (admins sign in only from the LAN; users from anywhere).
+    Neither set: {} (nav leaves those fields alone)."""
+    import os
+    env = os.environ if env is None else env
+    out: dict[str, Any] = {}
+    for part in (env.get("NAV_JELLYFIN_LOCKOUT") or "").split(","):
+        k, _, v = part.strip().partition("=")
+        if k.strip() == ("admin" if admin else "user") and v.strip().lstrip("-").isdigit():
+            out["LoginAttemptsBeforeLockout"] = int(v)
+    if (env.get("NAV_JELLYFIN_ADMIN_LAN_ONLY") or "").strip().lower() in ("1", "true", "yes"):
+        out["EnableRemoteAccess"] = not admin
+    return out
+
+
+async def _jellyfin_policy(client: Any, base: str, key: str, uid: str, change: dict[str, Any]) -> None:
+    # UserController.UpdateUserPolicy: POST /Users/{id}/Policy takes the WHOLE policy
+    # (every field is overwritten), so send back the one it has with `change` applied.
+    r = await client.get(f"{base}/Users/{uid}", params={"ApiKey": key})
+    r.raise_for_status()
+    policy = dict(r.json().get("Policy") or {})
+    if not policy:
+        raise ValueError("Jellyfin returned no policy for this user")
+    r = await client.post(f"{base}/Users/{uid}/Policy", params={"ApiKey": key}, json=policy | change)
+    r.raise_for_status()
+
+
 async def _make_jellyfin(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
     # UserController.CreateUserByName: POST /Users/New {Name, Password}; ?ApiKey= is an
     # administrator. New users see every library (EnableAllFolders) and are left off
-    # the login screen's user list (IsHidden): they type their name.
+    # the login screen's user list (IsHidden): they type their name. Then the
+    # deployment's rule for users (jellyfin_rule): Jellyfin's default never locks out.
     r = await client.post(base + "/Users/New", params={"ApiKey": key}, json={"Name": p["username"], "Password": pw})
     r.raise_for_status()
+    rule = jellyfin_rule(False)
+    if rule:
+        uid = (r.json() or {}).get("Id")
+        if not uid:
+            raise ValueError("Jellyfin made the account but returned no id; set its lockout in Dashboard -> Users")
+        await _jellyfin_policy(client, base, key, uid, rule)
 
 
 async def _make_navidrome(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
@@ -722,18 +758,24 @@ async def _role_choreboard(client: Any, base: str, key: str, acc: dict[str, Any]
 
 
 async def _role_jellyfin(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
-    # UserController.UpdateUserPolicy: POST /Users/{id}/Policy takes the WHOLE policy
-    # (every field is overwritten), so send back the one it has with the flag changed.
-    # It refuses (403) to remove the last administrator.
-    uid = _need_id(acc)
-    r = await client.get(f"{base}/Users/{uid}", params={"ApiKey": key})
-    r.raise_for_status()
-    policy = dict(r.json().get("Policy") or {})
-    if not policy:
-        raise ValueError("Jellyfin returned no policy for this user")
-    policy["IsAdministrator"] = admin
-    r = await client.post(f"{base}/Users/{uid}/Policy", params={"ApiKey": key}, json=policy)
-    r.raise_for_status()
+    # The whole policy back with the flag changed, plus the deployment's rule for the
+    # new role (lockout, LAN-only admins). Jellyfin refuses (403) to remove the last admin.
+    await _jellyfin_policy(client, base, key, _need_id(acc), {"IsAdministrator": admin} | jellyfin_rule(admin))
+
+
+def role_note(key: str, admin: bool) -> str:
+    """What else changes with admin in this app (shown before the change)."""
+    if key == "jellyfin":
+        r = jellyfin_rule(admin)
+        bits = []
+        if "EnableRemoteAccess" in r:
+            bits.append("signs in from home only" if not r["EnableRemoteAccess"] else "can sign in from anywhere")
+        if "LoginAttemptsBeforeLockout" in r:
+            bits.append(f"locked out after {r['LoginAttemptsBeforeLockout']} failed sign-ins")
+        return ("As " + ("an admin" if admin else "a user") + ": " + ", ".join(bits)) if bits else ""
+    if key == "navidrome" and admin:
+        return "Navidrome gives admins every library (kept if admin is removed later)"
+    return ""
 
 
 async def _role_navidrome(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:

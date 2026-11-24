@@ -763,7 +763,7 @@ function createAccountsDialog(p, todo, done) {
     if (a.admin && a.admin.how === 'app') {
       adm = el('button', 'ts-t person-choice make-admin', '\u2605 Admin');
       adm.type = 'button';
-      adm.title = 'Also make ' + p.name + ' an admin in ' + a.label;
+      adm.title = 'Also make ' + p.name + ' an admin in ' + a.label + (a.admin.grant ? '. ' + a.admin.grant : '');
       adm.setAttribute('aria-pressed', 'false');
       adm.addEventListener('click', function () {
         adm.setAttribute('aria-pressed', String(adm.getAttribute('aria-pressed') !== 'true'));
@@ -936,6 +936,8 @@ function adminDialog(p, a, c, done) {
     box.appendChild(el('p', 'admin-why', isAdmin
       ? 'Removes admin in ' + a.label + ' now. nav never removes the last admin, or the account its key signs in as.'
       : 'Makes ' + p.name + ' an admin in ' + a.label + ' now.'));
+    var note = isAdmin ? how.revoke : how.grant;
+    if (note) { box.appendChild(el('p', 'admin-why admin-note', note + '.')); }
     label = isAdmin ? 'Remove admin' : 'Make admin';
     send = function () {
       return connSend('POST', 'api/admin/access/apps/role', { app: a.key, account: c.key, admin: !isAdmin });
