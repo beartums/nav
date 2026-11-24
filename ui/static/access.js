@@ -142,7 +142,7 @@ function accessPage(h) {
       var kind = c.status === 'stale' ? 'stale' : c.disabled ? 'disabled' : c.role === 'admin' ? 'admin' : 'user';
       td.appendChild(ind(kind, (c.status === 'stale' ? 'Leftover account: Authentik no longer lets ' + p.name + ' open ' + a.label
                                 : (c.disabled ? 'Disabled ' : '') + (c.role === 'admin' ? 'Admin account' : 'Account')) +
-        (c.login ? ' · ' + c.login : '') + (c.note ? ' · ' + c.note : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
+        (c.login ? ' · ' + c.login : '') + (c.note ? ' · ' + c.note : '') + (c.linked ? ' · matched by hand' : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
         (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '')));
     }
     return td;
@@ -247,17 +247,61 @@ function accessPage(h) {
     t.appendChild(tb);
     h.body.appendChild(t);
     var keys = Object.keys(apps.orphans || {});
-    if (keys.length) {
+    var hand = [];
+    apps.people.forEach(function (p) {
+      Object.keys(p.cells || {}).forEach(function (k) { if (p.cells[k].linked) { hand.push({ p: p, app: k, c: p.cells[k] }); } });
+    });
+    if (keys.length || hand.length) {
       var box = div('acc-orphans');
-      box.appendChild(div('ts-lab', 'Accounts that match nobody in Authentik'));
-      keys.forEach(function (k) {
-        var a = apps.apps.filter(function (x) { return x.key === k; })[0];
-        box.appendChild(div('note', (a ? a.label : k) + ': ' + apps.orphans[k].map(function (o) {
-          return (o.login || o.email || '?') + (o.role === 'admin' ? ' (admin)' : '') + (o.disabled ? ' (disabled)' : '');
-        }).join(', ')));
-      });
+      var label = function (k) { var a = apps.apps.filter(function (x) { return x.key === k; })[0]; return a ? a.label : k; };
+      if (keys.length) {
+        box.appendChild(div('ts-lab', 'Accounts that match nobody in Authentik: say who they are'));
+        keys.forEach(function (k) {
+          apps.orphans[k].forEach(function (o) {
+            var row = div('acc-orphan');
+            row.appendChild(document.createTextNode(label(k) + ': ' + (o.login || o.email || '?') +
+              (o.role === 'admin' ? ' (admin)' : '') + (o.disabled ? ' (disabled)' : '') + ' '));
+            var sel = document.createElement('select');
+            sel.className = 'acc-orphan-who';
+            sel.setAttribute('aria-label', 'Who is ' + (o.login || o.email || 'this account') + ' in ' + label(k));
+            sel.title = o.note || 'Match this account to a person by hand';
+            var none = document.createElement('option'); none.value = ''; none.textContent = 'is\u2026';
+            sel.appendChild(none);
+            apps.people.forEach(function (p) {
+              if (p.cells && p.cells[k] && p.cells[k].status !== 'missing') { return; }   // already has one here
+              var op = document.createElement('option'); op.value = String(p.pk); op.textContent = p.name;
+              sel.appendChild(op);
+            });
+            sel.addEventListener('change', function () {
+              if (!sel.value) { return; }
+              sel.disabled = true;
+              linkAccount(k, o.key, Number(sel.value));
+            });
+            row.appendChild(sel);
+            box.appendChild(row);
+          });
+        });
+      }
+      if (hand.length) {
+        box.appendChild(div('ts-lab', 'Matched by hand'));
+        hand.forEach(function (m) {
+          var row = div('acc-orphan');
+          row.appendChild(document.createTextNode(label(m.app) + ': ' + (m.c.login || m.c.linked) + ' \u2192 ' + m.p.name + ' '));
+          var x = document.createElement('button');
+          x.type = 'button'; x.className = 'fg-btn acc-unlink'; x.textContent = '\u00d7';
+          x.title = 'Undo: ' + (m.c.login || m.c.linked) + ' is not ' + m.p.name;
+          x.addEventListener('click', function () { x.disabled = true; linkAccount(m.app, m.c.linked, null); });
+          row.appendChild(x);
+          box.appendChild(row);
+        });
+      }
       h.body.appendChild(box);
     }
+  }
+  function linkAccount(app, account, pk) {
+    connSend('PUT', 'api/admin/access/apps/links', { app: app, account: account, pk: pk })
+      .then(function () { return loadApps(false); })
+      .catch(function (e) { note.textContent = 'Matching failed: ' + e.message; render(); });
   }
 
   var appsReading = null;

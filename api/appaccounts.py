@@ -79,6 +79,11 @@ def account(login: Any = None, email: Any = None, name: Any = None, admin: bool 
         | ({"note": note} if note else {})
 
 
+def acct_key(acc: dict[str, Any]) -> str:
+    """One account's identity within its app, for a hand-made match."""
+    return (acc.get("login") or acc.get("email") or acc.get("name") or "").strip().lower()
+
+
 def _keys(person: dict[str, Any]) -> tuple[set[str], set[str], set[str]]:
     email = (person.get("email") or "").strip().lower()
     logins = {x for x in ((person.get("username") or "").strip().lower(),
@@ -89,14 +94,16 @@ def _keys(person: dict[str, Any]) -> tuple[set[str], set[str], set[str]]:
 
 
 def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
-          reach: dict[int, list[str]], adapters: dict[str, Adapter] | None = None) -> dict[str, Any]:
+          reach: dict[int, list[str]], adapters: dict[str, Adapter] | None = None,
+          links: dict[str, dict[str, int]] | None = None) -> dict[str, Any]:
     """{people: {pk: {key: cell}}, orphans: {key: [account]}} for the apps in `found`.
 
     `people` are Authentik users ({pk, username, email}); `reach` is each one's
     Authentik application slugs. Email always first: every email match is made
     before any login match, and a name match (full or first name) is tried last,
-    only for an account with no email at all (a Plex managed profile). An account
-    is given to one person at most."""
+    only for an account with no email at all (a Plex managed profile). `links`
+    ({app: {acct_key: pk}}, matched by hand) come after all of those, for what is
+    left. An account is given to one person at most."""
     adapters = adapters or ADAPTERS
     out: dict[int, dict[str, Any]] = {p["pk"]: {} for p in people}
     orphans: dict[str, list[dict[str, Any]]] = {}
@@ -105,9 +112,18 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
         taken: set[int] = set()
         by_person: dict[int, dict[str, Any]] = {}
         # Every email match first, so a weaker match can't steal one.
-        for pass_ in ("email", "login", "name"):
+        hand = (links or {}).get(key) or {}
+        linked: set[int] = set()
+        for pass_ in ("email", "login", "name", "link"):
             for i, acc in enumerate(accounts):
                 if i in taken:
+                    continue
+                if pass_ == "link":
+                    pk = hand.get(acct_key(acc))
+                    if pk is not None and pk not in by_person and any(p["pk"] == pk for p in people):
+                        by_person[pk] = acc
+                        taken.add(i)
+                        linked.add(pk)
                     continue
                 for p in people:
                     if p["pk"] in by_person:
@@ -124,14 +140,15 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
                         by_person[p["pk"]] = acc
                         taken.add(i)
                         break
-        orphans[key] = [a for i, a in enumerate(accounts) if i not in taken]
+        orphans[key] = [a | {"key": acct_key(a)} for i, a in enumerate(accounts) if i not in taken]
         for p in people:
             can = any(s in (reach.get(p["pk"]) or []) for s in ad.apps)
             acc = by_person.get(p["pk"])
             if acc:
                 out[p["pk"]][key] = {"status": "account" if can else "stale", "role": acc["role"],
                                      "disabled": acc["disabled"], "last_seen": acc["last_seen"],
-                                     "login": acc["login"]} | ({"note": acc["note"]} if acc.get("note") else {})
+                                     "login": acc["login"]} | ({"note": acc["note"]} if acc.get("note") else {}) \
+                    | ({"linked": acct_key(acc)} if p["pk"] in linked else {})
             elif can:
                 out[p["pk"]][key] = {"status": "missing", "provision": ad.provision}
     return {"people": out, "orphans": orphans}

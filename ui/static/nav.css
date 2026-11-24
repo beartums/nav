@@ -1141,6 +1141,8 @@ h3.cat.subcat { font-size:12px; margin:10px 0 8px; }
 .acc-app-err { color:var(--muted); font-weight:400; }
 .acc-err { font-size:11px; font-weight:400; white-space:normal; max-width:140px; color:#b26b00; }
 .acc-orphans { margin-top:10px; }
+.acc-orphan { display:flex; align-items:center; gap:6px; font-size:13px; margin:3px 0; flex-wrap:wrap; }
+.acc-orphan-who { font:inherit; font-size:12px; padding:2px 4px; border-radius:6px; }
 /* Connections: key badge, and how each has been doing lately. */
 .conn-state { display:inline-block; font-size:12px; border-radius:999px; padding:2px 9px; margin:2px 0 4px;
   background:color-mix(in srgb, var(--muted) 14%, transparent); color:var(--muted); }

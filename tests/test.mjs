@@ -4387,9 +4387,9 @@ test('access: App accounts shows each app’s accounts against people, errors an
     people: [{ pk: 5, name: 'Bear', email: 'b@x', cells: { jellyfin: { status: 'account', role: 'admin', disabled: false, last_seen: null, login: 'bear' } } },
              { pk: 8, name: 'Mum', email: 'm@x', cells: { jellyfin: { status: 'stale', role: 'user', disabled: true, login: 'mum' } } },
              { pk: 9, name: 'Kid', email: 'k@x', cells: { jellyfin: { status: 'missing', provision: 'manual' } } }],
-    orphans: { jellyfin: [{ login: 'ghost', role: 'user' }] }
+    orphans: { jellyfin: [{ login: 'ghost', role: 'user', key: 'ghost' }] }
   };
-  const { window, doc } = await boot(APPS, null, (u) =>
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
     u === 'api/admin/access' ? { enabled: false } : u.startsWith('api/admin/access/apps') ? APPV : null);
   await enterAdmin(window, doc);
   doc.getElementById('admin-tab-access').click();
@@ -4408,6 +4408,13 @@ test('access: App accounts shows each app’s accounts against people, errors an
   assert.equal(doc.querySelectorAll('.acc-apps-table tbody tr').length, 2, 'pivoted: one row per app');
   assert.equal(JSON.parse(window.localStorage.getItem('nav.accessView')).pivot, true, 'remembered');
   assert.match(doc.querySelector('.acc-orphans').textContent, /Jellyfin: ghost/);
+  const who = doc.querySelector('.acc-orphan-who');
+  assert.deepEqual([...who.options].map((o) => o.textContent), ['is…', 'Kid'], 'only people with no account there');
+  who.value = '9';
+  who.dispatchEvent(new window.Event('change'));
+  await settle(window, () => seen.some((r) => r.method === 'PUT' && r.url === 'api/admin/access/apps/links'), 'linked');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'PUT' && r.url === 'api/admin/access/apps/links').body),
+                   { app: 'jellyfin', account: 'ghost', pk: 9 });
   assert.equal(doc.getElementById('adminpage-save').hidden, true, 'nothing to open a PR for here');
 });
 

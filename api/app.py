@@ -2582,8 +2582,12 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
     """Each app's own accounts, lined up against the people in Authentik.
     Read-only; reused for a minute (?fresh=1 reads again)."""
     ak, got = await asyncio.gather(_authentik_access(fresh), _read_apps(fresh))
+    links: dict[str, dict[str, int]] = {}
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        for r in await (await conn.execute("SELECT app, account, person_pk FROM account_links")).fetchall():
+            links.setdefault(r["app"], {})[r["account"]] = r["person_pk"]
     m = appaccounts.match(ak["users"], {k: v["accounts"] for k, v in got.items() if not v["error"]},
-                          ak["reach"])
+                          ak["reach"], links=links)
     print(f"access: {who} read app accounts", flush=True)
     return {
         "apps": [{"key": a.key, "label": a.label, "conn": a.conn, "apps": list(a.apps), "provision": a.provision,
@@ -2596,6 +2600,28 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
         "orphans": {k: v for k, v in m["orphans"].items() if v},
         "as_of": min(_AK_CACHE.get("wall") or time.time(), _APPS_CACHE.get("wall") or time.time()),
     }
+
+
+@app.put("/api/admin/access/apps/links")
+async def link_app_account(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """{app, account, pk}: this app account is this person (an account nothing
+    matched). pk null undoes it."""
+    app_key, account = str(body.get("app") or ""), str(body.get("account") or "").strip().lower()
+    pk = body.get("pk")
+    if app_key not in appaccounts.ADAPTERS or not account:
+        raise HTTPException(422, "app (an App accounts app) and account are required")
+    if pk is not None and (isinstance(pk, bool) or not isinstance(pk, int)):
+        raise HTTPException(422, "pk must be a person's number, or null to undo")
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        if pk is None:
+            await conn.execute("DELETE FROM account_links WHERE app = %s AND account = %s", (app_key, account))
+        else:
+            await conn.execute(
+                "INSERT INTO account_links (app, account, person_pk, by_whom) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (app, account) DO UPDATE SET person_pk = EXCLUDED.person_pk, "
+                "by_whom = EXCLUDED.by_whom, at = now()", (app_key, account, pk, who))
+    print(f"access: {who} {'unlinked' if pk is None else 'linked'} {app_key} account", flush=True)
+    return {"ok": True}
 
 
 @app.post("/api/admin/access/changes")
