@@ -61,3 +61,41 @@ class SetAdmin(unittest.TestCase):
             self.assertIsNone(nav._admin_how("plex"))
         finally:
             del os.environ["NAV_APP_ADMIN_GROUP"]
+
+
+class Batch(unittest.TestCase):
+    """The Admins page's Apply: grants before removals, one read per app, each change answers."""
+    def setUp(self):
+        self.calls = []
+        self.accounts = [aa.account(login="boss", admin=True, id=1), aa.account(login="liz", id=2),
+                         aa.account(login="kid", id=3)]
+        ad = aa.ADAPTERS["jellyfin"]
+        self.fetch, self.setter, self.resolve = ad.fetch, aa.ROLES["jellyfin"], nav.creds.resolve
+        self.reads = 0
+
+        async def fetch(client, url, key):
+            self.reads += 1
+            return self.accounts
+
+        async def setter(client, url, key, acc, admin):
+            self.calls.append((acc["id"], admin))
+        object.__setattr__(ad, "fetch", fetch)
+        aa.ROLES["jellyfin"] = setter
+        nav.creds.resolve = lambda conn: ("http://jf", "k", None)
+
+    def tearDown(self):
+        object.__setattr__(aa.ADAPTERS["jellyfin"], "fetch", self.fetch)
+        aa.ROLES["jellyfin"] = self.setter
+        nav.creds.resolve = self.resolve
+
+    def test_a_swap_of_the_only_admin_works_and_others_answer_for_themselves(self):
+        body = {"changes": [{"app": "jellyfin", "account": "boss", "admin": False},
+                            {"app": "jellyfin", "account": "liz", "admin": True},
+                            {"app": "jellyfin", "account": "ghost", "admin": True},
+                            {"app": "plex", "account": "x", "admin": True}]}
+        got = asyncio.run(nav.set_app_admins(body, "admin@x"))["results"]
+        self.assertEqual(self.calls, [("2", True), ("1", False)], "the grant goes first, so boss can step down")
+        self.assertEqual(self.reads, 1, "one read of the app")
+        ok = {(r["app"], r["account"]): r["ok"] for r in got}
+        self.assertEqual(ok, {("jellyfin", "liz"): True, ("jellyfin", "boss"): True,
+                              ("jellyfin", "ghost"): False, ("plex", "x"): False})

@@ -40,6 +40,7 @@ same place (query parameters only; `ui/static/urlstate.js`):
 | `/?dashboard=5` | dashboard 5 (`default`: the shared one) |
 | `/?admin=templates&template=3` | admin mode, template 3 |
 | `/?admin=access&view=apps&pivot=1` | Access → App accounts, one row per app |
+| `/?admin=access&view=admins` | Access → Admins: who is admin in each app, toggled and applied at once |
 | `/?admin=users&conn=plex` | User management, the Plex connection |
 
 Back and Forward move between them; leaving a page with unsaved changes asks

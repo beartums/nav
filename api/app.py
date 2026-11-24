@@ -2681,31 +2681,62 @@ def _http_why(exc: Exception, url: str) -> str:
     return str(exc)[:200]
 
 
-@app.post("/api/admin/access/apps/role")
-async def set_app_admin(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
-    """{app, account, admin}: grant or revoke admin on one account IN the app (the
-    account key from the grid). Apps whose sign-in sets admin from a group are
-    changed by staging that group instead (Access -> Groups), not here."""
-    app_key, account, admin = str(body.get("app") or ""), str(body.get("account") or "").strip().lower(), body.get("admin")
-    if not isinstance(admin, bool) or not account:
-        raise HTTPException(422, "app, account and admin (true/false) are required")
-    how = _admin_how(app_key) if app_key in appaccounts.ADAPTERS else None
-    if not how or how["how"] != "app":
-        raise HTTPException(422, f"nav can't change who is admin in {app_key}"
-                            + (f": its sign-in sets it from the Authentik group {how['group']}" if how else ""))
-    ad = appaccounts.ADAPTERS[app_key]
-    url, key, _ = creds.resolve(ad.conn)
-    if not url or not key:
-        raise HTTPException(409, f"no address or key -- set it in Connections → {ad.label}")
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            detail = await _set_admin(client, app_key, url, key, lambda a: appaccounts.acct_key(a) == account, admin)
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        print(f"access: {who} {'grant' if admin else 'revoke'} admin in {app_key} failed", flush=True)
-        return {"ok": False, "detail": _http_why(exc, url)}
+@app.post("/api/admin/access/apps/admins")
+async def set_app_admins(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """{changes: [{app, account, admin}]}: the Admins page's Apply. Each app is read
+    once; grants go before removals, so a swap never trips the last-admin guard.
+    Every change answers for itself: {results: [{app, account, admin, ok, detail}]}."""
+    raw = body.get("changes")
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(422, "changes: [{app, account, admin}] is required")
+    by_app: dict[str, list[dict[str, Any]]] = {}
+    results: list[dict[str, Any]] = []
+    for c in raw:
+        app_key = str((c or {}).get("app") or "")
+        account = str((c or {}).get("account") or "").strip().lower()
+        admin = (c or {}).get("admin")
+        one = {"app": app_key, "account": account, "admin": admin}
+        how = _admin_how(app_key) if app_key in appaccounts.ADAPTERS else None
+        if not account or not isinstance(admin, bool):
+            results.append(one | {"ok": False, "detail": "app, account and admin (true/false) are required"})
+        elif not how or how["how"] != "app":
+            results.append(one | {"ok": False, "detail": "nav can't change admin in this app"
+                                  + (f" (it comes from the group {how['group']})" if how else "")})
+        else:
+            by_app.setdefault(app_key, []).append(one)
+    async with httpx.AsyncClient(timeout=20) as client:
+        for app_key, changes in by_app.items():
+            ad = appaccounts.ADAPTERS[app_key]
+            url, key, _ = creds.resolve(ad.conn)
+            if not url or not key:
+                results += [c | {"ok": False, "detail": f"no address or key -- set it in User management → {ad.label}"}
+                            for c in changes]
+                continue
+            try:
+                accounts = await ad.fetch(client, url, key)
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                results += [c | {"ok": False, "detail": f"couldn't read {ad.label}: {_http_why(exc, url)}"} for c in changes]
+                continue
+            for c in sorted(changes, key=lambda c: not c["admin"]):          # grants first
+                acc = next((a for a in accounts if appaccounts.acct_key(a) == c["account"]), None)
+                try:
+                    if acc is None:
+                        raise ValueError(f"{ad.label} doesn't list that account (any more)")
+                    if (acc["role"] == "admin") == c["admin"]:
+                        results.append(c | {"ok": True, "detail": "already " + ("admin" if c["admin"] else "not admin")})
+                        continue
+                    if not c["admin"] and appaccounts.is_last_admin(accounts, acc):
+                        raise ValueError(f"that is {ad.label}'s only admin")
+                    await appaccounts.ROLES[app_key](client, url, key, acc, c["admin"])
+                    acc["role"] = "admin" if c["admin"] else "user"
+                    results.append(c | {"ok": True, "detail": "made admin" if c["admin"] else "admin removed"})
+                except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                    results.append(c | {"ok": False, "detail": _http_why(exc, url)})
     _APPS_CACHE["data"] = None
-    print(f"access: {who} {'granted' if admin else 'revoked'} admin in {app_key}", flush=True)
-    return {"ok": True, "detail": detail}
+    print(f"access: {who} applied admin changes: "
+          + ", ".join(f"{r['app']} {'grant' if r['admin'] else 'revoke'} {'ok' if r['ok'] else 'failed'}" for r in results),
+          flush=True)
+    return {"results": results}
 
 
 @app.post("/api/admin/access/apps/create")

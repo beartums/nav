@@ -4565,69 +4565,83 @@ test('access: + beside a person makes accounts: a way per app, one password, an 
   assert.equal(pw.value, '', 'the password is cleared once sent');
 });
 
-test('access: admin per app — when creating, and later from the grid (in the app, or by Authentik group)', async () => {
+test('access: Admins page — toggle cells, Apply makes every change at once; group apps stage the group', async () => {
   const APPV = {
     apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2,
-             admin: { how: 'app' }, create: [{ id: 'create', label: 'Create', needs: 'password', login: 'username', hint: '' }] },
+             admin: { how: 'app', grant: 'As an admin: signs in from home only' },
+             create: [{ id: 'create', label: 'Create', needs: 'password', login: 'username', hint: '' }] },
+           { key: 'memos', label: 'Memos', apps: ['memos'], provision: 'first', signin: 'oidc', error: null, count: 2,
+             admin: { how: 'app' }, create: null },
            { key: 'immich', label: 'Immich', apps: ['immich'], provision: 'manual', signin: 'oidc', error: null, count: 1,
              admin: { how: 'group', group: 'fam-admins', also: ['Audiobookshelf', 'nav'] }, create: null },
            { key: 'plex', label: 'Plex', apps: ['plex'], provision: 'manual', signin: 'plex', error: null, count: 1, admin: null,
              create: [{ id: 'invite', label: 'Invite', needs: 'none', login: 'email', hint: '' }] }],
     people: [{ pk: 5, name: 'Bear', email: 'b@x', username: 'bear',
-               cells: { jellyfin: { status: 'account', role: 'user', disabled: false, login: 'bear', key: 'bear' },
+               cells: { jellyfin: { status: 'account', role: 'admin', disabled: false, login: 'bear', key: 'bear' },
+                        memos: { status: 'account', role: 'user', disabled: false, login: 'bear', key: 'bear' },
                         immich: { status: 'account', role: 'user', disabled: false, login: 'b@x', key: 'b@x' },
                         plex: { status: 'account', role: 'user', disabled: false, login: 'bear', key: 'bear' } } },
              { pk: 9, name: 'Liz', email: 'liz@x', username: 'liz',
-               cells: { jellyfin: { status: 'missing', provision: 'manual' }, plex: { status: 'missing', provision: 'manual' } } }],
+               cells: { jellyfin: { status: 'account', role: 'user', disabled: false, login: 'liz', key: 'liz' },
+                        memos: { status: 'account', role: 'user', disabled: false, login: 'liz', key: 'liz' },
+                        plex: { status: 'missing', provision: 'manual' } } }],
     orphans: {}
   };
+  const VIEW = { enabled: true, repo: 'o/lab', base: 'main', last_pr: null, pending: [],
+    groups: [{ name: 'fam-admins', managed: true, path: 'tf/a.tf' }],
+    users: [{ pk: 5, username: 'bear', name: 'Bear', email: 'b@x', groups: [], live: [], drift: [], apps: [], gains: [], losses: [], unknown: [] },
+            { pk: 9, username: 'liz', name: 'Liz', email: 'liz@x', groups: [], live: [], drift: [], apps: [], gains: [], losses: [], unknown: [] }] };
   const { window, doc, seen } = await boot(APPS, null, (u) =>
-    u === 'api/admin/access' ? { enabled: false }
-      : u.startsWith('api/admin/access/apps/role') ? { ok: true, detail: 'made admin' }
+    u.startsWith('api/admin/access/apps/admins')
+      ? { results: [{ app: 'jellyfin', account: 'liz', admin: true, ok: true, detail: 'made admin' },
+                    { app: 'memos', account: 'liz', admin: true, ok: false, detail: 'HTTP 400: nope' }] }
       : u.startsWith('api/admin/access/apps/create') ? { results: { jellyfin: { ok: true, detail: 'create: liz · made admin' } } }
       : u.startsWith('api/admin/access/changes') ? { pending: [] }
-      : u.startsWith('api/admin/access/apps') ? APPV : null);
+      : u.startsWith('api/admin/access/apps') ? APPV
+      : u.startsWith('api/admin/access') ? VIEW : null);
   await enterAdmin(window, doc);
   doc.getElementById('admin-tab-access').click();
-  await settle(window, () => doc.querySelector('.acc-switch [data-view="apps"]'), 'switch');
-  doc.querySelector('.acc-switch [data-view="apps"]').click();
-  await settle(window, () => doc.querySelector('.acc-apps-table'), 'table');
-  const cell = (r, c) => doc.querySelector(`.acc-apps-table tbody tr:nth-child(${r}) td:nth-child(${c + 1})`);
-  assert.ok(cell(1, 1).classList.contains('acc-adminable'), 'Jellyfin: clickable');
-  assert.equal(cell(1, 3).classList.contains('acc-adminable'), false, 'Plex has no admin to change');
+  await settle(window, () => doc.querySelector('.acc-switch [data-view="admins"]'), 'switch');
+  doc.querySelector('.acc-switch [data-view="admins"]').click();
+  await settle(window, () => doc.querySelector('.acc-admins-table'), 'admins table');
+  const heads = [...doc.querySelectorAll('.acc-admins-table thead th')].map((t) => t.firstChild.textContent);
+  assert.deepEqual(heads, ['Person', 'Jellyfin', 'Memos', 'Immich'], 'only apps where admin can change');
+  const btn = (r, c) => doc.querySelector(`.acc-admins-table tbody tr:nth-child(${r}) td:nth-child(${c + 1}) button`);
+  assert.equal(btn(1, 1).getAttribute('aria-pressed'), 'true', 'Bear is a Jellyfin admin');
+  assert.equal(btn(2, 3).getAttribute('aria-pressed'), 'false', 'Liz: the group toggles even before her Immich account exists');
+  assert.equal(doc.getElementById('adm-apply').disabled, true, 'nothing staged yet');
 
-  cell(1, 1).click();
-  let dlg = doc.getElementById('admin-dlg');
-  assert.equal(doc.getElementById('admin-go').textContent, 'Make admin');
-  doc.getElementById('admin-go').click();
-  await settle(window, () => dlg.querySelector('.make-result'), 'result');
-  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/admin/access/apps/role').body),
-                   { app: 'jellyfin', account: 'bear', admin: true });
-  dlg.parentNode.remove();
+  btn(2, 1).click();                       // Liz: Jellyfin admin
+  btn(2, 2).click();                       // Liz: Memos admin
+  btn(1, 3).click();                       // Bear: Immich, via the group
+  assert.equal(btn(2, 1).textContent, '+★');
+  assert.ok(btn(2, 1).classList.contains('acc-staged'));
+  assert.match(btn(2, 1).title, /home only/, 'what else changes, before Apply');
+  assert.match(btn(1, 3).title, /fam-admins.*Audiobookshelf, nav/);
+  assert.equal(doc.getElementById('adm-apply').textContent, 'Apply (3)');
+  assert.equal(seen.filter((r) => r.method === 'POST').length, 0, 'nothing sent before Apply');
 
-  cell(1, 2).click();
-  dlg = doc.getElementById('admin-dlg');
-  assert.match(dlg.textContent, /fam-admins.*also gives admin in Audiobookshelf, nav/, 'says what else the group gives');
-  doc.getElementById('admin-go').click();
-  await settle(window, () => seen.some((r) => r.method === 'POST' && r.url === 'api/admin/access/changes'), 'staged');
+  doc.getElementById('adm-apply').click();
+  await settle(window, () => /applied/.test(doc.getElementById('adminpage-note').textContent), 'applied');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/admin/access/apps/admins').body),
+                   { changes: [{ app: 'jellyfin', account: 'liz', admin: true }, { app: 'memos', account: 'liz', admin: true }] });
   assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/admin/access/changes').body),
                    { pk: 5, group: 'fam-admins', add: true, name: 'Bear' });
-  dlg.parentNode.remove();
+  assert.match(doc.getElementById('adminpage-note').textContent, /1 applied.*1 group change.*1 not done/);
+  await settle(window, () => doc.querySelector('.adm-fail'), 'the failure marked');
+  assert.match(doc.querySelector('.adm-fail').title, /HTTP 400: nope/);
+  assert.equal(doc.getElementById('adm-apply').textContent, 'Apply (1)', 'the failed one stays staged to retry');
+  doc.getElementById('adm-discard').click();
+  assert.equal(doc.getElementById('adm-apply').disabled, true);
 
+  // Admin at creation is still on the + beside a person (App accounts).
+  doc.querySelector('.acc-switch [data-view="apps"]').click();
   await settle(window, () => doc.querySelectorAll('.acc-make').length, '+ beside Liz');
   [...doc.querySelectorAll('.acc-make')].pop().click();
   const make = doc.getElementById('make-dlg');
   const adm = make.querySelector('.make-app[data-app="jellyfin"] .make-admin');
-  assert.ok(adm && !make.querySelector('.make-app[data-app="plex"] .make-admin'), 'Admin only where nav can set it');
-  adm.click();
-  assert.equal(adm.getAttribute('aria-pressed'), 'true');
-  const pw = doc.getElementById('make-password');
-  pw.value = 'correct horse'; pw.dispatchEvent(new window.Event('input'));
-  make.querySelector('.make-app[data-app="plex"] .person-choice').click();   // plex off
-  doc.getElementById('make-create').click();
-  await settle(window, () => make.querySelector('.make-result'), 'made');
-  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/admin/access/apps/create').body),
-                   { pk: 9, apps: { jellyfin: 'create' }, password: 'correct horse', admins: ['jellyfin'] });
+  assert.ok(!adm, 'Liz already has Jellyfin: not offered');
+  assert.ok(!make.querySelector('.make-app[data-app="plex"] .make-admin'), 'Plex: no admin to set');
 });
 
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
