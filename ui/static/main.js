@@ -302,6 +302,8 @@ function render() {
 // and a duplicate function declaration in the same scope silently replaces
 // it -- `var opts = load()` then returns a Promise and every option reads
 // undefined. Nothing errors; the menu just goes blank.
+var REFRESH_SEQ = 0;
+var WIDGETS_WAIT = 250;     // ms the first draw waits for the widget list
 function refresh() {
   // include_hidden only in admin mode: hiding a tile must not remove it
   // from the one screen that can unhide it. The server ignores the flag for
@@ -324,6 +326,11 @@ function refresh() {
     url += layoutQuery('?');
   }
   var asked = viewLayoutId();
+  var seq = ++REFRESH_SEQ;
+  // The page draws when its tiles are in; widgets that take longer than
+  // WIDGETS_WAIT join when they land (their cells say Loading meanwhile).
+  var widgetsIn_ = false;
+  var widgetsP = loadWidgets().then(function () { widgetsIn_ = true; });
   return Promise.all([
     fetch(url, { headers: { 'Accept': 'application/json' } })
       .then(function (r) {
@@ -338,7 +345,7 @@ function refresh() {
     fetch('api/site').then(function (r) { return r.ok ? r.json() : {}; })
                      .catch(function () { return {}; }),
     // Never fails: a widget problem costs the widgets, not the page.
-    loadWidgets(),
+    Promise.race([widgetsP, new Promise(function (ok) { setTimeout(ok, WIDGETS_WAIT); })]),
     arranging() && !Object.keys(WIDGET_TYPE_TITLES).length ? loadWidgetTypeTitles() : null,
     // Always: the View menu lists the dashboards to switch between.
     IMPERSONATING ? null : loadLayouts()
@@ -386,6 +393,13 @@ function refresh() {
       if (arranging()) { buildGroups(); buildWidgetLibrary(); }
       render();
       loadHealth();
+      if (!widgetsIn_) {
+        widgetsP.then(function () {
+          if (seq !== REFRESH_SEQ) { return; }       // a newer refresh draws them
+          if (arranging()) { buildWidgetLibrary(); }
+          render();
+        });
+      }
     })
     .catch(function (err) {
       out.className = 'msg err';

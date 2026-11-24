@@ -244,7 +244,44 @@ async def me(request: Request, who: str = Depends(whoami)) -> dict[str, Any]:
     }
 
 
+# Authentik's per-user application list costs ~1.6 s (it evaluates every
+# policy binding), and each page load asked for it twice. So: an answer under
+# APPS_FRESH old is used as is; an older one, up to APPS_STALE, is served at
+# once while a fresh one is fetched behind it, so a change in access shows
+# from the next load on. Tiles are only links; Pomerium still gates each app.
+APPS_FRESH = 60
+APPS_STALE = 24 * 3600
+_APPS_SEEN: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+_APPS_FETCH: dict[str, asyncio.Task] = {}
+
+
+def forget_access() -> None:
+    """After nav itself changes someone's access: every next read is fresh."""
+    _APPS_SEEN.clear()
+
+
 async def authentik_apps(who: str) -> list[dict[str, Any]]:
+    """authentik_apps_live, cached per person (see APPS_FRESH)."""
+    hit = _APPS_SEEN.get(who)
+    age = time.monotonic() - hit[0] if hit else None
+    if hit and age < APPS_FRESH:
+        return hit[1]
+    task = _APPS_FETCH.get(who)
+    if task is None:
+        task = asyncio.create_task(authentik_apps_live(who))
+        _APPS_FETCH[who] = task
+
+        def done(t: asyncio.Task, who: str = who) -> None:
+            _APPS_FETCH.pop(who, None)
+            if not t.cancelled() and t.exception() is None:
+                _APPS_SEEN[who] = (time.monotonic(), t.result())
+        task.add_done_callback(done)
+    if hit and age < APPS_STALE:
+        return hit[1]
+    return await asyncio.shield(task)
+
+
+async def authentik_apps_live(who: str) -> list[dict[str, Any]]:
     """The access answer, straight from Authentik and unmodified.
 
     Resolved by email rather than trusting a client-supplied id: the header is
@@ -1602,11 +1639,8 @@ ACCESS = widgets.Cache()
 
 
 async def reachable_slugs(who: str) -> set[str]:
-    async def make() -> tuple[dict[str, Any], int]:
-        apps = await authentik_apps(who)
-        return {"slugs": sorted(a.get("slug") for a in apps if a.get("slug"))}, ACCESS_TTL
-    got = await ACCESS.get("access\x00" + who, make)
-    return set(got["slugs"])
+    # authentik_apps is cached itself; a second cache here held a stale answer longer.
+    return {a.get("slug") for a in await authentik_apps(who) if a.get("slug")}
 
 
 async def viewer_groups(who: str) -> set[str]:
@@ -2861,6 +2895,7 @@ async def add_person(body: dict[str, Any], who: str = Depends(require_access_adm
                 edge["status"] = "staged"
         edge["file"] = access.CF_FILE or None
     _AK_CACHE["data"] = None       # the new person shows on the next read
+    forget_access()
     return {"pk": pk, "username": p["username"], "name": p["name"], "email": p["email"],
             "signin": signin, "groups": p["groups"], "edge": edge}
 

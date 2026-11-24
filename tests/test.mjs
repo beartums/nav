@@ -172,7 +172,8 @@ async function boot(payload = APPS, fail = null, bodyFor = null, setup = null, u
   });
   const { window } = dom;
   WINDOWS.push(window);
-  await settle(window, () => window.document.querySelectorAll('a.app').length > 0);
+  // Long enough for a first draw that waited out a slow widget list (WIDGETS_WAIT).
+  await settle(window, () => window.document.querySelectorAll('a.app').length > 0, 'tiles', 400);
   return { window, doc: window.document, seen };
 }
 
@@ -2763,6 +2764,26 @@ test('placed widgets lead their group, and a widgets-only group still renders', 
   assert.equal(doc.querySelectorAll('.widget-cell .w-remove').length, 0, 'no admin controls outside admin mode');
 });
 
+test('a slow widget list does not hold up the tiles: they draw first, the widgets join', async () => {
+  // The widget list answers 400ms late; everything else at once.
+  const slow = (w) => {
+    // The harness's stub is set first; the page then wraps whatever fetch is (core.js).
+    let inner, outer;
+    const slowed = (u, o) => (String(u) === 'api/widgets'
+      ? new Promise((ok) => w.setTimeout(() => ok(inner(u, o)), 400)) : inner(u, o));
+    Object.defineProperty(w, 'fetch', {
+      configurable: true,
+      set(f) { if (inner) { outer = f; } else { inner = f; } },
+      get() { return outer || slowed; }
+    });
+  };
+  const { window, doc } = await boot(APPS, null, widgetRoutes, slow);
+  assert.ok(doc.querySelectorAll('a.app').length > 0, 'tiles are up');
+  assert.equal(doc.querySelector('.widget-cell'), null, 'widgets not yet');
+  await settle(window, () => doc.querySelectorAll('.widget-cell').length === 3, 'widgets joined', 1000);
+  assert.ok(doc.querySelectorAll('a.app').length > 0, 'tiles still there');
+});
+
 test('widgets step aside for a search and fold away with a collapsed group', async () => {
   const { window, doc } = await boot(APPS, null, widgetRoutes);
   await settle(window, () => doc.querySelector('.widget-cell'), 'widgets');
@@ -4078,7 +4099,7 @@ test('page background: upload a picture -- shrunk, sent, and used as the image',
     (w) => w.localStorage.setItem('nav.layout', '7'));
   click(doc.getElementById('menu-btn'));
   click(menuItem(doc, 'Edit layout'));
-  await settle(window, () => doc.body.classList.contains('edit-mode'), 'edit mode');
+  await settle(window, () => doc.body.classList.contains('edit-mode') && doc.querySelector('#widget-lib .wl-chip'), 'edit mode');
   click(doc.getElementById('edit-bg-btn'));
   // jsdom has no canvas: stand in for the shrinking, keep everything after it real.
   window.shrinkImage = () => Promise.resolve(new window.Blob(['jpegbytes'], { type: 'image/jpeg' }));
