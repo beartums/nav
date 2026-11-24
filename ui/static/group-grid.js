@@ -156,7 +156,7 @@ function applySpan(el, kind, size, cols) {
   el.dataset.size = size;
   el.dataset.base = base;
   // One row high: the cell drops its padding so a line fits (see .thin).
-  el.classList.toggle('thin', span[1] <= rowScale());   // one 24-column row tall
+  el.classList.toggle('thin', span[1] === 1);
   return [Math.min(span[0], cols), span[1]];
 }
 
