@@ -469,33 +469,40 @@ def signin_of(key: str, env: str = "") -> str:
 
 # --- creating accounts (Access -> App accounts -> Create accounts...) -----------------
 # One admin-API call per app, with the same Connections key that reads its accounts.
+# An app can offer more than one way (a MODE): Plex invites or makes a managed
+# profile; Seerr makes a local account or brings them in from Plex.
 #   needs   "password"  the one password the admin types for this person, every app
-#           "invite"    no password: an invitation to the person's email (Plex)
-#   login   what the new account is named by: the Authentik "username" or "email"
+#           "none"      nothing to type
+#   login   what the account is named by: "username", "email" or "name"
 
 @dataclass(frozen=True)
-class Creator:
+class Mode:
+    id: str
     label: str
     needs: str
     login: str
     make: Callable[[Any, str, str, dict[str, Any], str], Awaitable[None]]   # (client, base, key, person, password)
-    hint: str = ""           # the button's hover text
+    hint: str = ""
 
 
-CREATORS: dict[str, Creator] = {}
+CREATORS: dict[str, list[Mode]] = {}
 MIN_PASSWORD = 8
 
 
-def creator(key: str, c: Creator) -> Creator:
-    if key not in ADAPTERS or c.needs not in ("password", "invite") or c.login not in ("username", "email"):
-        raise ValueError(f"creator {key!r}: unknown app, or needs/login not allowed")
-    CREATORS[key] = c
-    return c
+def creator(key: str, *modes: Mode) -> None:
+    for m in modes:
+        if key not in ADAPTERS or m.needs not in ("password", "none") or m.login not in ("username", "email", "name"):
+            raise ValueError(f"creator {key!r}/{m.id}: unknown app, or needs/login not allowed")
+    CREATORS[key] = list(modes)
 
 
-def creatable(key: str) -> dict[str, Any] | None:
-    c = CREATORS.get(key)
-    return {"label": c.label, "needs": c.needs, "login": c.login, "hint": c.hint} if c else None
+def mode_of(key: str, mode: str) -> Mode | None:
+    return next((m for m in CREATORS.get(key, []) if m.id == mode), None)
+
+
+def creatable(key: str) -> list[dict[str, Any]] | None:
+    ms = CREATORS.get(key)
+    return [{"id": m.id, "label": m.label, "needs": m.needs, "login": m.login, "hint": m.hint} for m in ms] if ms else None
 
 
 # The calls, from each app's source at the deployed release (2026-11-23). Every one
@@ -574,12 +581,11 @@ async def _make_music_assistant(client: Any, base: str, key: str, p: dict[str, A
         raise ValueError(f"Music Assistant: {body.get('details') or body.get('error_code')}")
 
 
-async def _make_plex(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
-    # python-plexapi inviteFriend: POST plex.tv/api/servers/{machine}/shared_servers with
-    # plex.tv's section ids (GET plex.tv/api/servers/{machine}, Section@id), every library.
-    # They accept the invitation with a plex.tv account (made from the email if need be).
+async def _plex_share(client: Any, base: str, key: str, shared: dict[str, str]) -> None:
+    # python-plexapi inviteFriend / createHomeUser: POST plex.tv/api/servers/{machine}/shared_servers
+    # with plex.tv's section ids (GET plex.tv/api/servers/{machine}, Section@id): every library.
     import xml.etree.ElementTree as ET
-    h = {"X-Plex-Token": key, "X-Plex-Client-Identifier": "nav", "X-Plex-Product": "nav", "Accept": "application/json"}
+    h = _plex_headers(key)
     ident = await client.get(base + "/identity", headers=h)
     ident.raise_for_status()
     try:
@@ -588,30 +594,74 @@ async def _make_plex(client: Any, base: str, key: str, p: dict[str, Any], pw: st
         machine = ET.fromstring(ident.text).get("machineIdentifier")
     srv = await client.get(f"{PLEX_TV}/api/servers/{machine}", headers=h)
     srv.raise_for_status()
-    ids = [s.get("id") for s in ET.fromstring(srv.text).iter("Section") if s.get("id")]
+    ids = [x.get("id") for x in ET.fromstring(srv.text).iter("Section") if x.get("id")]
     if not ids:
         raise ValueError("plex.tv lists no libraries for this server")
     r = await client.post(f"{PLEX_TV}/api/servers/{machine}/shared_servers", headers=h | {"Content-Type": "application/json"},
-                          json={"server_id": machine,
-                                "shared_server": {"library_section_ids": ids, "invited_email": p["email"]},
+                          json={"server_id": machine, "shared_server": {"library_section_ids": ids} | shared,
                                 "sharing_settings": {"allowSync": "0", "allowCameraUpload": "0", "allowChannels": "0",
                                                      "filterMovies": "", "filterTelevision": "", "filterMusic": ""}})
     r.raise_for_status()
 
 
-creator("jellyfin", Creator("Jellyfin", "password", "username", _make_jellyfin,
-                            "every library; they type their username at sign-in"))
-creator("navidrome", Creator("Navidrome", "password", "username", _make_navidrome,
-                             "the libraries marked for new users"))
-creator("audiobookshelf", Creator("Audiobookshelf", "password", "username", _make_audiobookshelf,
-                                  "every library; Authentik sign-in links on this username"))
-creator("immich", Creator("Immich", "password", "email", _make_immich,
-                          "Authentik sign-in links on this email; the key needs adminUser.create"))
-creator("pingvin", Creator("Pingvin Share", "password", "username", _make_pingvin,
-                           "username letters, digits, _ and . only (others become _)"))
-creator("seerr", Creator("Seerr (local)", "password", "email", _make_seerr,
-                         "a local Seerr account; needs Seerr's local sign-in on"))
-creator("music-assistant", Creator("Music Assistant", "password", "username", _make_music_assistant,
-                                   "an ordinary user"))
-creator("plex", Creator("Invite to Plex", "invite", "email", _make_plex,
-                        "shares every library; they accept with a plex.tv account"))
+def _plex_headers(key: str) -> dict[str, str]:
+    return {"X-Plex-Token": key, "X-Plex-Client-Identifier": "nav", "X-Plex-Product": "nav", "Accept": "application/json"}
+
+
+async def _make_plex(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # An invitation to their email; they accept with a plex.tv account.
+    await _plex_share(client, base, key, {"invited_email": p["email"]})
+
+
+async def _make_plex_managed(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # python-plexapi createHomeUser: POST plex.tv/api/home/users?title=<name> makes a managed
+    # profile in the owner's Plex Home (XML, the new user's id), then the same share by id.
+    import xml.etree.ElementTree as ET
+    r = await client.post(f"{PLEX_TV}/api/home/users", params={"title": p["name"]}, headers=_plex_headers(key))
+    r.raise_for_status()
+    root = ET.fromstring(r.text)
+    uid = root.get("id") or next((u.get("id") for u in root.iter("User") if u.get("id")), None)
+    if not uid:
+        raise ValueError("plex.tv made the profile but returned no id; share the libraries with it in Plex")
+    await _plex_share(client, base, key, {"invited_id": uid})
+
+
+async def _make_seerr_from_plex(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # routes/settings: GET /api/v1/settings/plex/users lists the owner's Plex friends (with
+    # email); routes/user import-from-plex {plexIds} makes them Plex users -- and turns a
+    # LOCAL account with the same email into their Plex one.
+    h = {"X-Api-Key": key}
+    r = await client.get(base + "/api/v1/settings/plex/users", headers=h)
+    r.raise_for_status()
+    hit = next((u for u in r.json() if (u.get("email") or "").lower() == p["email"]), None)
+    if not hit:
+        raise ValueError("no Plex friend with that email: invite them to Plex and wait until they accept")
+    r = await client.post(base + "/api/v1/user/import-from-plex", headers=h, json={"plexIds": [str(hit["id"])]})
+    r.raise_for_status()
+
+
+def _one(label: str, needs: str, login: str, make: Any, hint: str) -> Mode:
+    return Mode("create", label, needs, login, make, hint)
+
+
+creator("jellyfin", _one("Create", "password", "username", _make_jellyfin,
+                         "every library; they type their username at sign-in"))
+creator("navidrome", _one("Create", "password", "username", _make_navidrome,
+                          "the libraries marked for new users"))
+creator("audiobookshelf", _one("Create", "password", "username", _make_audiobookshelf,
+                               "every library; Authentik sign-in links on this username"))
+creator("immich", _one("Create", "password", "email", _make_immich,
+                       "Authentik sign-in links on this email; the key needs adminUser.create"))
+creator("pingvin", _one("Create", "password", "username", _make_pingvin,
+                        "username letters, digits, _ and . only (others become _)"))
+creator("music-assistant", _one("Create", "password", "username", _make_music_assistant, "an ordinary user"))
+creator("seerr",
+        Mode("local", "Local account", "password", "email", _make_seerr,
+             "a Seerr account with its own password; needs Seerr's local sign-in on"),
+        Mode("plex", "Plex sign-in", "none", "email", _make_seerr_from_plex,
+             "brings their Plex account in (they sign in with Plex); they must already share your Plex server"))
+creator("plex",
+        Mode("invite", "Invite", "none", "email", _make_plex,
+             "shares every library with their email; they accept with a plex.tv account"),
+        Mode("managed", "Managed profile", "none", "name", _make_plex_managed,
+             "a profile in your Plex Home with every library: picked on a device signed in as you, no login of its own"))

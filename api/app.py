@@ -2606,36 +2606,32 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
 
 @app.post("/api/admin/access/apps/create")
 async def create_app_accounts(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
-    """{pk, apps: [key], password}: make this Authentik person an account in each
-    app, named by their username or email as the app needs, with the one password
-    (never stored or logged). Each app answers for itself: {results: {key: {ok, detail}}}."""
+    """{pk, apps: {key: mode}, password}: make this Authentik person an account in each
+    app, the way chosen (appaccounts.CREATORS), named by their username, email or name
+    as the app needs, with the one password (never stored or logged).
+    Each app answers for itself: {results: {key: {ok, detail}}}."""
     try:
-        pk, keys, password = int(body["pk"]), [str(k) for k in body.get("apps") or []], str(body.get("password") or "")
+        pk, chosen, password = int(body["pk"]), dict(body.get("apps") or {}), str(body.get("password") or "")
     except (KeyError, TypeError, ValueError):
-        raise HTTPException(422, "pk, apps and (for most apps) password are required") from None
-    unknown = [k for k in keys if k not in appaccounts.CREATORS]
-    if not keys or unknown:
-        raise HTTPException(422, f"nav can't make accounts in: {', '.join(unknown) or 'nothing chosen'}")
-    if any(appaccounts.CREATORS[k].needs == "password" for k in keys) and len(password) < appaccounts.MIN_PASSWORD:
+        raise HTTPException(422, "pk, apps {app: mode} and (for most) password are required") from None
+    modes = {k: appaccounts.mode_of(str(k), str(m)) for k, m in chosen.items()}
+    bad_ = [k for k, m in modes.items() if m is None]
+    if not modes or bad_:
+        raise HTTPException(422, f"nav can't make accounts that way in: {', '.join(bad_) or 'nothing chosen'}")
+    if any(m.needs == "password" for m in modes.values()) and len(password) < appaccounts.MIN_PASSWORD:
         raise HTTPException(422, f"the password needs at least {appaccounts.MIN_PASSWORD} characters")
-    ak = await _authentik_access(False)
-    person = next((u for u in ak["users"] if u["pk"] == pk), None)
-    if not person or not person.get("username") or not person.get("email"):
-        raise HTTPException(404, "no such person in Authentik, or no username/email")
-    who_for = {"username": person["username"], "email": str(person["email"]).lower(),
-               "name": person.get("name") or person["username"]}
+    person = await _person(pk)
     results: dict[str, dict[str, Any]] = {}
     async with httpx.AsyncClient(timeout=20) as client:
-        for k in keys:
-            ad, cr = appaccounts.ADAPTERS[k], appaccounts.CREATORS[k]
+        for k, m in modes.items():
+            ad = appaccounts.ADAPTERS[k]
             url, key, _ = creds.resolve(ad.conn)
             if not url or not key:
                 results[k] = {"ok": False, "detail": f"no address or key -- set it in Connections → {ad.label}"}
                 continue
             try:
-                await cr.make(client, url, key, who_for, password)
-                results[k] = {"ok": True, "detail": ("invited " + who_for["email"]) if cr.needs == "invite"
-                              else f"made {who_for[cr.login]}"}
+                await m.make(client, url, key, person, password)
+                results[k] = {"ok": True, "detail": f"{m.label.lower()}: {person[m.login]}"}
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
                 why = ("the key can't create users -- it needs an admin's, with create rights" if code in (401, 403)
@@ -2644,11 +2640,50 @@ async def create_app_accounts(body: dict[str, Any], who: str = Depends(require_a
             except httpx.HTTPError as exc:
                 results[k] = {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
             except (ValueError, KeyError, TypeError) as exc:
-                results[k] = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"[:200]}
+                results[k] = {"ok": False, "detail": f"{exc}"[:200]}
     _APPS_CACHE["data"] = None                     # the next read shows the new accounts
-    print(f"access: {who} made accounts for {who_for['username']}: "
-          + ", ".join(f"{k} {'ok' if v['ok'] else 'failed'}" for k, v in results.items()), flush=True)
+    print(f"access: {who} made accounts for {person['username']}: "
+          + ", ".join(f"{k}/{chosen[k]} {'ok' if v['ok'] else 'failed'}" for k, v in results.items()), flush=True)
     return {"results": results}
+
+
+async def _person(pk: int) -> dict[str, str]:
+    """An Authentik person as the account makers need them, or 404."""
+    ak = await _authentik_access(False)
+    u = next((x for x in ak["users"] if x["pk"] == pk), None)
+    if not u or not u.get("username") or not u.get("email"):
+        raise HTTPException(404, "no such person in Authentik, or no username/email")
+    return {"username": u["username"], "email": str(u["email"]).lower(), "name": u.get("name") or u["username"]}
+
+
+async def _choreboard_email(account: str, email: str) -> str:
+    """Choreboard binds a first visit by email; a member made by name has none, so the
+    visit would make a second member. Give the hand-matched member their email."""
+    url, key, _ = creds.resolve(appaccounts.ADAPTERS["choreboard"].conn)
+    if not url or not key:
+        return "set their email on the choreboard member by hand (no choreboard key)"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            h = {"Authorization": f"Bearer {key}"}
+            r = await client.get(url + "/api/people", headers=h)
+            r.raise_for_status()
+            m = next((x for x in r.json() if appaccounts.acct_key(
+                {"login": x.get("name"), "email": x.get("email"), "name": x.get("name")}) == account), None)
+            if not m:
+                return "no such choreboard member now"
+            if (m.get("email") or "").lower() == email:
+                return ""
+            if m.get("email"):
+                return f"the choreboard member already has another email ({m['email']}); left alone"
+            r = await client.patch(f"{url}/api/people/{m['id']}", headers=h, json={"email": email})
+            r.raise_for_status()
+            return f"gave the choreboard member {email}: their first visit lands on it"
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            return f"set {email} on the choreboard member by hand (the key can only read)"
+        return f"choreboard said HTTP {exc.response.status_code}; set the email by hand"
+    except httpx.HTTPError:
+        return "could not reach choreboard; set the email by hand"
 
 
 @app.put("/api/admin/access/apps/links")
@@ -2669,8 +2704,11 @@ async def link_app_account(body: dict[str, Any], who: str = Depends(require_acce
                 "INSERT INTO account_links (app, account, person_pk, by_whom) VALUES (%s, %s, %s, %s) "
                 "ON CONFLICT (app, account) DO UPDATE SET person_pk = EXCLUDED.person_pk, "
                 "by_whom = EXCLUDED.by_whom, at = now()", (app_key, account, pk, who))
+    detail = ""
+    if pk is not None and app_key == "choreboard":
+        detail = await _choreboard_email(account, (await _person(pk))["email"])
     print(f"access: {who} {'unlinked' if pk is None else 'linked'} {app_key} account", flush=True)
-    return {"ok": True}
+    return {"ok": True, "detail": detail}
 
 
 @app.post("/api/admin/access/changes")

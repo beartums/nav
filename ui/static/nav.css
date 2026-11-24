@@ -1197,3 +1197,6 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .make-apps { flex-wrap:wrap; gap:6px; }
 .make-pw input { flex:1; min-width:0; }
 .make-results { margin-top:8px; font-size:13px; display:grid; gap:3px; }
+.make-app { gap:6px; flex-wrap:wrap; align-items:center; }
+.make-app .person-lab { min-width:120px; }
+.make-existing { font:inherit; font-size:12px; padding:2px 4px; border-radius:6px; }

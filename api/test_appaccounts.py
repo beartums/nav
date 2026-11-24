@@ -285,7 +285,8 @@ class Creators(unittest.TestCase):
         self.assertEqual(sorted(aa.CREATORS), ["audiobookshelf", "immich", "jellyfin", "music-assistant",
                                                "navidrome", "pingvin", "plex", "seerr"])
         self.assertIsNone(aa.creatable("jellyseerr"))
-        self.assertEqual(aa.creatable("plex")["needs"], "invite")
+        self.assertEqual([m["id"] for m in aa.creatable("plex")], ["invite", "managed"])
+        self.assertEqual([m["id"] for m in aa.creatable("seerr")], ["local", "plex"])
 
     def test_jellyfin(self):
         c = make(aa._make_jellyfin, {"/Users/New": _Resp({"Id": "x"})})
@@ -332,4 +333,21 @@ class Creators(unittest.TestCase):
                                  "/api/servers/M1": _Resp(None, text=srv),
                                  "/api/servers/M1/shared_servers": _Resp(None, text="<x/>")})
         self.assertEqual(c.seen[2][0], "https://plex.tv/api/servers/M1/shared_servers")
+        self.assertEqual(c.seen[2][1]["server_id"], "M1")
         self.assertEqual(c.seen[2][1]["shared_server"], {"library_section_ids": ["111", "222"], "invited_email": "liz@x.test"})
+
+    def test_plex_managed_profile_then_share_by_id(self):
+        srv = '<MediaContainer><Server><Section id="111" key="1"/></Server></MediaContainer>'
+        c = make(aa._make_plex_managed, {"/api/home/users": _Resp(None, text='<User id="77" title="Liz G"/>'),
+                                         "/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
+                                         "/api/servers/M1": _Resp(None, text=srv),
+                                         "/api/servers/M1/shared_servers": _Resp(None, text="<x/>")})
+        self.assertEqual(c.seen[0][0], "https://plex.tv/api/home/users")
+        self.assertEqual(c.seen[-1][1]["shared_server"], {"library_section_ids": ["111"], "invited_id": "77"})
+
+    def test_seerr_from_plex_needs_a_plex_friend(self):
+        c = make(aa._make_seerr_from_plex, {"/api/v1/settings/plex/users": _Resp([{"id": "42", "email": "LIZ@x.test"}]),
+                                            "/api/v1/user/import-from-plex": _Resp([])})
+        self.assertEqual(c.seen[1][1], {"plexIds": ["42"]})
+        with self.assertRaises(ValueError):
+            make(aa._make_seerr_from_plex, {"/api/v1/settings/plex/users": _Resp([])})

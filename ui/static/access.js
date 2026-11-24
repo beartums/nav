@@ -207,7 +207,7 @@ function accessPage(h) {
     if (todo.length) {
       var mk = document.createElement('button');
       mk.type = 'button'; mk.className = 'fg-btn acc-make'; mk.textContent = '+';
-      mk.title = 'Create accounts for ' + p.name + ' (' + todo.map(function (a) { return a.create.label; }).join(', ') + ')';
+      mk.title = 'Accounts for ' + p.name + ': ' + todo.map(function (a) { return a.label; }).join(', ');
       mk.setAttribute('aria-label', mk.title);
       mk.addEventListener('click', function () {
         createAccountsDialog(p, todo, function () { apps = null; loadApps(true); });
@@ -217,11 +217,14 @@ function accessPage(h) {
     el.appendChild(div('note', p.email || ''));
     return el;
   }
-  /** Apps nav can make an account in that this person has none in. */
+  /** Apps this person has no account in where nav can make one, or an unmatched
+   *  account there could be theirs. Each carries its unmatched accounts as `existing`. */
   function canMake(p) {
-    return apps.apps.filter(function (a) {
+    return apps.apps.map(function (a) {
+      return Object.assign({}, a, { existing: (apps.orphans || {})[a.key] || [] });
+    }).filter(function (a) {
       var c = p.cells && p.cells[a.key];
-      return a.create && !a.error && (!c || c.status === 'missing');
+      return !a.error && (!c || c.status === 'missing') && (a.create || a.existing.length);
     });
   }
 
@@ -722,26 +725,50 @@ function createAccountsDialog(p, todo, done) {
   function el(tag, cls, text) { var x = document.createElement(tag); if (cls) { x.className = cls; } if (text) { x.textContent = text; } return x; }
 
   box.appendChild(el('h3', null, 'Accounts for ' + p.name));
-  var on = todo.filter(function (a) { var c = p.cells && p.cells[a.key]; return c && c.status === 'missing'; })
-               .map(function (a) { return a.key; });
-  var row = el('div', 'person-row make-apps');
-  var btns = todo.map(function (a) {
-    var b = el('button', 'ts-t person-choice', a.create.label);
-    b.type = 'button'; b.dataset.value = a.key;
-    var named = a.create.needs === 'invite' ? 'an invitation to ' + p.email
-      : 'named ' + (a.create.login === 'email' ? p.email : p.username);
+  // One row per app: its ways (pressed buttons, at most one) and, where accounts
+  // match nobody, "is…" to say one of those is this person. choice[key] =
+  // {mode: id} to make one, or {link: account key} for an existing one.
+  var choice = {};
+  var rows = todo.map(function (a) {
     var c = p.cells && p.cells[a.key];
-    b.title = a.label + ': ' + named + (a.create.hint ? ' · ' + a.create.hint : '') +
-      (c ? '' : ' · Authentik does not let them open it yet');
-    b.addEventListener('click', function () {
-      var i = on.indexOf(a.key);
-      if (i >= 0) { on.splice(i, 1); } else { on.push(a.key); }
-      paint();
+    var row = el('div', 'person-row make-app');
+    row.dataset.app = a.key;
+    var lab = el('span', 'person-lab', a.label);
+    lab.title = c ? 'Authentik lets ' + p.name + ' open ' + a.label : 'Authentik does not let ' + p.name + ' open ' + a.label + ' yet';
+    row.appendChild(lab);
+    var btns = (a.create || []).map(function (m) {
+      var b = el('button', 'ts-t person-choice', m.label);
+      b.type = 'button'; b.dataset.mode = m.id;
+      b.title = (m.login === 'email' ? p.email : m.login === 'name' ? p.name : p.username) +
+        (m.needs === 'password' ? ' · the password below' : '') + (m.hint ? ' · ' + m.hint : '');
+      b.addEventListener('click', function () {
+        choice[a.key] = choice[a.key] && choice[a.key].mode === m.id ? null : { mode: m.id };
+        if (sel) { sel.value = ''; }
+        paint();
+      });
+      row.appendChild(b);
+      return b;
     });
-    row.appendChild(b);
-    return b;
+    var sel = null;
+    if (a.existing.length) {
+      sel = el('select', 'make-existing');
+      sel.setAttribute('aria-label', p.name + ' is an existing ' + a.label + ' account');
+      sel.title = 'Already has one: pick it (an account nobody is matched to)';
+      var none = el('option', null, 'is existing\u2026'); none.value = '';
+      sel.appendChild(none);
+      a.existing.forEach(function (o) {
+        var op = el('option', null, (o.login || o.email || o.name || '?') + (o.note ? ' (' + o.note.split(' (')[0] + ')' : ''));
+        op.value = o.key;
+        sel.appendChild(op);
+      });
+      sel.addEventListener('change', function () { choice[a.key] = sel.value ? { link: sel.value } : null; paint(); });
+      row.appendChild(sel);
+    }
+    // Default: where Authentik already lets them in, the first way to make one.
+    if (c && c.status === 'missing' && a.create && a.create.length) { choice[a.key] = { mode: a.create[0].id }; }
+    box.appendChild(row);
+    return { a: a, btns: btns, sel: sel };
   });
-  box.appendChild(row);
   var pwRow = el('label', 'person-row make-pw');
   pwRow.appendChild(el('span', 'person-lab', 'Password'));
   var pw = el('input');
@@ -766,37 +793,68 @@ function createAccountsDialog(p, todo, done) {
   foot.appendChild(cancel); foot.appendChild(go);
   box.appendChild(foot);
 
-  function needsPw() {
-    return todo.some(function (a) { return on.indexOf(a.key) >= 0 && a.create.needs === 'password'; });
+  function modeOf(a) {
+    var ch = choice[a.key];
+    return ch && ch.mode ? (a.create || []).filter(function (m) { return m.id === ch.mode; })[0] : null;
   }
+  function needsPw() {
+    return rows.some(function (r) { var m = modeOf(r.a); return m && m.needs === 'password'; });
+  }
+  function any() { return rows.some(function (r) { return choice[r.a.key]; }); }
   function paint() {
-    btns.forEach(function (b) { b.setAttribute('aria-pressed', String(on.indexOf(b.dataset.value) >= 0)); });
+    rows.forEach(function (r) {
+      var ch = choice[r.a.key];
+      r.btns.forEach(function (b) { b.setAttribute('aria-pressed', String(!!(ch && ch.mode === b.dataset.mode))); });
+    });
     pwRow.hidden = !needsPw();
-    go.disabled = !on.length || (needsPw() && pw.value.length < 8);
+    go.disabled = !any() || (needsPw() && pw.value.length < 8);
   }
   pw.addEventListener('input', paint);
   paint();
 
+  function report(a, ok, detail) {
+    var line = el('div', 'make-result');
+    line.appendChild(personInd(ok ? 'ok' : 'bad', detail));
+    line.appendChild(document.createTextNode(' ' + a.label + ': ' + detail));
+    out.appendChild(line);
+    if (ok) {
+      choice[a.key] = null;
+      var r = rows.filter(function (x) { return x.a.key === a.key; })[0];
+      r.btns.forEach(function (b) { b.disabled = true; });
+      if (r.sel) { r.sel.disabled = true; }
+    }
+  }
   go.addEventListener('click', function () {
     go.disabled = true;
-    out.textContent = 'Creating\u2026';
-    connSend('POST', 'api/admin/access/apps/create', { pk: p.pk, apps: on.slice(), password: needsPw() ? pw.value : '' })
-      .then(function (r) {
-        made = true;
-        out.innerHTML = '';
-        todo.forEach(function (a) {
-          var res = (r.results || {})[a.key];
-          if (!res) { return; }
-          var line = el('div', 'make-result');
-          line.appendChild(personInd(res.ok ? 'ok' : 'bad', res.detail));
-          line.appendChild(document.createTextNode(' ' + a.label + ': ' + res.detail));
-          out.appendChild(line);
-          if (res.ok) { on.splice(on.indexOf(a.key), 1); btns.filter(function (b) { return b.dataset.value === a.key; })[0].disabled = true; }
-        });
-        pw.value = '';
-        paint();
-      })
-      .catch(function (e) { out.textContent = 'Failed: ' + e.message; go.disabled = false; });
+    out.textContent = 'Working\u2026';
+    var make = {}, links = [];
+    rows.forEach(function (r) {
+      var ch = choice[r.a.key];
+      if (ch && ch.mode) { make[r.a.key] = ch.mode; }
+      else if (ch && ch.link) { links.push({ a: r.a, account: ch.link }); }
+    });
+    var lines = [];
+    var chain = Promise.resolve();
+    links.forEach(function (l) {
+      chain = chain.then(function () {
+        return connSend('PUT', 'api/admin/access/apps/links', { app: l.a.key, account: l.account, pk: p.pk })
+          .then(function (r) { lines.push([l.a, true, 'matched to ' + l.account + (r && r.detail ? '; ' + r.detail : '')]); },
+                function (e) { lines.push([l.a, false, e.message]); });
+      });
+    });
+    chain.then(function () {
+      if (!Object.keys(make).length) { return null; }
+      return connSend('POST', 'api/admin/access/apps/create', { pk: p.pk, apps: make, password: needsPw() ? pw.value : '' })
+        .then(function (r) {
+          rows.forEach(function (x) { var res = (r.results || {})[x.a.key]; if (res) { lines.push([x.a, res.ok, res.detail]); } });
+        }, function (e) { lines.push([{ label: 'Create' }, false, e.message]); });
+    }).then(function () {
+      made = true;
+      out.innerHTML = '';
+      lines.forEach(function (l) { report(l[0], l[1], l[2]); });
+      pw.value = '';
+      paint();
+    });
   });
   setTimeout(function () { (needsPw() ? pw : go).focus(); }, 0);
 }
