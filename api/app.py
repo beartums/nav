@@ -39,7 +39,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import psycopg
@@ -2627,6 +2627,7 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
         "apps": [{"key": a.key, "label": a.label, "conn": a.conn, "apps": list(a.apps), "provision": a.provision,
                   "signin": appaccounts.signin_of(a.key, os.environ.get("NAV_APP_SIGNIN", "")),
                   "create": appaccounts.creatable(a.key),
+                  "admin": _admin_how(a.key),
                   "error": got[a.key]["error"], "count": len(got[a.key]["accounts"])}
                  for a in appaccounts.ADAPTERS.values()],
         "people": sorted(({"pk": u["pk"], "name": u.get("name") or u.get("username"), "email": u.get("email"),
@@ -2638,20 +2639,91 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
     }
 
 
+def _admin_how(key: str) -> dict[str, Any] | None:
+    """How admin is changed in an app: {how: "group", group, also} when its sign-in
+    sets it from an Authentik group (NAV_APP_ADMIN_GROUP), {how: "app"} when nav
+    can set it there, None when neither."""
+    groups = appaccounts.admin_groups(os.environ.get("NAV_APP_ADMIN_GROUP", ""))
+    if key in groups:
+        g = groups[key]
+        also = [appaccounts.ADAPTERS[k].label for k, v in groups.items() if v == g and k != key]
+        return {"how": "group", "group": g, "also": also + (["nav"] if g.lower() in ADMIN_GROUPS else [])}
+    return {"how": "app"} if key in appaccounts.ROLES else None
+
+
+async def _set_admin(client: Any, app_key: str, url: str, key: str, find: Callable[[dict[str, Any]], bool],
+                     admin: bool) -> str:
+    """Grant or revoke admin on the one account `find` picks, read fresh from the app.
+    Raises ValueError with the reason nav won't (or can't)."""
+    ad = appaccounts.ADAPTERS[app_key]
+    accounts = await ad.fetch(client, url, key)
+    acc = next((a for a in accounts if find(a)), None)
+    if acc is None:
+        raise ValueError(f"{ad.label} doesn't list that account (any more)")
+    if (acc["role"] == "admin") == admin:
+        return "already " + ("admin" if admin else "not admin")
+    if not admin and appaccounts.is_last_admin(accounts, acc):
+        raise ValueError(f"that is {ad.label}'s only admin")
+    await appaccounts.ROLES[app_key](client, url, key, acc, admin)
+    return "made admin" if admin else "admin removed"
+
+
+def _http_why(exc: Exception, url: str) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        return ("the app refused: the key can't change roles (it needs an admin's, with write rights)"
+                if code in (401, 403) else f"HTTP {code}: {exc.response.text[:160]}")
+    if isinstance(exc, httpx.HTTPError):
+        return f"{type(exc).__name__}: cannot reach {url}"
+    return str(exc)[:200]
+
+
+@app.post("/api/admin/access/apps/role")
+async def set_app_admin(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """{app, account, admin}: grant or revoke admin on one account IN the app (the
+    account key from the grid). Apps whose sign-in sets admin from a group are
+    changed by staging that group instead (Access -> Groups), not here."""
+    app_key, account, admin = str(body.get("app") or ""), str(body.get("account") or "").strip().lower(), body.get("admin")
+    if not isinstance(admin, bool) or not account:
+        raise HTTPException(422, "app, account and admin (true/false) are required")
+    how = _admin_how(app_key) if app_key in appaccounts.ADAPTERS else None
+    if not how or how["how"] != "app":
+        raise HTTPException(422, f"nav can't change who is admin in {app_key}"
+                            + (f": its sign-in sets it from the Authentik group {how['group']}" if how else ""))
+    ad = appaccounts.ADAPTERS[app_key]
+    url, key, _ = creds.resolve(ad.conn)
+    if not url or not key:
+        raise HTTPException(409, f"no address or key -- set it in Connections → {ad.label}")
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            detail = await _set_admin(client, app_key, url, key, lambda a: appaccounts.acct_key(a) == account, admin)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        print(f"access: {who} {'grant' if admin else 'revoke'} admin in {app_key} failed", flush=True)
+        return {"ok": False, "detail": _http_why(exc, url)}
+    _APPS_CACHE["data"] = None
+    print(f"access: {who} {'granted' if admin else 'revoked'} admin in {app_key}", flush=True)
+    return {"ok": True, "detail": detail}
+
+
 @app.post("/api/admin/access/apps/create")
 async def create_app_accounts(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
-    """{pk, apps: {key: mode}, password}: make this Authentik person an account in each
+    """{pk, apps: {key: mode}, password, admins: [key]}: make this Authentik person an account in each
     app, the way chosen (appaccounts.CREATORS), named by their username, email or name
-    as the app needs, with the one password (never stored or logged).
+    as the app needs, with the one password (never stored or logged); for the apps
+    in `admins` (where nav sets admin in the app), then make that account admin.
     Each app answers for itself: {results: {key: {ok, detail}}}."""
     try:
         pk, chosen, password = int(body["pk"]), dict(body.get("apps") or {}), str(body.get("password") or "")
+        admins = {str(k) for k in (body.get("admins") or [])}
     except (KeyError, TypeError, ValueError):
         raise HTTPException(422, "pk, apps {app: mode} and (for most) password are required") from None
     modes = {k: appaccounts.mode_of(str(k), str(m)) for k, m in chosen.items()}
     bad_ = [k for k, m in modes.items() if m is None]
     if not modes or bad_:
         raise HTTPException(422, f"nav can't make accounts that way in: {', '.join(bad_) or 'nothing chosen'}")
+    no_admin = [k for k in admins if k in modes and (_admin_how(k) or {}).get("how") != "app"]
+    if no_admin:
+        raise HTTPException(422, f"nav can't make an admin in: {', '.join(no_admin)}")
     if any(m.needs == "password" for m in modes.values()) and len(password) < appaccounts.MIN_PASSWORD:
         raise HTTPException(422, f"the password needs at least {appaccounts.MIN_PASSWORD} characters")
     person = await _person(pk)
@@ -2666,6 +2738,14 @@ async def create_app_accounts(body: dict[str, Any], who: str = Depends(require_a
             try:
                 await m.make(client, url, key, person, password)
                 results[k] = {"ok": True, "detail": f"{m.label.lower()}: {person[m.login]}"}
+                if k in admins:
+                    try:
+                        said = await _set_admin(client, k, url, key, lambda a: _is_person(a, person), True)
+                        results[k]["detail"] += f" · {said}"
+                    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                        # Made all the same: ok, so nobody makes it twice; warn says the rest.
+                        results[k] |= {"warn": True, "detail": results[k]["detail"]
+                                       + f" · but NOT made admin: {_http_why(exc, url)}"}
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
                 why = ("the key can't create users -- it needs an admin's, with create rights" if code in (401, 403)
@@ -2679,6 +2759,14 @@ async def create_app_accounts(body: dict[str, Any], who: str = Depends(require_a
     print(f"access: {who} made accounts for {person['username']}: "
           + ", ".join(f"{k}/{chosen[k]} {'ok' if v['ok'] else 'failed'}" for k, v in results.items()), flush=True)
     return {"results": results}
+
+
+def _is_person(acc: dict[str, Any], person: dict[str, str]) -> bool:
+    """The account just made for this person (by email, else login or name)."""
+    if acc.get("email") and acc["email"] == person["email"]:
+        return True
+    login = (acc.get("login") or "").lower()
+    return bool(login) and login in {person["username"].lower(), person["email"], person["name"].lower()}
 
 
 async def _person(pk: int) -> dict[str, str]:

@@ -143,7 +143,14 @@ function accessPage(h) {
       td.appendChild(ind(kind, (c.status === 'stale' ? 'Leftover account: Authentik no longer lets ' + p.name + ' open ' + a.label
                                 : (c.disabled ? 'Disabled ' : '') + (c.role === 'admin' ? 'Admin account' : 'Account')) +
         (c.login ? ' · ' + c.login : '') + (c.note ? ' · ' + c.note : '') + (c.linked ? ' · matched by hand' : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
-        (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '')));
+        (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '') +
+        (a.admin ? ' · click to change admin' : '')));
+      if (a.admin) {
+        td.classList.add('acc-adminable');
+        td.addEventListener('click', function () {
+          adminDialog(p, a, c, function () { apps = null; loadApps(true); });
+        });
+      }
     }
     return td;
   }
@@ -751,6 +758,17 @@ function createAccountsDialog(p, todo, done) {
       row.appendChild(b);
       return b;
     });
+    // Admin, where nav sets it in the app (pressed = make them admin too).
+    var adm = null;
+    if (a.admin && a.admin.how === 'app') {
+      adm = el('button', 'ts-t person-choice make-admin', '\u2605 Admin');
+      adm.type = 'button';
+      adm.title = 'Also make ' + p.name + ' an admin in ' + a.label;
+      adm.setAttribute('aria-pressed', 'false');
+      adm.addEventListener('click', function () {
+        adm.setAttribute('aria-pressed', String(adm.getAttribute('aria-pressed') !== 'true'));
+      });
+    }
     var sel = null;
     if (a.existing.length) {
       sel = el('select', 'make-existing');
@@ -766,11 +784,12 @@ function createAccountsDialog(p, todo, done) {
       sel.addEventListener('change', function () { choice[a.key] = sel.value ? { link: sel.value } : null; paint(); });
       row.appendChild(sel);
     }
+    if (adm) { row.appendChild(adm); }
     row.appendChild(skip);
     // Default: where Authentik already lets them in, the first way to make one.
     if (c && c.status === 'missing' && a.create && a.create.length) { choice[a.key] = { mode: a.create[0].id }; }
     box.appendChild(row);
-    return { a: a, btns: btns, sel: sel, row: row };
+    return { a: a, btns: btns, sel: sel, row: row, adm: adm };
   });
   var pwRow = el('label', 'person-row make-pw');
   pwRow.appendChild(el('span', 'person-lab', 'Password'));
@@ -808,6 +827,7 @@ function createAccountsDialog(p, todo, done) {
     rows.forEach(function (r) {
       var ch = choice[r.a.key];
       r.btns.forEach(function (b) { b.setAttribute('aria-pressed', String(!!(ch && ch.mode === b.dataset.mode))); });
+      if (r.adm) { r.adm.hidden = !(ch && ch.mode); }
       // Unpressed: greyed, and says it is ignored.
       r.row.classList.toggle('make-ignored', !ch && !r.row.classList.contains('make-done'));
     });
@@ -817,9 +837,9 @@ function createAccountsDialog(p, todo, done) {
   pw.addEventListener('input', paint);
   paint();
 
-  function report(a, ok, detail) {
+  function report(a, ok, detail, warn) {
     var line = el('div', 'make-result');
-    line.appendChild(personInd(ok ? 'ok' : 'bad', detail));
+    line.appendChild(personInd(!ok ? 'bad' : warn ? 'warn' : 'ok', detail));
     line.appendChild(document.createTextNode(' ' + a.label + ': ' + detail));
     out.appendChild(line);
     if (ok) {
@@ -827,16 +847,20 @@ function createAccountsDialog(p, todo, done) {
       var r = rows.filter(function (x) { return x.a.key === a.key; })[0];
       r.btns.forEach(function (b) { b.disabled = true; });
       if (r.sel) { r.sel.disabled = true; }
+      if (r.adm) { r.adm.disabled = true; }
       r.row.classList.add('make-done');
     }
   }
   go.addEventListener('click', function () {
     go.disabled = true;
     out.textContent = 'Working\u2026';
-    var make = {}, links = [];
+    var make = {}, links = [], admins = [];
     rows.forEach(function (r) {
       var ch = choice[r.a.key];
-      if (ch && ch.mode) { make[r.a.key] = ch.mode; }
+      if (ch && ch.mode) {
+        make[r.a.key] = ch.mode;
+        if (r.adm && r.adm.getAttribute('aria-pressed') === 'true') { admins.push(r.a.key); }
+      }
       else if (ch && ch.link) { links.push({ a: r.a, account: ch.link }); }
     });
     var lines = [];
@@ -850,17 +874,94 @@ function createAccountsDialog(p, todo, done) {
     });
     chain.then(function () {
       if (!Object.keys(make).length) { return null; }
-      return connSend('POST', 'api/admin/access/apps/create', { pk: p.pk, apps: make, password: needsPw() ? pw.value : '' })
+      return connSend('POST', 'api/admin/access/apps/create', { pk: p.pk, apps: make, password: needsPw() ? pw.value : '', admins: admins })
         .then(function (r) {
-          rows.forEach(function (x) { var res = (r.results || {})[x.a.key]; if (res) { lines.push([x.a, res.ok, res.detail]); } });
+          rows.forEach(function (x) { var res = (r.results || {})[x.a.key]; if (res) { lines.push([x.a, res.ok, res.detail, res.warn]); } });
         }, function (e) { lines.push([{ label: 'Create' }, false, e.message]); });
     }).then(function () {
       made = true;
       out.innerHTML = '';
-      lines.forEach(function (l) { report(l[0], l[1], l[2]); });
+      lines.forEach(function (l) { report(l[0], l[1], l[2], l[3]); });
       pw.value = '';
       paint();
     });
   });
   setTimeout(function () { (needsPw() ? pw : go).focus(); }, 0);
+}
+
+
+// --- Admin in an app (App accounts: click a person's account) ----------------------
+// Where nav can set it in the app, one button grants or removes it there and then.
+// Where the app's sign-in sets admin from an Authentik group, the button stages
+// that group change instead (Groups tab -> Open PR), and says what else the group gives.
+function adminDialog(p, a, c, done) {
+  var back = document.createElement('div');
+  back.className = 'icondlg-back';
+  back.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60;' +
+                       'display:flex; align-items:center; justify-content:center;';
+  var box = document.createElement('div');
+  box.className = 'smalldlg person-dlg';
+  box.id = 'admin-dlg';
+  back.appendChild(box);
+  document.body.appendChild(back);
+  var changed = false;
+  function close() { back.remove(); document.removeEventListener('keydown', onKey); if (changed) { done(); } }
+  function onKey(e) { if (e.key === 'Escape') { close(); } }
+  document.addEventListener('keydown', onKey);
+  back.addEventListener('click', function (e) { if (e.target === back) { close(); } });
+  function el(tag, cls, text) { var x = document.createElement(tag); if (cls) { x.className = cls; } if (text) { x.textContent = text; } return x; }
+
+  var isAdmin = c.role === 'admin';
+  box.appendChild(el('h3', null, a.label + ': ' + p.name));
+  var now = el('p', 'admin-now');
+  var mark = el('span', 'acc-ind acc-ind-' + (isAdmin ? 'admin' : 'user'), isAdmin ? '\u2605' : '\u25cf');
+  mark.title = isAdmin ? 'Admin account' : 'Account'; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', mark.title);
+  now.appendChild(mark);
+  now.appendChild(document.createTextNode(' ' + (isAdmin ? 'Admin' : 'Not admin') + (c.login ? ' (' + c.login + ')' : '')));
+  box.appendChild(now);
+  var how = a.admin || {};
+  var label, send;
+  if (how.how === 'group') {
+    var verb = isAdmin ? 'Remove ' + p.name + ' from ' : 'Add ' + p.name + ' to ';
+    box.appendChild(el('p', 'admin-why', a.label + ' takes admin from the Authentik group ' + how.group +
+      ' at every sign-in, so a change in the app would be undone. ' + verb + how.group + ' instead' +
+      (how.also && how.also.length ? ': that also ' + (isAdmin ? 'removes' : 'gives') + ' admin in ' + how.also.join(', ') : '') +
+      '. It is staged with the other group changes; Open PR on the Groups view makes it real.'));
+    label = isAdmin ? 'Stage: remove from ' + how.group : 'Stage: add to ' + how.group;
+    send = function () {
+      return connSend('POST', 'api/admin/access/changes', { pk: p.pk, group: how.group, add: !isAdmin, name: p.name })
+        .then(function () { return { ok: true, detail: 'staged; open Groups and press Open PR' }; });
+    };
+  } else {
+    box.appendChild(el('p', 'admin-why', isAdmin
+      ? 'Removes admin in ' + a.label + ' now. nav never removes the last admin, or the account its key signs in as.'
+      : 'Makes ' + p.name + ' an admin in ' + a.label + ' now.'));
+    label = isAdmin ? 'Remove admin' : 'Make admin';
+    send = function () {
+      return connSend('POST', 'api/admin/access/apps/role', { app: a.key, account: c.key, admin: !isAdmin });
+    };
+  }
+  var out = el('div', 'make-results');
+  box.appendChild(out);
+  var foot = el('div', 'smalldlg-foot');
+  var cancel = el('button', null, 'Close');
+  cancel.type = 'button'; cancel.addEventListener('click', close);
+  var go = el('button', 'primary', label);
+  go.type = 'button'; go.id = 'admin-go';
+  foot.appendChild(cancel); foot.appendChild(go);
+  box.appendChild(foot);
+  go.addEventListener('click', function () {
+    go.disabled = true;
+    out.textContent = 'Working\u2026';
+    send().then(function (r) { return r; }, function (e) { return { ok: false, detail: e.message }; })
+      .then(function (r) {
+        out.innerHTML = '';
+        var line = el('div', 'make-result');
+        line.appendChild(personInd(r.ok ? 'ok' : 'bad', r.detail));
+        line.appendChild(document.createTextNode(' ' + r.detail));
+        out.appendChild(line);
+        if (r.ok) { changed = true; } else { go.disabled = false; }
+      });
+  });
+  setTimeout(function () { go.focus(); }, 0);
 }

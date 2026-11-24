@@ -1,6 +1,6 @@
 """App accounts: who has an account in each app, read from the app itself.
 
-READ-ONLY. Each adapter lists one app's user accounts through that app's own
+Reading is read-only. Each adapter lists one app's user accounts through that app's own
 API, with the key from Connections (creds.py), and turns them into one shape:
 
   {login, email, name, role: "admin" | "user", disabled: bool, last_seen: str | None}
@@ -65,7 +65,7 @@ def adapter(a: Adapter) -> Adapter:
 
 
 def account(login: Any = None, email: Any = None, name: Any = None, admin: bool = False,
-            disabled: bool = False, last_seen: Any = None, note: str = "") -> dict[str, Any]:
+            disabled: bool = False, last_seen: Any = None, note: str = "", id: Any = None) -> dict[str, Any]:
     """One account in the common shape."""
     def s(v: Any) -> str | None:
         v = str(v).strip() if v not in (None, "") else ""
@@ -76,7 +76,7 @@ def account(login: Any = None, email: Any = None, name: Any = None, admin: bool 
         email = login
     return {"login": s(login), "email": (s(email) or "").lower() or None, "name": s(name),
             "role": "admin" if admin else "user", "disabled": bool(disabled), "last_seen": s(last_seen)} \
-        | ({"note": note} if note else {})
+        | ({"note": note} if note else {}) | ({"id": str(id)} if id not in (None, "") else {})
 
 
 def acct_key(acc: dict[str, Any]) -> str:
@@ -147,7 +147,8 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
             if acc:
                 out[p["pk"]][key] = {"status": "account" if can else "stale", "role": acc["role"],
                                      "disabled": acc["disabled"], "last_seen": acc["last_seen"],
-                                     "login": acc["login"]} | ({"note": acc["note"]} if acc.get("note") else {}) \
+                                     "login": acc["login"], "key": acct_key(acc)} \
+                    | ({"note": acc["note"]} if acc.get("note") else {}) \
                     | ({"linked": acct_key(acc)} if p["pk"] in linked else {})
             elif can:
                 out[p["pk"]][key] = {"status": "missing", "provision": ad.provision}
@@ -163,11 +164,11 @@ async def _choreboard(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r = await client.get(base + "/api/people", headers={"Authorization": f"Bearer {key}"})
     r.raise_for_status()
     return [account(login=p.get("name"), email=p.get("email"), name=p.get("name"),
-                    admin=p.get("role") == "admin", disabled=not p.get("active", 1)) for p in r.json()]
+                    admin=p.get("role") == "admin", disabled=not p.get("active", 1), id=p.get("id")) for p in r.json()]
 
 
 adapter(Adapter("choreboard", "Choreboard", "choreboard", ("choreboard",), "first", _choreboard,
-                "a choreboard API token (read scope is enough)", signin="header"))
+                "a choreboard API token (read scope; people.write to change who is admin)", signin="header"))
 
 
 def _iso_ms(ms: Any) -> str | None:
@@ -202,7 +203,7 @@ async def _mealie(client: Any, base: str, key: str) -> list[dict[str, Any]]:
                          headers={"Authorization": f"Bearer {key}"})
     r.raise_for_status()
     return [account(login=u.get("username"), email=u.get("email"), name=u.get("fullName"),
-                    admin=bool(u.get("admin"))) for u in r.json()["items"]]
+                    admin=bool(u.get("admin")), id=u.get("id")) for u in r.json()["items"]]
 
 
 async def _seerr(client: Any, base: str, key: str) -> list[dict[str, Any]]:
@@ -219,7 +220,7 @@ async def _seerr(client: Any, base: str, key: str) -> list[dict[str, Any]]:
                     3: "a Jellyfin account", 4: "an Emby account"}.get(u.get("userType"))
             out.append(account(login=login, email=u.get("email"), name=u.get("displayName"),
                                admin=u.get("id") == 1 or bool(int(u.get("permissions") or 0) & 2),
-                               note=kind or ""))
+                               note=kind or "", id=u.get("id")))
         skip += 100
         if skip >= int((j.get("pageInfo") or {}).get("results") or 0) or not j.get("results"):
             return out
@@ -231,7 +232,8 @@ async def _jellyfin(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r.raise_for_status()
     return [account(login=u.get("Name"), admin=(u.get("Policy") or {}).get("IsAdministrator", False),
                     disabled=(u.get("Policy") or {}).get("IsDisabled", False),
-                    last_seen=_recent(u.get("LastActivityDate") or u.get("LastLoginDate"))) for u in r.json()]
+                    last_seen=_recent(u.get("LastActivityDate") or u.get("LastLoginDate")), id=u.get("Id"))
+            for u in r.json()]
 
 
 PLEX_TV = "https://plex.tv"
@@ -285,7 +287,7 @@ async def _audiobookshelf(client: Any, base: str, key: str) -> list[dict[str, An
     r.raise_for_status()
     return [account(login=u.get("username"), email=u.get("email"), admin=u.get("type") in ("root", "admin"),
                     disabled=not u.get("isActive", True) or bool(u.get("isLocked")),
-                    last_seen=_iso_ms(u.get("lastSeen"))) for u in r.json()["users"]]
+                    last_seen=_iso_ms(u.get("lastSeen")), id=u.get("id")) for u in r.json()["users"]]
 
 
 async def _navidrome(client: Any, base: str, key: str) -> list[dict[str, Any]]:
@@ -299,7 +301,7 @@ async def _navidrome(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r = await client.get(base + "/api/user", headers={"X-ND-Authorization": f"Bearer {lg.json()['token']}"})
     r.raise_for_status()
     return [account(login=u.get("userName"), email=u.get("email"), name=u.get("name"), admin=bool(u.get("isAdmin")),
-                    last_seen=u.get("lastAccessAt") or u.get("lastLoginAt")) for u in r.json()]
+                    last_seen=u.get("lastAccessAt") or u.get("lastLoginAt"), id=u.get("id")) for u in r.json()]
 
 
 async def _immich(client: Any, base: str, key: str) -> list[dict[str, Any]]:
@@ -307,7 +309,7 @@ async def _immich(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r = await client.get(base + "/api/admin/users", headers={"x-api-key": key})
     r.raise_for_status()
     return [account(login=u.get("email"), email=u.get("email"), name=u.get("name"), admin=bool(u.get("isAdmin")),
-                    disabled=(u.get("status") or "active") != "active" or bool(u.get("deletedAt")))
+                    disabled=(u.get("status") or "active") != "active" or bool(u.get("deletedAt")), id=u.get("id"))
             for u in r.json()]
 
 
@@ -315,7 +317,7 @@ async def _filebrowser(client: Any, base: str, key: str) -> list[dict[str, Any]]
     # web/users.go: GET /api/users, everyone when the token's user (and the token) is admin.
     r = await client.get(base + "/api/users", headers={"Authorization": f"Bearer {key}"})
     r.raise_for_status()
-    return [account(login=u.get("username"), admin=bool((u.get("permissions") or {}).get("admin")))
+    return [account(login=u.get("username"), admin=bool((u.get("permissions") or {}).get("admin")), id=u.get("username"))
             for u in r.json()]
 
 
@@ -324,7 +326,7 @@ async def _grafana(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r = await client.get(base + "/api/org/users", headers={"Authorization": f"Bearer {key}"})
     r.raise_for_status()
     return [account(login=u.get("login"), email=u.get("email"), name=u.get("name"), admin=u.get("role") == "Admin",
-                    disabled=bool(u.get("isDisabled")), last_seen=_recent(u.get("lastSeenAt")))
+                    disabled=bool(u.get("isDisabled")), last_seen=_recent(u.get("lastSeenAt")), id=u.get("userId"))
             for u in r.json()]
 
 
@@ -335,7 +337,7 @@ async def _paperless(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r.raise_for_status()
     return [account(login=u.get("username"), email=u.get("email"),
                     name=" ".join(x for x in (u.get("first_name"), u.get("last_name")) if x),
-                    admin=bool(u.get("is_superuser")), disabled=not u.get("is_active", True))
+                    admin=bool(u.get("is_superuser")), disabled=not u.get("is_active", True), id=u.get("id"))
             for u in r.json()["results"]]
 
 
@@ -346,7 +348,7 @@ async def _music_assistant(client: Any, base: str, key: str) -> list[dict[str, A
                           headers={"Authorization": f"Bearer {key}"})
     r.raise_for_status()
     return [account(login=u.get("username"), name=u.get("display_name"), admin=u.get("role") == "admin",
-                    disabled=not u.get("enabled", True))
+                    disabled=not u.get("enabled", True), id=u.get("user_id"))
             for u in r.json() if u.get("role") != "service"]
 
 
@@ -354,6 +356,7 @@ async def _memos(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     # user_service.proto: GET /api/users (26.x; /api/v1 is gone), admins only, paged.
     out: list[dict[str, Any]] = []
     token = ""
+    # 26.x roles are ADMIN and USER (HOST is from older releases); the id is the username.
     for _ in range(50):
         params = {"pageSize": 1000, **({"pageToken": token} if token else {})}
         r = await client.get(base + "/api/users", params=params, headers={"Authorization": f"Bearer {key}"})
@@ -361,7 +364,8 @@ async def _memos(client: Any, base: str, key: str) -> list[dict[str, Any]]:
         body = r.json()
         out += [account(login=u.get("username") or (u.get("name") or "").split("/")[-1], email=u.get("email"),
                         name=u.get("displayName"), admin=u.get("role") in ("ADMIN", "HOST"),
-                        disabled=u.get("state") == "ARCHIVED") for u in body.get("users") or []]
+                        disabled=u.get("state") == "ARCHIVED",
+                        id=u.get("username") or (u.get("name") or "").split("/")[-1]) for u in body.get("users") or []]
         token = body.get("nextPageToken") or ""
         if not token:
             break
@@ -373,7 +377,7 @@ async def _aurral(client: Any, base: str, key: str) -> list[dict[str, Any]]:
     r = await client.get(base + "/api/users", headers={"X-Api-Key": key})
     r.raise_for_status()
     return [account(login=u.get("username"), admin=u.get("role") == "admin",
-                    disabled=(u.get("status") or "active") != "active") for u in r.json()]
+                    disabled=(u.get("status") or "active") != "active", id=u.get("id")) for u in r.json()]
 
 
 def _login(key: str, app: str) -> tuple[str, str]:
@@ -383,7 +387,9 @@ def _login(key: str, app: str) -> tuple[str, str]:
     return user, password
 
 
-AFFINE_USERS = ("query($skip:Int!){users(filter:{first:100,skip:$skip}){name email disabled features}}")
+AFFINE_USERS = ("query($skip:Int!){users(filter:{first:100,skip:$skip}){id name email disabled features}}")
+# GraphQL serialises the enum by NAME: the administrator feature reads "Admin".
+AFFINE_ADMIN = ("Admin", "administrator")
 
 
 async def _affine(client: Any, base: str, key: str) -> list[dict[str, Any]]:
@@ -403,7 +409,8 @@ async def _affine(client: Any, base: str, key: str) -> list[dict[str, Any]]:
             raise ValueError("AFFiNE: " + str(body["errors"][0].get("message", "query refused")))
         users = (body.get("data") or {}).get("users") or []
         out += [account(login=u.get("email"), email=u.get("email"), name=u.get("name"),
-                        admin="administrator" in (u.get("features") or []), disabled=bool(u.get("disabled")))
+                        admin=any(f in AFFINE_ADMIN for f in u.get("features") or []),
+                        disabled=bool(u.get("disabled")), id=u.get("id"))
                 for u in users]
         if len(users) < 100:
             break
@@ -422,7 +429,8 @@ async def _pingvin(client: Any, base: str, key: str) -> list[dict[str, Any]]:
         raise ValueError("Pingvin: no access token (is TOTP on for this admin?)")
     r = await client.get(base + "/api/users", headers={"Cookie": f"access_token={tok}"})
     r.raise_for_status()
-    return [account(login=u.get("username"), email=u.get("email"), admin=bool(u.get("isAdmin"))) for u in r.json()]
+    return [account(login=u.get("username"), email=u.get("email"), admin=bool(u.get("isAdmin")), id=u.get("id"))
+            for u in r.json()]
 
 
 adapter(Adapter("mealie", "Mealie", "mealie", ("mealie",), "first", _mealie,
@@ -665,3 +673,214 @@ creator("plex",
              "shares every library with their email; they accept with a plex.tv account"),
         Mode("managed", "Managed profile", "none", "name", _make_plex_managed,
              "a profile in your Plex Home with every library: picked on a device signed in as you, no login of its own"))
+
+
+# --- who is admin (Access -> App accounts: a person's cell, or Admin when creating) ---
+# One call per app that grants or revokes admin on an account, by the id its list
+# gave (account(id=...)), with the same Connections key. From each app's source at
+# the deployed release (2026-11-24). Apps whose sign-in sets the role from Authentik
+# every time (Immich, Audiobookshelf, Grafana, Aurral as wired here) have no setter:
+# a change in the app would be undone; NAV_APP_ADMIN_GROUP names the group instead.
+# Plex has no admin for anyone but the owner.
+#
+# Guards nav adds: never the account the key signs in as (Navidrome, Pingvin and
+# AFFiNE keys are a login), and never the app's last admin (checked by the caller).
+
+RoleSet = Callable[[Any, str, str, dict[str, Any], bool], Awaitable[None]]   # (client, base, key, account, admin)
+ROLES: dict[str, RoleSet] = {}
+
+
+def role_setter(key: str, fn: RoleSet) -> None:
+    if key not in ADAPTERS:
+        raise ValueError(f"role setter {key!r}: unknown app")
+    ROLES[key] = fn
+
+
+def key_login(key: str) -> str:
+    """The login a login:password key signs in as ('' for a token)."""
+    user, _, password = key.partition(":")
+    return user.strip().lower() if password else ""
+
+
+def _not_self(app: str, key: str, acc: dict[str, Any]) -> None:
+    me = key_login(key)
+    if me and me in {(acc.get("login") or "").lower(), (acc.get("email") or "").lower()}:
+        raise ValueError(f"that is the account nav signs in to {app} as; change it in {app} itself")
+
+
+def _need_id(acc: dict[str, Any]) -> str:
+    if not acc.get("id"):
+        raise ValueError("the app listed this account without an id")
+    return str(acc["id"])
+
+
+async def _role_choreboard(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # api.py PATCH /api/people/{id} {role: admin|member}; the token needs people.write.
+    r = await client.patch(f"{base}/api/people/{_need_id(acc)}", headers={"Authorization": f"Bearer {key}"},
+                           json={"role": "admin" if admin else "member"})
+    r.raise_for_status()
+
+
+async def _role_jellyfin(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # UserController.UpdateUserPolicy: POST /Users/{id}/Policy takes the WHOLE policy
+    # (every field is overwritten), so send back the one it has with the flag changed.
+    # It refuses (403) to remove the last administrator.
+    uid = _need_id(acc)
+    r = await client.get(f"{base}/Users/{uid}", params={"ApiKey": key})
+    r.raise_for_status()
+    policy = dict(r.json().get("Policy") or {})
+    if not policy:
+        raise ValueError("Jellyfin returned no policy for this user")
+    policy["IsAdministrator"] = admin
+    r = await client.post(f"{base}/Users/{uid}/Policy", params={"ApiKey": key}, json=policy)
+    r.raise_for_status()
+
+
+async def _role_navidrome(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # PUT /api/user/{id} writes every column: send the user as read, isAdmin changed
+    # (no password: it is kept). A grant also gives every library; a revoke keeps them.
+    _not_self("Navidrome", key, acc)
+    user, password = _login(key, "Navidrome")
+    lg = await client.post(base + "/auth/login", json={"username": user, "password": password})
+    lg.raise_for_status()
+    h = {"X-ND-Authorization": f"Bearer {lg.json()['token']}"}
+    uid = _need_id(acc)
+    r = await client.get(f"{base}/api/user/{uid}", headers=h)
+    r.raise_for_status()
+    r = await client.put(f"{base}/api/user/{uid}", headers=h, json=r.json() | {"isAdmin": admin})
+    r.raise_for_status()
+
+
+async def _role_pingvin(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # user.controller: PATCH /api/users/{id} {isAdmin} (admin).
+    _not_self("Pingvin", key, acc)
+    user, password = _login(key, "Pingvin")
+    lg = await client.post(base + "/api/auth/signIn",
+                           json={("email" if "@" in user else "username"): user, "password": password})
+    lg.raise_for_status()
+    tok = (lg.json() or {}).get("accessToken")
+    if not tok:
+        raise ValueError("Pingvin: no access token (is TOTP on for this admin?)")
+    r = await client.patch(f"{base}/api/users/{_need_id(acc)}", headers={"Cookie": f"access_token={tok}"},
+                           json={"isAdmin": admin})
+    r.raise_for_status()
+
+
+async def _role_music_assistant(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # webserver/auth.py: auth/user/update {user_id, role}; only what is sent changes.
+    r = await client.post(base + "/api", headers={"Authorization": f"Bearer {key}"},
+                          json={"command": "auth/user/update",
+                                "args": {"user_id": _need_id(acc), "role": "admin" if admin else "user"}})
+    r.raise_for_status()
+    body = r.json()
+    if isinstance(body, dict) and body.get("error_code"):
+        raise ValueError(f"Music Assistant: {body.get('details') or body.get('error_code')}")
+
+
+SEERR_ADMIN = 2   # server/lib/permissions.ts
+
+
+async def _role_seerr(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # usersettings.ts: POST /api/v1/user/{id}/settings/permissions sets the WHOLE
+    # bitmask, so read it and change only the ADMIN bit. User 1 (the owner) can't be changed.
+    uid = _need_id(acc)
+    if uid == "1":
+        raise ValueError("user 1 is the owner and always admin")
+    h = {"X-Api-Key": key}
+    r = await client.get(f"{base}/api/v1/user/{uid}/settings/permissions", headers=h)
+    r.raise_for_status()
+    perms = int((r.json() or {}).get("permissions") or 0)
+    perms = perms | SEERR_ADMIN if admin else perms & ~SEERR_ADMIN
+    r = await client.post(f"{base}/api/v1/user/{uid}/settings/permissions", headers=h, json={"permissions": perms})
+    r.raise_for_status()
+
+
+async def _role_mealie(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # admin_management_users.py: PUT /api/admin/users/{id} takes the whole UserOut; send
+    # it back as read with admin changed, without `tokens` (a relation, left alone when
+    # absent). Mealie refuses (403) to demote the key's own user.
+    h = {"Authorization": f"Bearer {key}"}
+    uid = _need_id(acc)
+    r = await client.get(f"{base}/api/admin/users/{uid}", headers=h)
+    r.raise_for_status()
+    body = {k: v for k, v in r.json().items() if k != "tokens"} | {"admin": admin}
+    r = await client.put(f"{base}/api/admin/users/{uid}", headers=h, json=body)
+    r.raise_for_status()
+
+
+async def _role_memos(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # user_service.go UpdateUser: PATCH /api/users/{username}?updateMask=role. Memos
+    # refuses to remove the last admin itself.
+    name = _need_id(acc)
+    r = await client.patch(f"{base}/api/users/{name}", params={"updateMask": "role"},
+                           headers={"Authorization": f"Bearer {key}"},
+                           json={"name": f"users/{name}", "role": "ADMIN" if admin else "USER"})
+    r.raise_for_status()
+
+
+async def _role_filebrowser(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # web/users.go: PATCH /api/users?username= {which: ["permissions"], data}; "which"
+    # replaces the whole field, so send every permission as read with admin changed.
+    # (Proxy sign-in only ever promotes auth.adminUsername: a change here stays.)
+    name = _need_id(acc)
+    h = {"Authorization": f"Bearer {key}"}
+    r = await client.get(base + "/api/users", headers=h)
+    r.raise_for_status()
+    u = next((x for x in r.json() if x.get("username") == name), None)
+    if not u:
+        raise ValueError("FileBrowser no longer lists this user")
+    perms = dict(u.get("permissions") or {}) | {"admin": admin}
+    r = await client.patch(base + "/api/users", params={"username": name}, headers=h,
+                           json={"which": ["permissions"], "data": {"permissions": perms}})
+    r.raise_for_status()
+
+
+async def _role_paperless(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # views.py UserViewSet: only a superuser may change is_superuser / is_staff.
+    tok = key if key.lower().startswith("token ") else f"Token {key}"
+    r = await client.patch(f"{base}/api/users/{_need_id(acc)}/", headers={"Authorization": tok},
+                           json={"is_superuser": admin, "is_staff": admin})
+    r.raise_for_status()
+
+
+AFFINE_SET = "mutation($id:String!,$f:[FeatureType!]!){updateUserFeatures(id:$id,features:$f)}"
+
+
+async def _role_affine(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
+    # features/resolver.ts updateUserFeatures REPLACES the configurable features, and
+    # administrator is the only one: [Admin] grants, [] revokes.
+    _not_self("AFFiNE", key, acc)
+    email, password = _login(key, "AFFiNE")
+    lg = await client.post(base + "/api/auth/sign-in", json={"email": email, "password": password})
+    lg.raise_for_status()
+    cookie = "; ".join(f"{k}={v}" for k, v in lg.cookies.items())
+    r = await client.post(base + "/graphql", headers={"Cookie": cookie},
+                          json={"query": AFFINE_SET, "variables": {"id": _need_id(acc), "f": ["Admin"] if admin else []}})
+    r.raise_for_status()
+    body = r.json()
+    if body.get("errors"):
+        raise ValueError("AFFiNE: " + str(body["errors"][0].get("message", "refused")))
+
+
+for _k, _f in (("choreboard", _role_choreboard), ("jellyfin", _role_jellyfin), ("navidrome", _role_navidrome),
+               ("pingvin", _role_pingvin), ("music-assistant", _role_music_assistant), ("seerr", _role_seerr),
+               ("jellyseerr", _role_seerr), ("mealie", _role_mealie), ("memos", _role_memos),
+               ("filebrowser", _role_filebrowser), ("paperless", _role_paperless), ("affine", _role_affine)):
+    role_setter(_k, _f)
+
+
+def admin_groups(env: str = "") -> dict[str, str]:
+    """NAV_APP_ADMIN_GROUP="immich=family-admins,grafana=grafana-admins": apps whose
+    sign-in sets admin from an Authentik group. Those win over an in-app setter."""
+    out: dict[str, str] = {}
+    for part in env.split(","):
+        k, _, v = part.strip().partition("=")
+        if k.strip() in ADAPTERS and v.strip():
+            out[k.strip()] = v.strip()
+    return out
+
+
+def is_last_admin(accounts: list[dict[str, Any]], acc: dict[str, Any]) -> bool:
+    """Would revoking `acc` leave the app with no enabled admin?"""
+    return acc.get("role") == "admin" and not any(
+        a is not acc and a.get("role") == "admin" and not a.get("disabled") for a in accounts)
