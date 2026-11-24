@@ -65,7 +65,7 @@ def adapter(a: Adapter) -> Adapter:
 
 
 def account(login: Any = None, email: Any = None, name: Any = None, admin: bool = False,
-            disabled: bool = False, last_seen: Any = None) -> dict[str, Any]:
+            disabled: bool = False, last_seen: Any = None, note: str = "") -> dict[str, Any]:
     """One account in the common shape."""
     def s(v: Any) -> str | None:
         v = str(v).strip() if v not in (None, "") else ""
@@ -75,14 +75,17 @@ def account(login: Any = None, email: Any = None, name: Any = None, admin: bool 
     if not s(email) and "@" in (s(login) or ""):
         email = login
     return {"login": s(login), "email": (s(email) or "").lower() or None, "name": s(name),
-            "role": "admin" if admin else "user", "disabled": bool(disabled), "last_seen": s(last_seen)}
+            "role": "admin" if admin else "user", "disabled": bool(disabled), "last_seen": s(last_seen)} \
+        | ({"note": note} if note else {})
 
 
-def _keys(person: dict[str, Any]) -> tuple[set[str], set[str]]:
+def _keys(person: dict[str, Any]) -> tuple[set[str], set[str], set[str]]:
     email = (person.get("email") or "").strip().lower()
     logins = {x for x in ((person.get("username") or "").strip().lower(),
                           email.split("@")[0] if "@" in email else "") if x}
-    return ({email} if email else set()), logins
+    full = " ".join((person.get("name") or "").lower().split())
+    names = {x for x in (full, full.split(" ")[0] if full else "") if x}
+    return ({email} if email else set()), logins, names
 
 
 def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
@@ -90,8 +93,10 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
     """{people: {pk: {key: cell}}, orphans: {key: [account]}} for the apps in `found`.
 
     `people` are Authentik users ({pk, username, email}); `reach` is each one's
-    Authentik application slugs. An email match wins over a login match, and an
-    account is given to one person at most."""
+    Authentik application slugs. Email always first: every email match is made
+    before any login match, and a name match (full or first name) is tried last,
+    only for an account with no email at all (a Plex managed profile). An account
+    is given to one person at most."""
     adapters = adapters or ADAPTERS
     out: dict[int, dict[str, Any]] = {p["pk"]: {} for p in people}
     orphans: dict[str, list[dict[str, Any]]] = {}
@@ -99,19 +104,22 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
         ad = adapters[key]
         taken: set[int] = set()
         by_person: dict[int, dict[str, Any]] = {}
-        # Two passes: every email match first, so a login match can't steal one.
-        for pass_ in ("email", "login"):
+        # Every email match first, so a weaker match can't steal one.
+        for pass_ in ("email", "login", "name"):
             for i, acc in enumerate(accounts):
                 if i in taken:
                     continue
                 for p in people:
                     if p["pk"] in by_person:
                         continue
-                    emails, logins = _keys(p)
+                    emails, logins, names = _keys(p)
                     if pass_ == "email":
                         hit = bool(acc["email"]) and acc["email"] in emails
-                    else:
+                    elif pass_ == "login":
                         hit = bool(acc["login"]) and acc["login"].lower() in logins
+                    else:
+                        nm = " ".join((acc.get("name") or acc["login"] or "").lower().split())
+                        hit = not acc["email"] and bool(nm) and nm in names
                     if hit:
                         by_person[p["pk"]] = acc
                         taken.add(i)
@@ -123,7 +131,7 @@ def match(people: list[dict[str, Any]], found: dict[str, list[dict[str, Any]]],
             if acc:
                 out[p["pk"]][key] = {"status": "account" if can else "stale", "role": acc["role"],
                                      "disabled": acc["disabled"], "last_seen": acc["last_seen"],
-                                     "login": acc["login"]}
+                                     "login": acc["login"]} | ({"note": acc["note"]} if acc.get("note") else {})
             elif can:
                 out[p["pk"]][key] = {"status": "missing", "provision": ad.provision}
     return {"people": out, "orphans": orphans}
@@ -232,6 +240,21 @@ async def _plex(client: Any, base: str, key: str) -> list[dict[str, Any]]:
         if machine and not any(s.get("machineIdentifier") == machine for s in u.iter("Server")):
             continue
         out.append(account(login=u.get("username") or u.get("title"), email=u.get("email"), name=u.get("title")))
+    # Plex Home: managed profiles (restricted, no plex.tv login of their own) aren't in
+    # the friends list. Full Home members are, or are the owner; skip those already listed.
+    seen = {(a["email"] or "", (a["login"] or "").lower()) for a in out}
+    r = await client.get(PLEX_TV + "/api/home/users", headers=h)
+    if r.status_code == 200:
+        for u in ET.fromstring(r.text).iter("User"):
+            if u.get("admin") == "1":
+                continue
+            email, login = (u.get("email") or "").lower(), (u.get("username") or u.get("title") or "")
+            if (email, login.lower()) in seen:
+                continue
+            managed = u.get("restricted") == "1" and not email
+            out.append(account(login=login, email=email or None, name=u.get("title"),
+                               note="managed Plex Home profile (picked on a device signed in as the owner)"
+                               if managed else "Plex Home member"))
     return out
 
 

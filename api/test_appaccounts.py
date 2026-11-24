@@ -32,12 +32,34 @@ class Match(unittest.TestCase):
         self.assertNotIn("gr", got["people"][8])
         self.assertEqual([a["login"] for a in got["orphans"]["jf"]], ["ghost"])
 
+    def test_plex_home_managed_profiles(self):
+        home = ('<MediaContainer><User id="1" admin="1" restricted="0" username="bear" email="b@x" title="bear"/>'
+                '<User id="4" admin="0" restricted="1" title="Tucker"/>'
+                '<User id="5" admin="0" restricted="0" username="mum" email="m@x" title="Mum"/></MediaContainer>')
+        friends = '<MediaContainer><User id="5" username="mum" email="m@x" title="Mum"><Server machineIdentifier="M1"/></User></MediaContainer>'
+        got, _ = run(aa._plex, {"/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
+                                "/users/account.json": _Resp({"user": {"username": "bear", "email": "b@x"}}),
+                                "/api/users": _Resp(None, text=friends), "/api/home/users": _Resp(None, text=home)})
+        self.assertEqual([a["login"] for a in got], ["bear", "mum", "Tucker"], "owner and listed friends once")
+        self.assertIsNone(got[2]["email"])
+        self.assertIn("managed", got[2]["note"])
+
+
     def test_email_beats_login(self):
         # "mum" by login would go to pk 8, but the email names pk 9.
         found = {"jf": [aa.account(login="mum", email="kid@x.test")]}
         got = aa.match(PEOPLE, found, {}, AD)
         self.assertEqual(got["people"][9]["jf"]["login"], "mum")
         self.assertNotIn("jf", got["people"][8])
+
+    def test_name_only_for_an_account_with_no_email(self):
+        people = PEOPLE + [{"pk": 11, "username": "tg", "email": "tg@x.test", "name": "Tucker Smith"}]
+        found = {"jf": [aa.account(login="Tucker", name="Tucker"),                       # managed: no email
+                        aa.account(login="Tucker2", email="other@x.test", name="Tucker Smith")]}
+        got = aa.match(people, found, {}, AD)
+        self.assertEqual(got["people"][11]["jf"]["login"], "Tucker", "first name, no email: matched")
+        self.assertEqual([a["login"] for a in got["orphans"]["jf"]], ["Tucker2"],
+                         "an account WITH an email never matches by name")
 
     def test_email_shaped_login_matches_as_email(self):
         # FileBrowser behind a proxy: the username is the email, no email field.
@@ -121,7 +143,8 @@ class Adapters(unittest.TestCase):
                '<User id="3" username="elsewhere"><Server machineIdentifier="OTHER"/></User></MediaContainer>')
         got, c = run(aa._plex, {"/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
                                 "/users/account.json": _Resp({"user": {"username": "bear", "email": "b@x"}}),
-                                "/api/users": _Resp(None, text=xml)})
+                                "/api/users": _Resp(None, text=xml),
+                                "/api/home/users": _Resp(None, status=401, text="")})
         self.assertEqual([(a["login"], a["role"]) for a in got], [("bear", "admin"), ("mum", "user"), ("Kid", "user")])
         self.assertTrue(c.seen[0][0].startswith("http://app/identity"), "the local server first")
         self.assertTrue(c.seen[1][0].startswith("https://plex.tv/"), "then plex.tv")
