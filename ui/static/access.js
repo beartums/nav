@@ -203,8 +203,26 @@ function accessPage(h) {
     var el = document.createElement(tag || 'td');
     el.className = 'acc-who';
     el.textContent = p.name;
+    var todo = canMake(p);
+    if (todo.length) {
+      var mk = document.createElement('button');
+      mk.type = 'button'; mk.className = 'fg-btn acc-make'; mk.textContent = '+';
+      mk.title = 'Create accounts for ' + p.name + ' (' + todo.map(function (a) { return a.create.label; }).join(', ') + ')';
+      mk.setAttribute('aria-label', mk.title);
+      mk.addEventListener('click', function () {
+        createAccountsDialog(p, todo, function () { apps = null; loadApps(true); });
+      });
+      el.appendChild(mk);
+    }
     el.appendChild(div('note', p.email || ''));
     return el;
+  }
+  /** Apps nav can make an account in that this person has none in. */
+  function canMake(p) {
+    return apps.apps.filter(function (a) {
+      var c = p.cells && p.cells[a.key];
+      return a.create && !a.error && (!c || c.status === 'missing');
+    });
   }
 
   function renderApps() {
@@ -680,4 +698,105 @@ function addPersonDialog(view, h, done) {
     f.appendChild(ok);
     box.appendChild(f);
   }
+}
+
+
+// --- Create accounts (App accounts, + beside a person) ------------------------------
+// Pressed buttons choose the apps (pressed = make it); one password serves every app
+// that needs one, and each app names the account by username or email as it needs.
+function createAccountsDialog(p, todo, done) {
+  var back = document.createElement('div');
+  back.className = 'icondlg-back';
+  back.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60;' +
+                       'display:flex; align-items:center; justify-content:center;';
+  var box = document.createElement('div');
+  box.className = 'smalldlg person-dlg';
+  box.id = 'make-dlg';
+  back.appendChild(box);
+  document.body.appendChild(back);
+  var made = false;
+  function close() { back.remove(); document.removeEventListener('keydown', onKey); if (made) { done(); } }
+  function onKey(e) { if (e.key === 'Escape') { close(); } }
+  document.addEventListener('keydown', onKey);
+  back.addEventListener('click', function (e) { if (e.target === back) { close(); } });
+  function el(tag, cls, text) { var x = document.createElement(tag); if (cls) { x.className = cls; } if (text) { x.textContent = text; } return x; }
+
+  box.appendChild(el('h3', null, 'Accounts for ' + p.name));
+  var on = todo.filter(function (a) { var c = p.cells && p.cells[a.key]; return c && c.status === 'missing'; })
+               .map(function (a) { return a.key; });
+  var row = el('div', 'person-row make-apps');
+  var btns = todo.map(function (a) {
+    var b = el('button', 'ts-t person-choice', a.create.label);
+    b.type = 'button'; b.dataset.value = a.key;
+    var named = a.create.needs === 'invite' ? 'an invitation to ' + p.email
+      : 'named ' + (a.create.login === 'email' ? p.email : p.username);
+    var c = p.cells && p.cells[a.key];
+    b.title = a.label + ': ' + named + (a.create.hint ? ' · ' + a.create.hint : '') +
+      (c ? '' : ' · Authentik does not let them open it yet');
+    b.addEventListener('click', function () {
+      var i = on.indexOf(a.key);
+      if (i >= 0) { on.splice(i, 1); } else { on.push(a.key); }
+      paint();
+    });
+    row.appendChild(b);
+    return b;
+  });
+  box.appendChild(row);
+  var pwRow = el('label', 'person-row make-pw');
+  pwRow.appendChild(el('span', 'person-lab', 'Password'));
+  var pw = el('input');
+  pw.type = 'password'; pw.id = 'make-password'; pw.autocomplete = 'new-password';
+  pw.title = 'One password for every app here that needs one (at least 8 characters). nav never stores it.';
+  pwRow.appendChild(pw);
+  var show = el('button', 'ts-t', 'Show');
+  show.type = 'button'; show.title = 'Show the password';
+  show.addEventListener('click', function () {
+    pw.type = pw.type === 'password' ? 'text' : 'password';
+    show.setAttribute('aria-pressed', String(pw.type === 'text'));
+  });
+  pwRow.appendChild(show);
+  box.appendChild(pwRow);
+  var out = el('div', 'make-results');
+  box.appendChild(out);
+  var foot = el('div', 'smalldlg-foot');
+  var cancel = el('button', null, 'Close');
+  cancel.type = 'button'; cancel.addEventListener('click', close);
+  var go = el('button', 'primary', 'Create');
+  go.type = 'button'; go.id = 'make-create';
+  foot.appendChild(cancel); foot.appendChild(go);
+  box.appendChild(foot);
+
+  function needsPw() {
+    return todo.some(function (a) { return on.indexOf(a.key) >= 0 && a.create.needs === 'password'; });
+  }
+  function paint() {
+    btns.forEach(function (b) { b.setAttribute('aria-pressed', String(on.indexOf(b.dataset.value) >= 0)); });
+    pwRow.hidden = !needsPw();
+    go.disabled = !on.length || (needsPw() && pw.value.length < 8);
+  }
+  pw.addEventListener('input', paint);
+  paint();
+
+  go.addEventListener('click', function () {
+    go.disabled = true;
+    out.textContent = 'Creating\u2026';
+    connSend('POST', 'api/admin/access/apps/create', { pk: p.pk, apps: on.slice(), password: needsPw() ? pw.value : '' })
+      .then(function (r) {
+        made = true;
+        out.innerHTML = '';
+        todo.forEach(function (a) {
+          var res = (r.results || {})[a.key];
+          if (!res) { return; }
+          var line = el('div', 'make-result');
+          line.appendChild(personInd(res.ok ? 'ok' : 'bad', res.detail));
+          line.appendChild(document.createTextNode(' ' + a.label + ': ' + res.detail));
+          out.appendChild(line);
+          if (res.ok) { on.splice(on.indexOf(a.key), 1); btns.filter(function (b) { return b.dataset.value === a.key; })[0].disabled = true; }
+        });
+        pw.value = '';
+        paint();
+      })
+      .catch(function (e) { out.textContent = 'Failed: ' + e.message; go.disabled = false; });
+  });
+  setTimeout(function () { (needsPw() ? pw : go).focus(); }, 0);
 }

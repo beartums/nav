@@ -1191,3 +1191,9 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .person-err:empty, .person-edge:empty { display:none; }
 .person-line { font-size:13px; }
 .person-secret { user-select:all; padding:1px 4px; border:1px solid var(--line); border-radius:4px; word-break:break-all; }
+
+/* Create accounts (App accounts): + beside a person, and its dialog. */
+.acc-make { margin-left:6px; font-weight:700; }
+.make-apps { flex-wrap:wrap; gap:6px; }
+.make-pw input { flex:1; min-width:0; }
+.make-results { margin-top:8px; font-size:13px; display:grid; gap:3px; }

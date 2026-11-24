@@ -166,7 +166,7 @@ async def _choreboard(client: Any, base: str, key: str) -> list[dict[str, Any]]:
                     admin=p.get("role") == "admin", disabled=not p.get("active", 1)) for p in r.json()]
 
 
-adapter(Adapter("choreboard", "Choreboard", "choreboard", ("choreboard",), "manual", _choreboard,
+adapter(Adapter("choreboard", "Choreboard", "choreboard", ("choreboard",), "first", _choreboard,
                 "a choreboard API token (read scope is enough)", signin="header"))
 
 
@@ -215,8 +215,11 @@ async def _seerr(client: Any, base: str, key: str) -> list[dict[str, Any]]:
         j = r.json()
         for u in j.get("results") or []:
             login = u.get("username") or u.get("plexUsername") or u.get("jellyfinUsername")
+            kind = {1: "a Plex account", 2: "a local account (its own email and password)",
+                    3: "a Jellyfin account", 4: "an Emby account"}.get(u.get("userType"))
             out.append(account(login=login, email=u.get("email"), name=u.get("displayName"),
-                               admin=u.get("id") == 1 or bool(int(u.get("permissions") or 0) & 2)))
+                               admin=u.get("id") == 1 or bool(int(u.get("permissions") or 0) & 2),
+                               note=kind or ""))
         skip += 100
         if skip >= int((j.get("pageInfo") or {}).get("results") or 0) or not j.get("results"):
             return out
@@ -436,7 +439,7 @@ adapter(Adapter("audiobookshelf", "Audiobookshelf", "audiobookshelf", ("audioboo
 adapter(Adapter("navidrome", "Navidrome", "navidrome", ("music",), "manual", _navidrome,
                 "an admin's username:password (Navidrome has no API keys)", login="username", signin="own"))
 adapter(Adapter("immich", "Immich", "immich", ("immich",), "manual", _immich,
-                "an admin's API key with adminUser.read", signin="oidc"))
+                "an admin's API key with adminUser.read (and adminUser.create to make accounts)", signin="oidc"))
 adapter(Adapter("filebrowser", "FileBrowser", "filebrowser", ("filebrowser",), "first", _filebrowser,
                 "an admin's API token with admin checked", signin="header"))
 adapter(Adapter("grafana", "Grafana", "grafana", ("grafana",), "first", _grafana,
@@ -462,3 +465,153 @@ def signin_of(key: str, env: str = "") -> str:
         if k.strip() == key and v.strip() in SIGNIN:
             return v.strip()
     return ADAPTERS[key].signin
+
+
+# --- creating accounts (Access -> App accounts -> Create accounts...) -----------------
+# One admin-API call per app, with the same Connections key that reads its accounts.
+#   needs   "password"  the one password the admin types for this person, every app
+#           "invite"    no password: an invitation to the person's email (Plex)
+#   login   what the new account is named by: the Authentik "username" or "email"
+
+@dataclass(frozen=True)
+class Creator:
+    label: str
+    needs: str
+    login: str
+    make: Callable[[Any, str, str, dict[str, Any], str], Awaitable[None]]   # (client, base, key, person, password)
+    hint: str = ""           # the button's hover text
+
+
+CREATORS: dict[str, Creator] = {}
+MIN_PASSWORD = 8
+
+
+def creator(key: str, c: Creator) -> Creator:
+    if key not in ADAPTERS or c.needs not in ("password", "invite") or c.login not in ("username", "email"):
+        raise ValueError(f"creator {key!r}: unknown app, or needs/login not allowed")
+    CREATORS[key] = c
+    return c
+
+
+def creatable(key: str) -> dict[str, Any] | None:
+    c = CREATORS.get(key)
+    return {"label": c.label, "needs": c.needs, "login": c.login, "hint": c.hint} if c else None
+
+
+# The calls, from each app's source at the deployed release (2026-11-23). Every one
+# makes an ordinary (non-admin) account; the person's name goes along where the app
+# keeps one.
+
+async def _make_jellyfin(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # UserController.CreateUserByName: POST /Users/New {Name, Password}; ?ApiKey= is an
+    # administrator. New users see every library (EnableAllFolders) and are left off
+    # the login screen's user list (IsHidden): they type their name.
+    r = await client.post(base + "/Users/New", params={"ApiKey": key}, json={"Name": p["username"], "Password": pw})
+    r.raise_for_status()
+
+
+async def _make_navidrome(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # nativeapi: POST /api/user (admin); gets the libraries marked for new users.
+    user, _, password = key.partition(":")
+    lg = await client.post(base + "/auth/login", json={"username": user, "password": password})
+    lg.raise_for_status()
+    r = await client.post(base + "/api/user", headers={"X-ND-Authorization": f"Bearer {lg.json()['token']}"},
+                          json={"userName": p["username"], "name": p["name"], "email": p["email"],
+                                "password": pw, "isAdmin": False})
+    r.raise_for_status()
+
+
+async def _make_audiobookshelf(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # UserController.create: isActive defaults to FALSE (an inactive user can't sign
+    # in), so it's sent. Authentik sign-in links by username: the Authentik one.
+    r = await client.post(base + "/api/users", headers={"Authorization": f"Bearer {key}"},
+                          json={"username": p["username"], "password": pw, "email": p["email"],
+                                "type": "user", "isActive": True})
+    r.raise_for_status()
+
+
+async def _make_immich(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # user-admin.controller: POST /api/admin/users, key permission adminUser.create.
+    # shouldChangePassword defaults to true; they sign in with Authentik anyway.
+    r = await client.post(base + "/api/admin/users", headers={"x-api-key": key},
+                          json={"email": p["email"], "name": p["name"], "password": pw,
+                                "shouldChangePassword": False})
+    r.raise_for_status()
+
+
+async def _make_pingvin(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # user.controller: POST /api/users (admin). Usernames are 3-32 of [A-Za-z0-9_.].
+    user, password = _login(key, "Pingvin")
+    lg = await client.post(base + "/api/auth/signIn",
+                           json={("email" if "@" in user else "username"): user, "password": password})
+    lg.raise_for_status()
+    tok = (lg.json() or {}).get("accessToken")
+    if not tok:
+        raise ValueError("Pingvin: no access token (is TOTP on for this admin?)")
+    name = "".join(ch if ch.isalnum() or ch in "_." else "_" for ch in p["username"])
+    r = await client.post(base + "/api/users", headers={"Cookie": f"access_token={tok}"},
+                          json={"username": name, "email": p["email"], "password": pw, "isAdmin": False})
+    r.raise_for_status()
+
+
+async def _make_seerr(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # routes/user: POST /api/v1/user, a LOCAL account with Seerr's default permissions.
+    # It signs in only while Seerr's local sign-in is on (Settings -> Users).
+    r = await client.post(base + "/api/v1/user", headers={"X-Api-Key": key},
+                          json={"email": p["email"], "username": p["username"], "password": pw})
+    r.raise_for_status()
+
+
+async def _make_music_assistant(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # webserver/auth.py: command auth/user/create (users.manage; an admin's token has it).
+    r = await client.post(base + "/api", headers={"Authorization": f"Bearer {key}"},
+                          json={"command": "auth/user/create",
+                                "args": {"username": p["username"], "password": pw, "role": "user",
+                                         "display_name": p["name"]}})
+    r.raise_for_status()
+    body = r.json()
+    if isinstance(body, dict) and body.get("error_code"):
+        raise ValueError(f"Music Assistant: {body.get('details') or body.get('error_code')}")
+
+
+async def _make_plex(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
+    # python-plexapi inviteFriend: POST plex.tv/api/servers/{machine}/shared_servers with
+    # plex.tv's section ids (GET plex.tv/api/servers/{machine}, Section@id), every library.
+    # They accept the invitation with a plex.tv account (made from the email if need be).
+    import xml.etree.ElementTree as ET
+    h = {"X-Plex-Token": key, "X-Plex-Client-Identifier": "nav", "X-Plex-Product": "nav", "Accept": "application/json"}
+    ident = await client.get(base + "/identity", headers=h)
+    ident.raise_for_status()
+    try:
+        machine = ident.json()["MediaContainer"]["machineIdentifier"]
+    except ValueError:
+        machine = ET.fromstring(ident.text).get("machineIdentifier")
+    srv = await client.get(f"{PLEX_TV}/api/servers/{machine}", headers=h)
+    srv.raise_for_status()
+    ids = [s.get("id") for s in ET.fromstring(srv.text).iter("Section") if s.get("id")]
+    if not ids:
+        raise ValueError("plex.tv lists no libraries for this server")
+    r = await client.post(f"{PLEX_TV}/api/servers/{machine}/shared_servers", headers=h | {"Content-Type": "application/json"},
+                          json={"server_id": machine,
+                                "shared_server": {"library_section_ids": ids, "invited_email": p["email"]},
+                                "sharing_settings": {"allowSync": "0", "allowCameraUpload": "0", "allowChannels": "0",
+                                                     "filterMovies": "", "filterTelevision": "", "filterMusic": ""}})
+    r.raise_for_status()
+
+
+creator("jellyfin", Creator("Jellyfin", "password", "username", _make_jellyfin,
+                            "every library; they type their username at sign-in"))
+creator("navidrome", Creator("Navidrome", "password", "username", _make_navidrome,
+                             "the libraries marked for new users"))
+creator("audiobookshelf", Creator("Audiobookshelf", "password", "username", _make_audiobookshelf,
+                                  "every library; Authentik sign-in links on this username"))
+creator("immich", Creator("Immich", "password", "email", _make_immich,
+                          "Authentik sign-in links on this email; the key needs adminUser.create"))
+creator("pingvin", Creator("Pingvin Share", "password", "username", _make_pingvin,
+                           "username letters, digits, _ and . only (others become _)"))
+creator("seerr", Creator("Seerr (local)", "password", "email", _make_seerr,
+                         "a local Seerr account; needs Seerr's local sign-in on"))
+creator("music-assistant", Creator("Music Assistant", "password", "username", _make_music_assistant,
+                                   "an ordinary user"))
+creator("plex", Creator("Invite to Plex", "invite", "email", _make_plex,
+                        "shares every library; they accept with a plex.tv account"))

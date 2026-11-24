@@ -2592,14 +2592,63 @@ async def get_app_accounts(who: str = Depends(require_access_admin), fresh: bool
     return {
         "apps": [{"key": a.key, "label": a.label, "conn": a.conn, "apps": list(a.apps), "provision": a.provision,
                   "signin": appaccounts.signin_of(a.key, os.environ.get("NAV_APP_SIGNIN", "")),
+                  "create": appaccounts.creatable(a.key),
                   "error": got[a.key]["error"], "count": len(got[a.key]["accounts"])}
                  for a in appaccounts.ADAPTERS.values()],
         "people": sorted(({"pk": u["pk"], "name": u.get("name") or u.get("username"), "email": u.get("email"),
+                           "username": u.get("username"),
                            "cells": m["people"].get(u["pk"], {})} for u in ak["users"]),
                          key=lambda x: (x["name"] or "").lower()),
         "orphans": {k: v for k, v in m["orphans"].items() if v},
         "as_of": min(_AK_CACHE.get("wall") or time.time(), _APPS_CACHE.get("wall") or time.time()),
     }
+
+
+@app.post("/api/admin/access/apps/create")
+async def create_app_accounts(body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """{pk, apps: [key], password}: make this Authentik person an account in each
+    app, named by their username or email as the app needs, with the one password
+    (never stored or logged). Each app answers for itself: {results: {key: {ok, detail}}}."""
+    try:
+        pk, keys, password = int(body["pk"]), [str(k) for k in body.get("apps") or []], str(body.get("password") or "")
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(422, "pk, apps and (for most apps) password are required") from None
+    unknown = [k for k in keys if k not in appaccounts.CREATORS]
+    if not keys or unknown:
+        raise HTTPException(422, f"nav can't make accounts in: {', '.join(unknown) or 'nothing chosen'}")
+    if any(appaccounts.CREATORS[k].needs == "password" for k in keys) and len(password) < appaccounts.MIN_PASSWORD:
+        raise HTTPException(422, f"the password needs at least {appaccounts.MIN_PASSWORD} characters")
+    ak = await _authentik_access(False)
+    person = next((u for u in ak["users"] if u["pk"] == pk), None)
+    if not person or not person.get("username") or not person.get("email"):
+        raise HTTPException(404, "no such person in Authentik, or no username/email")
+    who_for = {"username": person["username"], "email": str(person["email"]).lower(),
+               "name": person.get("name") or person["username"]}
+    results: dict[str, dict[str, Any]] = {}
+    async with httpx.AsyncClient(timeout=20) as client:
+        for k in keys:
+            ad, cr = appaccounts.ADAPTERS[k], appaccounts.CREATORS[k]
+            url, key, _ = creds.resolve(ad.conn)
+            if not url or not key:
+                results[k] = {"ok": False, "detail": f"no address or key -- set it in Connections → {ad.label}"}
+                continue
+            try:
+                await cr.make(client, url, key, who_for, password)
+                results[k] = {"ok": True, "detail": ("invited " + who_for["email"]) if cr.needs == "invite"
+                              else f"made {who_for[cr.login]}"}
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
+                why = ("the key can't create users -- it needs an admin's, with create rights" if code in (401, 403)
+                       else f"HTTP {code}: {exc.response.text[:160]}")
+                results[k] = {"ok": False, "detail": why}
+            except httpx.HTTPError as exc:
+                results[k] = {"ok": False, "detail": f"{type(exc).__name__}: cannot reach {url}"}
+            except (ValueError, KeyError, TypeError) as exc:
+                results[k] = {"ok": False, "detail": f"{type(exc).__name__}: {exc}"[:200]}
+    _APPS_CACHE["data"] = None                     # the next read shows the new accounts
+    print(f"access: {who} made accounts for {who_for['username']}: "
+          + ", ".join(f"{k} {'ok' if v['ok'] else 'failed'}" for k, v in results.items()), flush=True)
+    return {"results": results}
 
 
 @app.put("/api/admin/access/apps/links")

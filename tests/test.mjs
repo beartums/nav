@@ -4392,6 +4392,46 @@ test('a dashboard stays in the URL, and leaving admin returns to it', async () =
   await settle(window, () => qOf(window).get('dashboard') === '7', 'back to the dashboard URL');
 });
 
+test('access: + beside a person makes accounts: pressed apps, one password, a result per app', async () => {
+  const APPV = {
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 1,
+             create: { label: 'Jellyfin', needs: 'password', login: 'username', hint: '' } },
+           { key: 'plex', label: 'Plex', apps: ['plex'], provision: 'manual', signin: 'plex', error: null, count: 1,
+             create: { label: 'Invite to Plex', needs: 'invite', login: 'email', hint: '' } },
+           { key: 'jellyseerr', label: 'Jellyseerr', apps: ['jellyseerr'], provision: 'first', signin: 'jellyfin', error: null, count: 0, create: null }],
+    people: [{ pk: 9, name: 'Liz', email: 'liz@x', username: 'liz',
+               cells: { jellyfin: { status: 'missing', provision: 'manual' }, plex: { status: 'missing', provision: 'manual' },
+                        jellyseerr: { status: 'missing', provision: 'first' } } }],
+    orphans: {}
+  };
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
+    u === 'api/admin/access' ? { enabled: false } : u.startsWith('api/admin/access/apps/create')
+      ? { results: { jellyfin: { ok: true, detail: 'made liz' }, plex: { ok: false, detail: 'the key can\'t create users' } } }
+      : u.startsWith('api/admin/access/apps') ? APPV : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-switch [data-view="apps"]'), 'switch');
+  doc.querySelector('.acc-switch [data-view="apps"]').click();
+  await settle(window, () => doc.querySelector('.acc-make'), '+ beside the person');
+  assert.match(doc.querySelector('.acc-make').title, /\(Jellyfin, Invite to Plex\)$/, 'Jellyseerr is not offered');
+  doc.querySelector('.acc-make').click();
+  const dlg = doc.getElementById('make-dlg');
+  const pressed = [...dlg.querySelectorAll('.person-choice')].map((b) => [b.textContent, b.getAttribute('aria-pressed')]);
+  assert.deepEqual(pressed, [['Jellyfin', 'true'], ['Invite to Plex', 'true']], 'the missing ones, pressed');
+  assert.match(dlg.querySelector('.person-choice').title, /named liz/);
+  const go = doc.getElementById('make-create');
+  assert.equal(go.disabled, true, 'Jellyfin needs the password first');
+  const pw = doc.getElementById('make-password');
+  pw.value = 'correct horse'; pw.dispatchEvent(new window.Event('input'));
+  assert.equal(go.disabled, false);
+  go.click();
+  await settle(window, () => dlg.querySelectorAll('.make-result').length === 2, 'results');
+  const body = JSON.parse(seen.find((r) => r.method === 'POST' && r.url === 'api/admin/access/apps/create').body);
+  assert.deepEqual(body, { pk: 9, apps: ['jellyfin', 'plex'], password: 'correct horse' });
+  assert.match(dlg.querySelector('.make-results').textContent, /Jellyfin: made liz.*Plex: the key can't create users/s);
+  assert.equal(pw.value, '', 'the password is cleared once sent');
+});
+
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
   const APPV = {
     apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2 },
