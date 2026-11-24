@@ -8,7 +8,10 @@ if os.environ.get("NAV_TEST_DSN"):
     os.environ.setdefault("NAV_DSN", os.environ["NAV_TEST_DSN"])
     os.environ.setdefault("NAV_ADMINS", "admin@x")
 os.environ.setdefault("NAV_DSN", "postgresql://unused/none")
-import app as nav  # noqa: E402
+try:
+    import app as nav  # noqa: E402
+except ImportError as e:  # CI's unit job is stdlib-only (no fastapi/httpx)
+    raise unittest.SkipTest(f"app needs requirements.txt: {e}")
 
 
 class AppsCache(unittest.IsolatedAsyncioTestCase):
