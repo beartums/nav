@@ -52,7 +52,7 @@ TILE_SIZES = ("XS", "S", "M", "L")
 # Past the largest named size a widget may take any span, "COLSxROWS" (the
 # page caps the width at the row). The renderer draws the largest named size
 # that fits and lays out into the rest -- see sizeBase() in group-grid.js.
-CUSTOM_MAX = (48, 32)
+CUSTOM_MAX = (48, 64)   # rows: 32 at 24 columns, doubled on a 48-column free layout
 CUSTOM = re.compile(r"^([1-9]\d?)x([1-9]\d?)$")
 
 

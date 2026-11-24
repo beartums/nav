@@ -2342,7 +2342,7 @@ async def layout_to_template(lid: int, body: dict[str, Any], request: Request,
 @app.put("/api/layouts/{lid}/grid")
 async def set_layout_grid(lid: int, body: dict[str, Any], request: Request,
                           who: str = Depends(whoami)) -> dict[str, Any]:
-    """{cols, tiles?: {slug: {x, size}}, placements?: {id: {x, size}}, free_groups?}:
+    """{cols, tiles?: {slug: {x, y, size}}, placements?: {id: {x, y, size}}, free_groups?}:
     a free layout's column count, with everything already on it moved and
     resized to keep its place (the page works out the new cells). One
     transaction: a half-rescaled page would overlap itself."""
@@ -2354,17 +2354,19 @@ async def set_layout_grid(lid: int, body: dict[str, Any], request: Request,
         tiles = {}
         for slug, v in (body.get("tiles") or {}).items():
             x = layouts.clean_cell(v.get("x"), "x", cols)
+            y = layouts.clean_cell(v.get("y"), "y", layouts.FREE_ROWS_MAX)
             size = v.get("size")
             if size is not None and not (size in widgets.TILE_SIZES or widgets.custom_ok(size)):
                 raise ValueError(f"{slug}: size must be a named size or COLSxROWS")
-            tiles[slug] = {"x": x, "size": size}
+            tiles[slug] = {"x": x, "y": y, "size": size}
         places = {}
         for pid, v in (body.get("placements") or {}).items():
             x = layouts.clean_cell(v.get("x"), "x", cols)
+            y = layouts.clean_cell(v.get("y"), "y", layouts.FREE_ROWS_MAX)
             size = v.get("size")
             if size is not None and not widgets.custom_ok(size) and not isinstance(size, str):
                 raise ValueError(f"placement {pid}: bad size")
-            places[int(pid)] = {"x": x, "size": size}
+            places[int(pid)] = {"x": x, "y": y, "size": size}
     except (ValueError, AttributeError, TypeError) as exc:
         raise bad(ValueError(str(exc))) from None
     async with pool.connection() as conn:  # type: ignore[union-attr]
@@ -2376,14 +2378,14 @@ async def set_layout_grid(lid: int, body: dict[str, Any], request: Request,
             if groups is not None:
                 await conn.execute("UPDATE layouts SET free_groups = %s WHERE id = %s", (json.dumps(groups), lid))
             for slug, v in tiles.items():
-                patch = {"x": v["x"]} | ({"size": v["size"]} if v["size"] else {})
+                patch = {"x": v["x"], "y": v["y"]} | ({"size": v["size"]} if v["size"] else {})
                 await conn.execute(
                     "UPDATE layout_tiles SET fields = fields || %s::jsonb WHERE layout_id = %s AND slug = %s",
                     (json.dumps(patch), lid, slug))
             for pid, v in places.items():
                 await conn.execute(
-                    "UPDATE widget_placements SET x = %s, size = COALESCE(%s, size) WHERE id = %s AND layout_id = %s",
-                    (v["x"], v["size"], pid, lid))
+                    "UPDATE widget_placements SET x = %s, y = %s, size = COALESCE(%s, size) WHERE id = %s AND layout_id = %s",
+                    (v["x"], v["y"], v["size"], pid, lid))
             await touch(conn, lid, who)
     return {"ok": True, "cols": cols}
 
