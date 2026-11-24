@@ -4368,8 +4368,8 @@ test('a dashboard stays in the URL, and leaving admin returns to it', async () =
 
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
   const APPV = {
-    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', error: null, count: 2 },
-           { key: 'grafana', label: 'Grafana', apps: ['grafana'], provision: 'first', error: 'no key -- add one in Connections → Grafana', count: 0 }],
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2 },
+           { key: 'grafana', label: 'Grafana', apps: ['grafana'], provision: 'first', signin: 'oidc', error: 'no key -- add one in Connections → Grafana', count: 0 }],
     people: [{ pk: 5, name: 'Bear', email: 'b@x', cells: { jellyfin: { status: 'account', role: 'admin', disabled: false, last_seen: null, login: 'bear' } } },
              { pk: 8, name: 'Mum', email: 'm@x', cells: { jellyfin: { status: 'stale', role: 'user', disabled: true, login: 'mum' } } },
              { pk: 9, name: 'Kid', email: 'k@x', cells: { jellyfin: { status: 'missing', provision: 'manual' } } }],
@@ -4387,6 +4387,9 @@ test('access: App accounts shows each app’s accounts against people, errors an
   assert.deepEqual(cells, [['admin', ''], ['stale', ''], ['missing', '']], 'indicators, not words');
   assert.match(doc.querySelector('.acc-apps-table tbody tr:nth-child(2) .acc-ind').title, /Leftover account.*mum.*user, disabled/);
   assert.match(doc.querySelector('.acc-app-err .acc-head-warn').title, /no key/, 'an unread app: a warning icon with the reason');
+  const tags = [...doc.querySelectorAll('.acc-apps-table thead .acc-signin')].map((t) => t.textContent);
+  assert.deepEqual(tags, ['pw', 'SSO'], 'each heading says how people sign in');
+  assert.match(doc.querySelector('.acc-signin-own').title, /second login/);
   doc.getElementById('acc-pivot').click();
   assert.equal(doc.querySelectorAll('.acc-apps-table tbody tr').length, 2, 'pivoted: one row per app');
   assert.equal(JSON.parse(window.localStorage.getItem('nav.accessView')).pivot, true, 'remembered');

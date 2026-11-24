@@ -222,3 +222,14 @@ class Adapters(unittest.TestCase):
         _, c = run(aa._pingvin, {"/api/auth/signIn": _Resp({"accessToken": "J"}), "/api/users": _Resp([])},
                    key="b@x:pw")
         self.assertEqual(c.seen[0][1], {"email": "b@x", "password": "pw"})
+
+
+class SigninTest(unittest.TestCase):
+    def test_every_adapter_has_a_known_signin(self):
+        for a in aa.ADAPTERS.values():
+            self.assertIn(a.signin, aa.SIGNIN, a.key)
+
+    def test_env_overrides_one_app(self):
+        self.assertEqual(aa.signin_of("mealie", "navidrome=header, mealie=oidc"), "oidc")
+        self.assertEqual(aa.signin_of("mealie", "mealie=bogus"), aa.ADAPTERS["mealie"].signin)
+        self.assertEqual(aa.signin_of("jellyfin", ""), "own")

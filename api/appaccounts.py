@@ -30,6 +30,16 @@ from typing import Any, Awaitable, Callable
 #   first     made at first sign-in, OIDC or a trusted header (missing = not signed in yet)
 PROVISION = ("manual", "first")
 
+# How a person signs in once past the gateway (the App accounts column headers).
+#   header    the app trusts the gateway's identity header: no second login
+#   oidc      the app's own "Sign in with <IdP>" button (or an automatic redirect)
+#   own       the app's own username and password: a second login
+#   plex      a plex.tv account
+#   jellyfin  a Jellyfin account (Jellyseerr)
+# The defaults below are how each app is usually wired here; a deployment
+# sets its own with NAV_APP_SIGNIN="mealie=oidc,navidrome=header".
+SIGNIN = ("header", "oidc", "own", "plex", "jellyfin")
+
 
 @dataclass(frozen=True)
 class Adapter:
@@ -41,14 +51,15 @@ class Adapter:
     fetch: Callable[[Any, str, str], Awaitable[list[dict[str, Any]]]]   # (client, base_url, key)
     note: str = ""           # what the key must be, for the Connections page
     login: str = ""          # no API keys: the key is "<login>:<password>"; "username" or "email"
+    signin: str = "own"      # SIGNIN
 
 
 ADAPTERS: dict[str, Adapter] = {}
 
 
 def adapter(a: Adapter) -> Adapter:
-    if a.key in ADAPTERS or a.provision not in PROVISION:
-        raise ValueError(f"adapter {a.key!r}: duplicate, or provision not in {PROVISION}")
+    if a.key in ADAPTERS or a.provision not in PROVISION or a.signin not in SIGNIN:
+        raise ValueError(f"adapter {a.key!r}: duplicate, or provision/signin not in {PROVISION}/{SIGNIN}")
     ADAPTERS[a.key] = a
     return a
 
@@ -131,7 +142,7 @@ async def _choreboard(client: Any, base: str, key: str) -> list[dict[str, Any]]:
 
 
 adapter(Adapter("choreboard", "Choreboard", "choreboard", ("choreboard",), "manual", _choreboard,
-                "a choreboard API token (read scope is enough)"))
+                "a choreboard API token (read scope is enough)", signin="header"))
 
 
 def _iso_ms(ms: Any) -> str | None:
@@ -372,33 +383,42 @@ async def _pingvin(client: Any, base: str, key: str) -> list[dict[str, Any]]:
 
 
 adapter(Adapter("mealie", "Mealie", "mealie", ("mealie",), "first", _mealie,
-                "an admin's API token (profile → API Tokens)"))
-adapter(Adapter("seerr", "Seerr", "seerr", ("seerr",), "first", _seerr, "the API key (Settings → General)"))
+                "an admin's API token (profile → API Tokens)", signin="header"))
+adapter(Adapter("seerr", "Seerr", "seerr", ("seerr",), "first", _seerr, "the API key (Settings → General)", signin="plex"))
 adapter(Adapter("jellyseerr", "Jellyseerr", "jellyseerr", ("jellyseerr",), "first", _seerr,
-                "the API key (Settings → General)"))
+                "the API key (Settings → General)", signin="jellyfin"))
 adapter(Adapter("jellyfin", "Jellyfin", "jellyfin", ("jellyfin",), "manual", _jellyfin,
-                "an API key (Dashboard → API Keys)"))
+                "an API key (Dashboard → API Keys)", signin="own"))
 adapter(Adapter("plex", "Plex", "plex", ("plex",), "manual", _plex,
-                "the server owner's Plex token (address: the local Plex server)"))
+                "the server owner's Plex token (address: the local Plex server)", signin="plex"))
 adapter(Adapter("audiobookshelf", "Audiobookshelf", "audiobookshelf", ("audiobookshelf",), "manual",
-                _audiobookshelf, "an API key made by an admin (Settings → API Keys)"))
+                _audiobookshelf, "an API key made by an admin (Settings → API Keys)", signin="oidc"))
 adapter(Adapter("navidrome", "Navidrome", "navidrome", ("music",), "manual", _navidrome,
-                "an admin's username:password (Navidrome has no API keys)", login="username"))
+                "an admin's username:password (Navidrome has no API keys)", login="username", signin="own"))
 adapter(Adapter("immich", "Immich", "immich", ("immich",), "manual", _immich,
-                "an admin's API key with adminUser.read"))
+                "an admin's API key with adminUser.read", signin="oidc"))
 adapter(Adapter("filebrowser", "FileBrowser", "filebrowser", ("filebrowser",), "first", _filebrowser,
-                "an admin's API token with admin checked"))
+                "an admin's API token with admin checked", signin="header"))
 adapter(Adapter("grafana", "Grafana", "grafana", ("grafana",), "first", _grafana,
-                "a service account token with org role Admin"))
+                "a service account token with org role Admin", signin="oidc"))
 adapter(Adapter("paperless", "Paperless", "paperless", ("paperless-ngx",), "first", _paperless,
-                "a superuser's API token"))
+                "a superuser's API token", signin="oidc"))
 adapter(Adapter("music-assistant", "Music Assistant", "music-assistant", ("speakers",), "manual", _music_assistant,
-                "an admin's long-lived token (profile → long-lived tokens; it lasts a year)"))
+                "an admin's long-lived token (profile → long-lived tokens; it lasts a year)", signin="own"))
 adapter(Adapter("memos", "Memos", "memos", ("memos",), "first", _memos,
-                "an admin's access token (Settings → Access Tokens)"))
+                "an admin's access token (Settings → Access Tokens)", signin="oidc"))
 adapter(Adapter("aurral", "Aurral", "aurral", ("aurral",), "first", _aurral,
-                "the API key (Settings → General → API access)"))
+                "the API key (Settings → General → API access)", signin="oidc"))
 adapter(Adapter("affine", "AFFiNE", "affine", ("affine",), "first", _affine,
-                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)", login="email"))
+                "an admin's email:password (AFFiNE has no API tokens; the account needs a password)", login="email", signin="oidc"))
 adapter(Adapter("pingvin", "Pingvin Share", "pingvin", ("share",), "manual", _pingvin,
-                "an admin's username:password (Pingvin has no API tokens; no TOTP)", login="username"))
+                "an admin's username:password (Pingvin has no API tokens; no TOTP)", login="username", signin="own"))
+
+
+def signin_of(key: str, env: str = "") -> str:
+    """An adapter's sign-in method, NAV_APP_SIGNIN ("key=method,...") first."""
+    for part in env.split(","):
+        k, _, v = part.strip().partition("=")
+        if k.strip() == key and v.strip() in SIGNIN:
+            return v.strip()
+    return ADAPTERS[key].signin
