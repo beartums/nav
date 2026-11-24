@@ -203,8 +203,29 @@ function accessPage(h) {
     var el = document.createElement(tag || 'td');
     el.className = 'acc-who';
     el.textContent = p.name;
+    var todo = canMake(p);
+    if (todo.length) {
+      var mk = document.createElement('button');
+      mk.type = 'button'; mk.className = 'fg-btn acc-make'; mk.textContent = '+';
+      mk.title = 'Accounts for ' + p.name + ': ' + todo.map(function (a) { return a.label; }).join(', ');
+      mk.setAttribute('aria-label', mk.title);
+      mk.addEventListener('click', function () {
+        createAccountsDialog(p, todo, function () { apps = null; loadApps(true); });
+      });
+      el.appendChild(mk);
+    }
     el.appendChild(div('note', p.email || ''));
     return el;
+  }
+  /** Apps this person has no account in where nav can make one, or an unmatched
+   *  account there could be theirs. Each carries its unmatched accounts as `existing`. */
+  function canMake(p) {
+    return apps.apps.map(function (a) {
+      return Object.assign({}, a, { existing: (apps.orphans || {})[a.key] || [] });
+    }).filter(function (a) {
+      var c = p.cells && p.cells[a.key];
+      return !a.error && (!c || c.status === 'missing') && (a.create || a.existing.length);
+    });
   }
 
   function renderApps() {
@@ -680,4 +701,160 @@ function addPersonDialog(view, h, done) {
     f.appendChild(ok);
     box.appendChild(f);
   }
+}
+
+
+// --- Create accounts (App accounts, + beside a person) ------------------------------
+// Pressed buttons choose the apps (pressed = make it); one password serves every app
+// that needs one, and each app names the account by username or email as it needs.
+function createAccountsDialog(p, todo, done) {
+  var back = document.createElement('div');
+  back.className = 'icondlg-back';
+  back.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60;' +
+                       'display:flex; align-items:center; justify-content:center;';
+  var box = document.createElement('div');
+  box.className = 'smalldlg person-dlg';
+  box.id = 'make-dlg';
+  back.appendChild(box);
+  document.body.appendChild(back);
+  var made = false;
+  function close() { back.remove(); document.removeEventListener('keydown', onKey); if (made) { done(); } }
+  function onKey(e) { if (e.key === 'Escape') { close(); } }
+  document.addEventListener('keydown', onKey);
+  back.addEventListener('click', function (e) { if (e.target === back) { close(); } });
+  function el(tag, cls, text) { var x = document.createElement(tag); if (cls) { x.className = cls; } if (text) { x.textContent = text; } return x; }
+
+  box.appendChild(el('h3', null, 'Accounts for ' + p.name));
+  // One row per app: its ways (pressed buttons, at most one) and, where accounts
+  // match nobody, "is…" to say one of those is this person. choice[key] =
+  // {mode: id} to make one, or {link: account key} for an existing one.
+  var choice = {};
+  var rows = todo.map(function (a) {
+    var c = p.cells && p.cells[a.key];
+    var row = el('div', 'person-row make-app');
+    row.dataset.app = a.key;
+    var lab = el('span', 'person-lab', a.label);
+    lab.title = c ? 'Authentik lets ' + p.name + ' open ' + a.label : 'Authentik does not let ' + p.name + ' open ' + a.label + ' yet';
+    row.appendChild(lab);
+    var btns = (a.create || []).map(function (m) {
+      var b = el('button', 'ts-t person-choice', m.label);
+      b.type = 'button'; b.dataset.mode = m.id;
+      b.title = (m.login === 'email' ? p.email : m.login === 'name' ? p.name : p.username) +
+        (m.needs === 'password' ? ' · the password below' : '') + (m.hint ? ' · ' + m.hint : '');
+      b.addEventListener('click', function () {
+        choice[a.key] = choice[a.key] && choice[a.key].mode === m.id ? null : { mode: m.id };
+        if (sel) { sel.value = ''; }
+        paint();
+      });
+      row.appendChild(b);
+      return b;
+    });
+    var sel = null;
+    if (a.existing.length) {
+      sel = el('select', 'make-existing');
+      sel.setAttribute('aria-label', p.name + ' is an existing ' + a.label + ' account');
+      sel.title = 'Already has one: pick it (an account nobody is matched to)';
+      var none = el('option', null, 'is existing\u2026'); none.value = '';
+      sel.appendChild(none);
+      a.existing.forEach(function (o) {
+        var op = el('option', null, (o.login || o.email || o.name || '?') + (o.note ? ' (' + o.note.split(' (')[0] + ')' : ''));
+        op.value = o.key;
+        sel.appendChild(op);
+      });
+      sel.addEventListener('change', function () { choice[a.key] = sel.value ? { link: sel.value } : null; paint(); });
+      row.appendChild(sel);
+    }
+    // Default: where Authentik already lets them in, the first way to make one.
+    if (c && c.status === 'missing' && a.create && a.create.length) { choice[a.key] = { mode: a.create[0].id }; }
+    box.appendChild(row);
+    return { a: a, btns: btns, sel: sel };
+  });
+  var pwRow = el('label', 'person-row make-pw');
+  pwRow.appendChild(el('span', 'person-lab', 'Password'));
+  var pw = el('input');
+  pw.type = 'password'; pw.id = 'make-password'; pw.autocomplete = 'new-password';
+  pw.title = 'One password for every app here that needs one (at least 8 characters). nav never stores it.';
+  pwRow.appendChild(pw);
+  var show = el('button', 'ts-t', 'Show');
+  show.type = 'button'; show.title = 'Show the password';
+  show.addEventListener('click', function () {
+    pw.type = pw.type === 'password' ? 'text' : 'password';
+    show.setAttribute('aria-pressed', String(pw.type === 'text'));
+  });
+  pwRow.appendChild(show);
+  box.appendChild(pwRow);
+  var out = el('div', 'make-results');
+  box.appendChild(out);
+  var foot = el('div', 'smalldlg-foot');
+  var cancel = el('button', null, 'Close');
+  cancel.type = 'button'; cancel.addEventListener('click', close);
+  var go = el('button', 'primary', 'Create');
+  go.type = 'button'; go.id = 'make-create';
+  foot.appendChild(cancel); foot.appendChild(go);
+  box.appendChild(foot);
+
+  function modeOf(a) {
+    var ch = choice[a.key];
+    return ch && ch.mode ? (a.create || []).filter(function (m) { return m.id === ch.mode; })[0] : null;
+  }
+  function needsPw() {
+    return rows.some(function (r) { var m = modeOf(r.a); return m && m.needs === 'password'; });
+  }
+  function any() { return rows.some(function (r) { return choice[r.a.key]; }); }
+  function paint() {
+    rows.forEach(function (r) {
+      var ch = choice[r.a.key];
+      r.btns.forEach(function (b) { b.setAttribute('aria-pressed', String(!!(ch && ch.mode === b.dataset.mode))); });
+    });
+    pwRow.hidden = !needsPw();
+    go.disabled = !any() || (needsPw() && pw.value.length < 8);
+  }
+  pw.addEventListener('input', paint);
+  paint();
+
+  function report(a, ok, detail) {
+    var line = el('div', 'make-result');
+    line.appendChild(personInd(ok ? 'ok' : 'bad', detail));
+    line.appendChild(document.createTextNode(' ' + a.label + ': ' + detail));
+    out.appendChild(line);
+    if (ok) {
+      choice[a.key] = null;
+      var r = rows.filter(function (x) { return x.a.key === a.key; })[0];
+      r.btns.forEach(function (b) { b.disabled = true; });
+      if (r.sel) { r.sel.disabled = true; }
+    }
+  }
+  go.addEventListener('click', function () {
+    go.disabled = true;
+    out.textContent = 'Working\u2026';
+    var make = {}, links = [];
+    rows.forEach(function (r) {
+      var ch = choice[r.a.key];
+      if (ch && ch.mode) { make[r.a.key] = ch.mode; }
+      else if (ch && ch.link) { links.push({ a: r.a, account: ch.link }); }
+    });
+    var lines = [];
+    var chain = Promise.resolve();
+    links.forEach(function (l) {
+      chain = chain.then(function () {
+        return connSend('PUT', 'api/admin/access/apps/links', { app: l.a.key, account: l.account, pk: p.pk })
+          .then(function (r) { lines.push([l.a, true, 'matched to ' + l.account + (r && r.detail ? '; ' + r.detail : '')]); },
+                function (e) { lines.push([l.a, false, e.message]); });
+      });
+    });
+    chain.then(function () {
+      if (!Object.keys(make).length) { return null; }
+      return connSend('POST', 'api/admin/access/apps/create', { pk: p.pk, apps: make, password: needsPw() ? pw.value : '' })
+        .then(function (r) {
+          rows.forEach(function (x) { var res = (r.results || {})[x.a.key]; if (res) { lines.push([x.a, res.ok, res.detail]); } });
+        }, function (e) { lines.push([{ label: 'Create' }, false, e.message]); });
+    }).then(function () {
+      made = true;
+      out.innerHTML = '';
+      lines.forEach(function (l) { report(l[0], l[1], l[2]); });
+      pw.value = '';
+      paint();
+    });
+  });
+  setTimeout(function () { (needsPw() ? pw : go).focus(); }, 0);
 }

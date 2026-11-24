@@ -118,7 +118,7 @@ class _Client:
         self.seen.append((url, params, headers))
         return self.routes["/" + url.split("/", 3)[-1]]
 
-    async def post(self, url, json=None, headers=None):
+    async def post(self, url, json=None, headers=None, params=None):
         self.seen.append((url, json, headers))
         return self.routes["/" + url.split("/", 3)[-1]]
 
@@ -269,3 +269,85 @@ class SigninTest(unittest.TestCase):
         self.assertEqual(aa.signin_of("mealie", "navidrome=header, mealie=oidc"), "oidc")
         self.assertEqual(aa.signin_of("mealie", "mealie=bogus"), aa.ADAPTERS["mealie"].signin)
         self.assertEqual(aa.signin_of("jellyfin", ""), "own")
+
+
+PERSON = {"username": "liz", "email": "liz@x.test", "name": "Liz G"}
+
+
+def make(fn, routes, key="k"):
+    c = _Client(routes)
+    asyncio.run(fn(c, "http://app", key, PERSON, "pw-12345678"))
+    return c
+
+
+class Creators(unittest.TestCase):
+    def test_registry_covers_the_manual_apps_not_jellyseerr(self):
+        self.assertEqual(sorted(aa.CREATORS), ["audiobookshelf", "immich", "jellyfin", "music-assistant",
+                                               "navidrome", "pingvin", "plex", "seerr"])
+        self.assertIsNone(aa.creatable("jellyseerr"))
+        self.assertEqual([m["id"] for m in aa.creatable("plex")], ["invite", "managed"])
+        self.assertEqual([m["id"] for m in aa.creatable("seerr")], ["local", "plex"])
+
+    def test_jellyfin(self):
+        c = make(aa._make_jellyfin, {"/Users/New": _Resp({"Id": "x"})})
+        self.assertEqual(c.seen[0][1], {"Name": "liz", "Password": "pw-12345678"})
+
+    def test_audiobookshelf_is_active(self):
+        c = make(aa._make_audiobookshelf, {"/api/users": _Resp({"user": {"id": "u"}})})
+        self.assertEqual(c.seen[0][1], {"username": "liz", "password": "pw-12345678", "email": "liz@x.test",
+                                        "type": "user", "isActive": True})
+
+    def test_immich_by_email(self):
+        c = make(aa._make_immich, {"/api/admin/users": _Resp({"id": "u"})})
+        self.assertEqual(c.seen[0][1]["email"], "liz@x.test")
+        self.assertFalse(c.seen[0][1]["shouldChangePassword"])
+
+    def test_navidrome_logs_in_then_creates(self):
+        c = make(aa._make_navidrome, {"/auth/login": _Resp({"token": "T"}), "/api/user": _Resp({"id": "1"})}, key="adm:pw")
+        self.assertEqual(c.seen[1][2], {"X-ND-Authorization": "Bearer T"})
+        self.assertEqual(c.seen[1][1]["userName"], "liz")
+
+    def test_pingvin_username_is_cleaned(self):
+        global PERSON
+        keep = PERSON
+        PERSON = dict(keep, username="liz-g")
+        try:
+            c = make(aa._make_pingvin, {"/api/auth/signIn": _Resp({"accessToken": "J"}), "/api/users": _Resp({"id": "u"})},
+                     key="adm:pw")
+        finally:
+            PERSON = keep
+        self.assertEqual(c.seen[1][1]["username"], "liz_g")
+
+    def test_seerr_local(self):
+        c = make(aa._make_seerr, {"/api/v1/user": _Resp({"id": 5})})
+        self.assertEqual(c.seen[0][1], {"email": "liz@x.test", "username": "liz", "password": "pw-12345678"})
+
+    def test_music_assistant_command(self):
+        c = make(aa._make_music_assistant, {"/api": _Resp({"user_id": "u"})})
+        self.assertEqual(c.seen[0][1]["command"], "auth/user/create")
+        self.assertEqual(c.seen[0][1]["args"]["role"], "user")
+
+    def test_plex_invites_with_plex_tv_section_ids(self):
+        srv = '<MediaContainer><Server><Section id="111" key="1"/><Section id="222" key="2"/></Server></MediaContainer>'
+        c = make(aa._make_plex, {"/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
+                                 "/api/servers/M1": _Resp(None, text=srv),
+                                 "/api/servers/M1/shared_servers": _Resp(None, text="<x/>")})
+        self.assertEqual(c.seen[2][0], "https://plex.tv/api/servers/M1/shared_servers")
+        self.assertEqual(c.seen[2][1]["server_id"], "M1")
+        self.assertEqual(c.seen[2][1]["shared_server"], {"library_section_ids": ["111", "222"], "invited_email": "liz@x.test"})
+
+    def test_plex_managed_profile_then_share_by_id(self):
+        srv = '<MediaContainer><Server><Section id="111" key="1"/></Server></MediaContainer>'
+        c = make(aa._make_plex_managed, {"/api/home/users": _Resp(None, text='<User id="77" title="Liz G"/>'),
+                                         "/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
+                                         "/api/servers/M1": _Resp(None, text=srv),
+                                         "/api/servers/M1/shared_servers": _Resp(None, text="<x/>")})
+        self.assertEqual(c.seen[0][0], "https://plex.tv/api/home/users")
+        self.assertEqual(c.seen[-1][1]["shared_server"], {"library_section_ids": ["111"], "invited_id": "77"})
+
+    def test_seerr_from_plex_needs_a_plex_friend(self):
+        c = make(aa._make_seerr_from_plex, {"/api/v1/settings/plex/users": _Resp([{"id": "42", "email": "LIZ@x.test"}]),
+                                            "/api/v1/user/import-from-plex": _Resp([])})
+        self.assertEqual(c.seen[1][1], {"plexIds": ["42"]})
+        with self.assertRaises(ValueError):
+            make(aa._make_seerr_from_plex, {"/api/v1/settings/plex/users": _Resp([])})

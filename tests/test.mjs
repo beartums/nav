@@ -4392,6 +4392,54 @@ test('a dashboard stays in the URL, and leaving admin returns to it', async () =
   await settle(window, () => qOf(window).get('dashboard') === '7', 'back to the dashboard URL');
 });
 
+test('access: + beside a person makes accounts: a way per app, one password, an existing one by hand', async () => {
+  const APPV = {
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 1,
+             create: [{ id: 'create', label: 'Create', needs: 'password', login: 'username', hint: '' }] },
+           { key: 'plex', label: 'Plex', apps: ['plex'], provision: 'manual', signin: 'plex', error: null, count: 1,
+             create: [{ id: 'invite', label: 'Invite', needs: 'none', login: 'email', hint: '' },
+                      { id: 'managed', label: 'Managed profile', needs: 'none', login: 'name', hint: '' }] },
+           { key: 'choreboard', label: 'Choreboard', apps: ['choreboard'], provision: 'first', signin: 'header', error: null, count: 2, create: null },
+           { key: 'jellyseerr', label: 'Jellyseerr', apps: ['jellyseerr'], provision: 'first', signin: 'jellyfin', error: null, count: 0, create: null }],
+    people: [{ pk: 9, name: 'Liz', email: 'liz@x', username: 'liz',
+               cells: { jellyfin: { status: 'missing', provision: 'manual' }, plex: { status: 'missing', provision: 'manual' },
+                        choreboard: { status: 'missing', provision: 'first' }, jellyseerr: { status: 'missing', provision: 'first' } } }],
+    orphans: { choreboard: [{ login: 'Lizzie', key: 'lizzie', role: 'user' }] }
+  };
+  const { window, doc, seen } = await boot(APPS, null, (u) =>
+    u === 'api/admin/access' ? { enabled: false } : u.startsWith('api/admin/access/apps/create')
+      ? { results: { jellyfin: { ok: true, detail: 'create: liz' }, plex: { ok: false, detail: 'the key can\'t create users' } } }
+      : u.startsWith('api/admin/access/apps/links') ? { ok: true, detail: 'gave the choreboard member liz@x' }
+      : u.startsWith('api/admin/access/apps') ? APPV : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-switch [data-view="apps"]'), 'switch');
+  doc.querySelector('.acc-switch [data-view="apps"]').click();
+  await settle(window, () => doc.querySelector('.acc-make'), '+ beside the person');
+  assert.match(doc.querySelector('.acc-make').title, /Jellyfin, Plex, Choreboard$/, 'Jellyseerr: nothing to make, nobody to match');
+  doc.querySelector('.acc-make').click();
+  const dlg = doc.getElementById('make-dlg');
+  const row = (k) => dlg.querySelector('.make-app[data-app="' + k + '"]');
+  const pressed = (k) => [...row(k).querySelectorAll('.person-choice')].map((b) => b.textContent + ':' + b.getAttribute('aria-pressed'));
+  assert.deepEqual(pressed('plex'), ['Invite:true', 'Managed profile:false'], 'the first way, pressed');
+  row('plex').querySelectorAll('.person-choice')[1].click();
+  assert.deepEqual(pressed('plex'), ['Invite:false', 'Managed profile:true'], 'one way per app');
+  const ex = row('choreboard').querySelector('.make-existing');
+  ex.value = 'lizzie'; ex.dispatchEvent(new window.Event('change'));
+  const go = doc.getElementById('make-create');
+  assert.equal(go.disabled, true, 'Jellyfin needs the password first');
+  const pw = doc.getElementById('make-password');
+  pw.value = 'correct horse'; pw.dispatchEvent(new window.Event('input'));
+  go.click();
+  await settle(window, () => dlg.querySelectorAll('.make-result').length === 3, 'results');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'PUT' && r.url === 'api/admin/access/apps/links').body),
+                   { app: 'choreboard', account: 'lizzie', pk: 9 });
+  assert.deepEqual(JSON.parse(seen.find((r) => r.method === 'POST' && r.url === 'api/admin/access/apps/create').body),
+                   { pk: 9, apps: { jellyfin: 'create', plex: 'managed' }, password: 'correct horse' });
+  assert.match(dlg.querySelector('.make-results').textContent, /Choreboard: matched to lizzie; gave the choreboard member/);
+  assert.equal(pw.value, '', 'the password is cleared once sent');
+});
+
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
   const APPV = {
     apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2 },
