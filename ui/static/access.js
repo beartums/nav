@@ -51,7 +51,8 @@ function accessPage(h) {
   try { pref = JSON.parse(localStorage.getItem(PREF) || '{}') || {}; } catch (e) {}
   // A link (?admin=access&view=apps&pivot=1) wins over what this browser remembers.
   var want = h.want || {};
-  var mode = (want.view || pref.mode) === 'apps' ? 'apps' : 'groups';
+  var VIEWS = ['groups', 'apps', 'admins'];
+  var mode = VIEWS.indexOf(want.view || pref.mode) > 0 ? (want.view || pref.mode) : 'groups';
   var pivot = 'pivot' in want ? want.pivot === '1' : !!pref.pivot, apps = null;
   function savePref() {
     try { localStorage.setItem(PREF, JSON.stringify({ mode: mode, pivot: pivot })); } catch (e) {}
@@ -60,16 +61,16 @@ function accessPage(h) {
   urlPageSet(place());
   // Back/Forward within the page: another view, or the other way round.
   h.onURL = function (w) {
-    mode = w.view === 'apps' ? 'apps' : 'groups';
+    mode = VIEWS.indexOf(w.view) > 0 ? w.view : 'groups';
     pivot = w.pivot === '1';
     urlPageSet(place());
     if (!view) { return; }            // still loading: it draws the chosen view when done
-    if (mode === 'apps' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
+    if (mode !== 'groups' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
   };
 
   function switcher() {
     var sw = div('acc-switch');
-    [['groups', 'Groups'], ['apps', 'App accounts']].forEach(function (m) {
+    [['groups', 'Groups'], ['apps', 'App accounts'], ['admins', 'Admins']].forEach(function (m) {
       var b = document.createElement('button');
       b.type = 'button'; b.textContent = m[1]; b.dataset.view = m[0];
       b.setAttribute('aria-pressed', String(mode === m[0]));
@@ -78,7 +79,7 @@ function accessPage(h) {
         mode = m[0];
         savePref();
         urlPage(place(), true);
-        if (mode === 'apps' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
+        if (mode !== 'groups' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
       });
       sw.appendChild(b);
     });
@@ -143,14 +144,7 @@ function accessPage(h) {
       td.appendChild(ind(kind, (c.status === 'stale' ? 'Leftover account: Authentik no longer lets ' + p.name + ' open ' + a.label
                                 : (c.disabled ? 'Disabled ' : '') + (c.role === 'admin' ? 'Admin account' : 'Account')) +
         (c.login ? ' · ' + c.login : '') + (c.note ? ' · ' + c.note : '') + (c.linked ? ' · matched by hand' : '') + (c.status === 'stale' ? ' (' + c.role + (c.disabled ? ', disabled' : '') + ')' : '') +
-        (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '') +
-        (a.admin ? ' · click to change admin' : '')));
-      if (a.admin) {
-        td.classList.add('acc-adminable');
-        td.addEventListener('click', function () {
-          adminDialog(p, a, c, function () { apps = null; loadApps(true); });
-        });
-      }
+        (c.last_seen ? ' · last seen ' + new Date(c.last_seen).toLocaleString() : '')));
     }
     return td;
   }
@@ -326,6 +320,168 @@ function accessPage(h) {
       h.body.appendChild(box);
     }
   }
+  // --- Admins: who is admin in each app, toggled here and applied all at once -------
+  // A pressed cell = admin. Clicking stages the opposite (outlined, + / −); Apply
+  // makes every staged in-app change in one go and reads the apps again. Apps whose
+  // sign-in sets admin from an Authentik group (a.admin.how === 'group') share one
+  // toggle per person and group: Apply STAGES that group change for the Groups view's
+  // Open PR, as a change in the app would be undone at the next sign-in.
+  var adminWant = {};      // toggle key -> wanted admin (only where it differs from now)
+  var adminRes = {};       // toggle key -> {ok, detail} from the last Apply
+  function adminApps() { return apps.apps.filter(function (a) { return a.admin && !a.error; }); }
+  function tkey(p, a) { return p.pk + '|' + (a.admin.how === 'group' ? 'group:' + a.admin.group : a.key); }
+  function viewUser(p) { return view && (view.users || []).filter(function (u) { return u.pk === p.pk; })[0]; }
+  // Now: in the app (its account's role), or for a group app, in the group (with any
+  // change already staged for the next PR).
+  function adminNow(p, a) {
+    if (a.admin.how === 'group') {
+      var u = viewUser(p);
+      var c = view ? staged(p.pk, a.admin.group) : null;
+      return { admin: c ? c.action === 'add' : !!(u && u.groups.indexOf(a.admin.group) >= 0), staged: !!c, known: !!u };
+    }
+    var cell = p.cells && p.cells[a.key];
+    return { admin: !!(cell && cell.role === 'admin'), known: !!(cell && cell.key && cell.status !== 'missing'), key: cell && cell.key };
+  }
+  function adminPending() {
+    return Object.keys(adminWant).length;
+  }
+  function adminCell(p, a) {
+    var td = document.createElement('td');
+    td.className = 'acc-cellind';
+    var now = adminNow(p, a), k = tkey(p, a);
+    if (!now.known) { td.title = a.label + ': ' + p.name + ' has no account here'; return td; }
+    var change = k in adminWant;
+    var will = change ? adminWant[k] : now.admin;
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'acc-cell adm-cell' + (change ? ' acc-staged' : '') + (now.staged ? ' adm-in-pr' : '');
+    b.setAttribute('aria-pressed', String(will));
+    b.textContent = change ? (will ? '+\u2605' : '\u2212') : (will ? '\u2605' : '');
+    var grp = a.admin.how === 'group';
+    var also = grp && a.admin.also && a.admin.also.length ? ' (also admin in ' + a.admin.also.join(', ') + ')' : '';
+    var note = will ? a.admin.grant : a.admin.revoke;
+    b.title = (change ? (will ? 'Will be made admin' : 'Admin will be removed') + ' in ' + a.label + ' on Apply. Click to undo'
+                      : (will ? 'Admin in ' : 'Not admin in ') + a.label + '. Click to ' + (will ? 'remove admin' : 'make admin')) +
+      (grp ? '\nComes from the Authentik group ' + a.admin.group + also + ': Apply stages that change for Open PR on Groups' : '') +
+      (now.staged ? '\nAlready staged in ' + a.admin.group + ' for the next pull request' : '') +
+      (change && note ? '\n' + note : '');
+    b.addEventListener('click', function () {
+      if (change) { delete adminWant[k]; } else { adminWant[k] = !now.admin; }
+      delete adminRes[k];
+      render();
+    });
+    td.appendChild(b);
+    var r = adminRes[k];
+    if (r && !r.ok) {
+      var w = document.createElement('span');
+      w.className = 'acc-ind acc-ind-missing adm-fail';
+      w.textContent = '\u26a0';
+      w.title = 'Not done: ' + r.detail;
+      w.setAttribute('role', 'img');
+      w.setAttribute('aria-label', w.title);
+      td.appendChild(w);
+    }
+    return td;
+  }
+  function renderAdmins() {
+    save.hidden = true;
+    var n = adminPending();
+    h.setDirty(n > 0);
+    freshness(apps.as_of, 'Who is admin in each app. Click to change; nothing happens until Apply, which makes ' +
+      'every change at once. Apps whose sign-in sets admin from an Authentik group stage that group instead ' +
+      '(Groups -> Open PR).', function () { note.textContent = 'Reading each app…'; loadApps(true); });
+    var bar = div('acc-admin-bar');
+    var apply = document.createElement('button');
+    apply.type = 'button'; apply.id = 'adm-apply'; apply.className = 'primary';
+    apply.textContent = n ? 'Apply (' + n + ')' : 'Apply';
+    apply.disabled = !n;
+    apply.title = n ? 'Make these ' + n + ' change(s) now' : 'Nothing to apply: click cells to change who is admin';
+    var undo = document.createElement('button');
+    undo.type = 'button'; undo.id = 'adm-discard'; undo.textContent = 'Discard';
+    undo.disabled = !n;
+    undo.addEventListener('click', function () { adminWant = {}; render(); });
+    apply.addEventListener('click', applyAdmins);
+    bar.appendChild(apply); bar.appendChild(undo);
+    h.body.appendChild(bar);
+    var list = adminApps();
+    if (!list.length) {
+      h.body.appendChild(div('note', 'No app here lets nav change who is admin.'));
+      return;
+    }
+    var t = document.createElement('table');
+    t.className = 'acc-table acc-apps-table acc-admins-table';
+    var hr = document.createElement('tr');
+    var th0 = document.createElement('th'); th0.textContent = 'Person'; hr.appendChild(th0);
+    list.forEach(function (a) {
+      var th = appHead(a);
+      if (a.admin.how === 'group') {
+        var g = document.createElement('span');
+        g.className = 'acc-signin adm-group';
+        g.textContent = 'group';
+        g.title = 'Admin comes from the Authentik group ' + a.admin.group +
+          (a.admin.also && a.admin.also.length ? ' (also: ' + a.admin.also.join(', ') + ')' : '');
+        g.setAttribute('role', 'img'); g.setAttribute('aria-label', g.title);
+        th.appendChild(g);
+      }
+      hr.appendChild(th);
+    });
+    t.appendChild(document.createElement('thead')).appendChild(hr);
+    var tb = document.createElement('tbody');
+    apps.people.forEach(function (p) {
+      var tr = document.createElement('tr');
+      var who = document.createElement('td'); who.className = 'acc-who'; who.textContent = p.name;
+      tr.appendChild(who);
+      list.forEach(function (a) { tr.appendChild(adminCell(p, a)); });
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    h.body.appendChild(t);
+  }
+  function applyAdmins() {
+    var inApp = [], groups = [], keyOf = {};
+    apps.people.forEach(function (p) {
+      adminApps().forEach(function (a) {
+        var k = tkey(p, a);
+        if (!(k in adminWant) || keyOf[k]) { return; }
+        keyOf[k] = true;
+        if (a.admin.how === 'group') { groups.push({ k: k, body: { pk: p.pk, group: a.admin.group, add: adminWant[k], name: p.name } }); }
+        else { inApp.push({ k: k, body: { app: a.key, account: adminNow(p, a).key, admin: adminWant[k] } }); }
+      });
+    });
+    note.textContent = 'Applying\u2026';
+    var b = document.getElementById('adm-apply'); if (b) { b.disabled = true; }
+    var res = {};
+    var chain = Promise.resolve();
+    if (inApp.length) {
+      chain = connSend('POST', 'api/admin/access/apps/admins', { changes: inApp.map(function (c) { return c.body; }) })
+        .then(function (r) {
+          (r.results || []).forEach(function (x) {
+            var c = inApp.filter(function (y) { return y.body.app === x.app && y.body.account === x.account; })[0];
+            if (c) { res[c.k] = { ok: x.ok, detail: x.detail }; }
+          });
+        }, function (e) { inApp.forEach(function (c) { res[c.k] = { ok: false, detail: e.message }; }); });
+    }
+    groups.forEach(function (g) {
+      chain = chain.then(function () {
+        return connSend('POST', 'api/admin/access/changes', g.body)
+          .then(function () { res[g.k] = { ok: true, detail: 'staged' }; },
+                function (e) { res[g.k] = { ok: false, detail: e.message }; });
+      });
+    });
+    chain.then(function () {
+      var keys = Object.keys(res);
+      var bad = keys.filter(function (k) { return !res[k].ok; });
+      // Done ones leave the staged set; failures stay staged, marked, to retry or discard.
+      keys.forEach(function (k) { if (res[k].ok) { delete adminWant[k]; } });
+      adminRes = res;
+      var staged = groups.filter(function (g) { return res[g.k] && res[g.k].ok; }).length;
+      var done = keys.length - bad.length - staged;
+      var msg = (done ? done + ' applied. ' : '') + (staged ? staged + ' group change(s) staged: Groups \u2192 Open PR. ' : '') +
+                (bad.length ? bad.length + ' not done (\u26a0 on the cell says why).' : '');
+      return Promise.all([load(true).catch(function () {}), loadApps(true)]).then(function () { note.textContent = msg.trim(); });
+    });
+  }
+
   function linkAccount(app, account, pk) {
     connSend('PUT', 'api/admin/access/apps/links', { app: app, account: account, pk: pk })
       .then(function () { return loadApps(false); })
@@ -345,11 +501,13 @@ function accessPage(h) {
   function render() {
     h.body.innerHTML = '';
     switcher();
-    if (mode === 'apps') {
+    if (mode !== 'groups') {
       // Not read yet (first open, or cleared after a PR): read, then draw.
       if (!apps) { note.textContent = 'Reading each app…'; loadApps(false); return; }
-      renderApps(); return;
+      if (mode === 'admins') { renderAdmins(); } else { renderApps(); }
+      return;
     }
+    h.setDirty(adminPending() > 0);
     if (!view.enabled) {
       h.body.appendChild(div('note', 'The Access panel is off: nav-api needs NAV_GITOPS_REPO and NAV_GITOPS_TOKEN.'));
       save.disabled = true;
@@ -887,83 +1045,4 @@ function createAccountsDialog(p, todo, done) {
     });
   });
   setTimeout(function () { (needsPw() ? pw : go).focus(); }, 0);
-}
-
-
-// --- Admin in an app (App accounts: click a person's account) ----------------------
-// Where nav can set it in the app, one button grants or removes it there and then.
-// Where the app's sign-in sets admin from an Authentik group, the button stages
-// that group change instead (Groups tab -> Open PR), and says what else the group gives.
-function adminDialog(p, a, c, done) {
-  var back = document.createElement('div');
-  back.className = 'icondlg-back';
-  back.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60;' +
-                       'display:flex; align-items:center; justify-content:center;';
-  var box = document.createElement('div');
-  box.className = 'smalldlg person-dlg';
-  box.id = 'admin-dlg';
-  back.appendChild(box);
-  document.body.appendChild(back);
-  var changed = false;
-  function close() { back.remove(); document.removeEventListener('keydown', onKey); if (changed) { done(); } }
-  function onKey(e) { if (e.key === 'Escape') { close(); } }
-  document.addEventListener('keydown', onKey);
-  back.addEventListener('click', function (e) { if (e.target === back) { close(); } });
-  function el(tag, cls, text) { var x = document.createElement(tag); if (cls) { x.className = cls; } if (text) { x.textContent = text; } return x; }
-
-  var isAdmin = c.role === 'admin';
-  box.appendChild(el('h3', null, a.label + ': ' + p.name));
-  var now = el('p', 'admin-now');
-  var mark = el('span', 'acc-ind acc-ind-' + (isAdmin ? 'admin' : 'user'), isAdmin ? '\u2605' : '\u25cf');
-  mark.title = isAdmin ? 'Admin account' : 'Account'; mark.setAttribute('role', 'img'); mark.setAttribute('aria-label', mark.title);
-  now.appendChild(mark);
-  now.appendChild(document.createTextNode(' ' + (isAdmin ? 'Admin' : 'Not admin') + (c.login ? ' (' + c.login + ')' : '')));
-  box.appendChild(now);
-  var how = a.admin || {};
-  var label, send;
-  if (how.how === 'group') {
-    var verb = isAdmin ? 'Remove ' + p.name + ' from ' : 'Add ' + p.name + ' to ';
-    box.appendChild(el('p', 'admin-why', a.label + ' takes admin from the Authentik group ' + how.group +
-      ' at every sign-in, so a change in the app would be undone. ' + verb + how.group + ' instead' +
-      (how.also && how.also.length ? ': that also ' + (isAdmin ? 'removes' : 'gives') + ' admin in ' + how.also.join(', ') : '') +
-      '. It is staged with the other group changes; Open PR on the Groups view makes it real.'));
-    label = isAdmin ? 'Stage: remove from ' + how.group : 'Stage: add to ' + how.group;
-    send = function () {
-      return connSend('POST', 'api/admin/access/changes', { pk: p.pk, group: how.group, add: !isAdmin, name: p.name })
-        .then(function () { return { ok: true, detail: 'staged; open Groups and press Open PR' }; });
-    };
-  } else {
-    box.appendChild(el('p', 'admin-why', isAdmin
-      ? 'Removes admin in ' + a.label + ' now. nav never removes the last admin, or the account its key signs in as.'
-      : 'Makes ' + p.name + ' an admin in ' + a.label + ' now.'));
-    var note = isAdmin ? how.revoke : how.grant;
-    if (note) { box.appendChild(el('p', 'admin-why admin-note', note + '.')); }
-    label = isAdmin ? 'Remove admin' : 'Make admin';
-    send = function () {
-      return connSend('POST', 'api/admin/access/apps/role', { app: a.key, account: c.key, admin: !isAdmin });
-    };
-  }
-  var out = el('div', 'make-results');
-  box.appendChild(out);
-  var foot = el('div', 'smalldlg-foot');
-  var cancel = el('button', null, 'Close');
-  cancel.type = 'button'; cancel.addEventListener('click', close);
-  var go = el('button', 'primary', label);
-  go.type = 'button'; go.id = 'admin-go';
-  foot.appendChild(cancel); foot.appendChild(go);
-  box.appendChild(foot);
-  go.addEventListener('click', function () {
-    go.disabled = true;
-    out.textContent = 'Working\u2026';
-    send().then(function (r) { return r; }, function (e) { return { ok: false, detail: e.message }; })
-      .then(function (r) {
-        out.innerHTML = '';
-        var line = el('div', 'make-result');
-        line.appendChild(personInd(r.ok ? 'ok' : 'bad', r.detail));
-        line.appendChild(document.createTextNode(' ' + r.detail));
-        out.appendChild(line);
-        if (r.ok) { changed = true; } else { go.disabled = false; }
-      });
-  });
-  setTimeout(function () { go.focus(); }, 0);
 }
