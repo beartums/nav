@@ -467,6 +467,26 @@ test('bulk edits stage without writing, and Save sends one PUT of only the touch
   assert.equal(sent.sonarr.name, 'Sonarr HD');
 });
 
+test('the list button toggles back to the tiles; with nothing staged Cancel says so', async () => {
+  const { window, doc } = await boot();
+  await enterAdmin(window, doc);
+  const btn = doc.getElementById('admin-bulk-btn');
+  await enterBulk(window, doc);
+  assert.equal(btn.getAttribute('aria-pressed'), 'true', 'the toolbar shows the list is on');
+  assert.equal(doc.getElementById('bulk-cancel').textContent, 'Back to tiles');
+  click(btn);
+  await settle(window, () => !doc.querySelector('table.bulk'), 'the list to close');
+  await settle(window, () => doc.querySelectorAll('a.app').length > 0, 'the tiles to come back');
+  assert.equal(btn.getAttribute('aria-pressed'), 'false');
+
+  await enterBulk(window, doc);
+  type(window, rowFor(doc, 'Sonarr').querySelectorAll('input[type=text]')[0], 'Changed');
+  assert.equal(doc.getElementById('bulk-cancel').textContent, 'Cancel', 'staged edits: it discards');
+  window.confirm = () => false;
+  click(btn);
+  assert.ok(doc.querySelector('table.bulk'), 'declining the prompt keeps the list and its edits');
+});
+
 test('Cancel discards staged edits and restores the snapshot', async () => {
   const { window, doc, seen } = await boot();
   await enterAdmin(window, doc);
@@ -1212,8 +1232,8 @@ test('the New tile button is actually VISIBLE in both places, not merely present
   assert.ok(tableBtn.closest('.bulkbar'), 'inside the toolbar, next to Save and Cancel');
   assert.deepEqual(
     [...tableBtn.closest('.bulkbar').querySelectorAll('button')].map((b) => b.textContent),
-    ['Save', 'Cancel', '+ New tile'],
-    'the toolbar order is Save, Cancel, + New tile');
+    ['Save', 'Back to tiles', '+ New tile'],
+    'the toolbar order is Save, Cancel (Back to tiles while nothing is staged), + New tile');
 });
 
 /** Three apps across two groups, for the group picker. */

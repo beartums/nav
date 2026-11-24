@@ -16,7 +16,7 @@ function bulkTable() {
   var save = document.createElement('button');
   save.id = 'bulk-save'; save.textContent = 'Save';
   var cancel = document.createElement('button');
-  cancel.id = 'bulk-cancel'; cancel.textContent = 'Cancel';
+  cancel.id = 'bulk-cancel';
   function status() {
     var n = Object.keys(BULK.dirty).length;
     var g = bulkGroupsChanged();
@@ -25,6 +25,9 @@ function bulkTable() {
     if (g) { bits.push('the group order'); }
     count.textContent = bits.length ? bits.join(' and ') + ' changed, not yet saved' : '';
     save.disabled = !n && !g;
+    // Nothing staged: this button is simply the way back to the tiles.
+    cancel.textContent = n || g ? 'Cancel' : 'Back to tiles';
+    cancel.title = n || g ? 'Discard these changes and go back to the tiles' : 'Leave the list and go back to the tiles';
   }
   save.addEventListener('click', bulkSave);
   cancel.addEventListener('click', function () { bulkExit(true); });
@@ -434,4 +437,10 @@ function bulkTable() {
   return frag;
 }
 
-document.getElementById('admin-bulk-btn').addEventListener('click', bulkEnter);
+// The toolbar's list button is a pressed toggle: pressed = the list; press again for the tiles.
+document.getElementById('admin-bulk-btn').addEventListener('click', function () {
+  if (!BULK.on) { bulkEnter(); return; }
+  var n = Object.keys(BULK.dirty).length + (bulkGroupsChanged() ? 1 : 0);
+  if (n && !confirm('Unsaved changes in the list will be discarded. Back to the tiles anyway?')) { return; }
+  bulkExit(true);
+});

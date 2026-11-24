@@ -164,6 +164,7 @@ body.edit-mode #editbar { display:flex; }
 #adminbar .tb-done, #editbar .tb-done { background:#fff; color:var(--accent); font-weight:700; }
 .tb-info { cursor:help; opacity:.85; font-size:15px; }
 .tb-spacer { flex:1 1 auto; }
+#adminbar .tb[aria-pressed="true"] { background:rgba(255,255,255,.35); }
 
 /* Arranging: the bars run the window's full width (--wrap-l/--wrap-r, groups.js),
    and the sidebar starts below them. */
