@@ -3847,6 +3847,20 @@ test('a 48-column free dashboard draws 48 columns and 48 columns of cell lines',
   const g = doc.querySelector('ul.ugrid.free');
   assert.equal(g.style.gridTemplateColumns, 'repeat(48, minmax(0, 1fr))');
   assert.equal(g.style.getPropertyValue('--free-cols'), '48');
+  // Twice the columns, twice the rows: 43px pitch halved, minus the 10px gap.
+  assert.match(g.style.gridTemplateRows, /, 11\.5px\)$/);
+  assert.equal(g.style.getPropertyValue('--fg-title-h'), '33px', 'a title bar is two rows: still 33px');
+});
+
+test('changing the grid scales every placed thing both ways', async () => {
+  const { window, doc, seen } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 4, y: 2 } })),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('ul.ugrid.free'), 'free grid');
+  window.eval('rescaleGrid(48)');
+  await settle(window, () => seen.some((r) => r.method === 'PUT' && /\/grid$/.test(r.url)), 'saved');
+  const body = JSON.parse(seen.find((r) => r.method === 'PUT' && /\/grid$/.test(r.url)).body);
+  assert.equal(body.cols, 48);
+  assert.deepEqual(body.tiles.sonarr, { x: 8, y: 4, size: '8x4' }, 'cell and size doubled both ways');
 });
 
 test('arranging a free dashboard: drag an app from the panel to a cell; overlaps are refused', async () => {

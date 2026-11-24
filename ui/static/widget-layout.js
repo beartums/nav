@@ -66,7 +66,9 @@ function fillWidget(body, defId) {
   var ds = cell && cell.dataset ? cell.dataset : {};
   // `size` is the named size to draw; `span` the cells it really has (bigger,
   // for a size past the largest -- see sizeBase in group-grid.js).
-  var span = ds.cols ? [Number(ds.cols), Number(ds.rows)] : undefined;
+  // In 24-column cells whatever the grid, so widgets size themselves in screen terms.
+  var rs = rowScale();
+  var span = ds.cols ? [Math.max(1, Math.round(Number(ds.cols) / rs)), Math.max(1, Math.round(Number(ds.rows) / rs))] : undefined;
   if (got && got.payload) {
     renderWidget(body, got.payload, { key: 'def' + defId, size: ds.base || ds.size, span: span,
                                       placement: ds.placement });

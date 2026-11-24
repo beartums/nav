@@ -98,7 +98,7 @@ function groupHeight(g) {
   var m = groupMembers(g), spans = [];
   m[1].forEach(function (p) { spans.push(spanOf(shapeOf(p), sizeOf(shapeOf(p), p.size))); });
   m[0].forEach(function (a) { spans.push(spanOf('tile', sizeOf('tile', a.size))); });
-  return 1 + Math.max(packedRows(spans, g.w), arranging() ? 2 : 1);
+  return titleRows() + Math.max(packedRows(spans, g.w), arranging() ? 2 : 1);
 }
 
 function overlaps(a, b) {
@@ -159,6 +159,8 @@ function renderFree() {
   ul.dataset.cat = '__free__';
   ul.style.gridTemplateColumns = 'repeat(' + FREE_COLS + ', minmax(0, 1fr))';
   ul.style.setProperty('--free-cols', FREE_COLS);   // the faint cell lines (nav.css)
+  ul.style.setProperty('--free-row', gridRowH() + 'px');
+  ul.style.setProperty('--fg-title-h', (titleRows() * (gridRowH() + GRID_GAP) - GRID_GAP) + 'px');
   var bottom = 0;
   groups.forEach(function (g) {
     var el = groupEl(g);
@@ -175,7 +177,7 @@ function renderFree() {
     ul.appendChild(el);
   });
   var rows = Math.max(bottom + (arranging() ? FREE_SPARE_ROWS : 0), arranging() ? 12 : 1);
-  ul.style.gridTemplateRows = 'repeat(' + rows + ', ' + GRID_ROW + 'px)';
+  ul.style.gridTemplateRows = 'repeat(' + rows + ', ' + gridRowH() + 'px)';
   ul.dataset.rows = rows;
   if (arranging()) { acceptFreeDrops(ul); }
   out.appendChild(ul);
@@ -309,14 +311,14 @@ function drawnCells(g) {
     var r = li.getBoundingClientRect(), b = el.getBoundingClientRect();
     var colW = (b.width - GRID_GAP * (g.w - 1)) / g.w;
     var x = b.width ? Math.round((r.left - b.left) / (colW + GRID_GAP)) : 0;
-    var y = b.width ? Math.round((r.top - b.top) / (GRID_ROW + GRID_GAP)) : out.length * 2;
-    out.push({ key: li.dataset.key, x: g.x + x, y: g.y + 1 + y });
+    var y = b.width ? Math.round((r.top - b.top) / (gridRowH() + GRID_GAP)) : out.length * 2;
+    out.push({ key: li.dataset.key, x: g.x + x, y: g.y + titleRows() + y });
   });
   return out;
 }
 function groupHeightWas(g, cells) {
-  var h = 2;
-  cells.forEach(function (c) { h = Math.max(h, c.y - g.y + 2); });
+  var h = titleRows() + 1;
+  cells.forEach(function (c) { h = Math.max(h, c.y - g.y + titleRows() + 1); });
   return h;
 }
 
@@ -380,7 +382,7 @@ function groupResizeHandle(el, g) {
     if (h.setPointerCapture) { try { h.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic */ } }
     function move(e) {
       var w = Math.max(2, Math.min(FREE_COLS - g.x, Math.round((b.width + e.clientX - sx + GRID_GAP) / (colW + GRID_GAP))));
-      var hh = g.kind === 'dynamic' ? g.h : Math.max(2, Math.round((b.height + e.clientY - sy + GRID_GAP) / (GRID_ROW + GRID_GAP)));
+      var hh = g.kind === 'dynamic' ? g.h : Math.max(titleRows() + 1, Math.round((b.height + e.clientY - sy + GRID_GAP) / (gridRowH() + GRID_GAP)));
       var keep = { w: g.w, h: g.h };
       g.w = w; g.h = hh;
       if (!freeFits(groupRect(g), g.kind, 'g:' + g.id)) { g.w = keep.w; g.h = keep.h; return; }
@@ -513,7 +515,7 @@ function cellAt(ul, ev) {
   var b = ul.getBoundingClientRect();
   var colW = (b.width - GRID_GAP * (FREE_COLS - 1)) / FREE_COLS;
   var x = Math.floor((ev.clientX - b.left + GRID_GAP / 2) / (colW + GRID_GAP));
-  var y = Math.floor((ev.clientY - b.top + GRID_GAP / 2) / (GRID_ROW + GRID_GAP));
+  var y = Math.floor((ev.clientY - b.top + GRID_GAP / 2) / (gridRowH() + GRID_GAP));
   return [Math.max(0, isFinite(x) ? x : 0), Math.max(0, isFinite(y) ? y : 0)];
 }
 
@@ -715,9 +717,10 @@ function newGroupButton() {
 
 
 // --- the grid's column count ------------------------------------------------------
-// A finer grid is more, narrower columns; rows keep their height. So changing
-// it scales every placed thing's column and width by the same factor and keeps
-// its rows: each stays where it was, the same size on screen.
+// A finer grid is more, narrower columns AND more, shorter rows (rowScale in
+// group-grid.js). So changing it scales every placed thing's cell and size by the
+// same factor both ways: each stays where it was, the same size on screen.
+// Growing groups' members have no cell, only a size, scaled the same.
 
 function syncGridControls() {
   var free = !!LAYOUT && LAYOUT.mode === 'free';
@@ -733,15 +736,25 @@ function rescaleGrid(cols) {
     var nw = Math.max(1, Math.min(cols, Math.round(w * f)));
     return [Math.max(0, Math.min(cols - nw, Math.round(x * f))), nw];
   }
+  function tall(h) { return Math.max(1, Math.min(FREE_MAX[1], Math.round(h * f))); }
   var body = { cols: cols, tiles: {}, placements: {}, free_groups: [] };
   freeItems().forEach(function (it) {
     var s = freeSpan(it), r = fit(it.x, s[0]);
-    var v = { x: r[0], size: r[1] + 'x' + s[1] };
+    var v = { x: r[0], y: Math.round(it.y * f), size: r[1] + 'x' + tall(s[1]) };
     if (it.kind === 'app') { body.tiles[it.a.slug] = v; } else { body.placements[it.p.id] = v; }
+  });
+  freeGroups().forEach(function (g) {
+    if (g.kind !== 'dynamic') { return; }               // a frame's things are page items, above
+    var m = groupMembers(g);
+    function sized(sp) { return Math.max(1, Math.min(cols, Math.round(sp[0] * f))) + 'x' + tall(sp[1]); }
+    m[0].forEach(function (a) { body.tiles[a.slug] = { x: null, y: null, size: sized(spanOf('tile', sizeOf('tile', a.size))) }; });
+    m[1].forEach(function (p) {
+      body.placements[p.id] = { x: null, y: null, size: sized(spanOf(shapeOf(p), sizeOf(shapeOf(p), p.size))) };
+    });
   });
   body.free_groups = freeGroups().map(function (g) {
     var r = fit(g.x, g.w);
-    return Object.assign({}, g, { x: r[0], w: r[1] });
+    return Object.assign({}, g, { x: r[0], w: r[1], y: Math.round(g.y * f), h: tall(g.h) });
   });
   return api('PUT', layoutPath('/grid'), body).then(refresh)
     .catch(function (e) { alert('Changing the grid failed: ' + e.message); refresh(); });

@@ -56,6 +56,17 @@ var SIZE_DEFAULT = { tile: 'M', stat: 'M', timeseries: 'M', list: 'M', status: '
 
 function useGroupGrid() { return opts.collapse !== 'on'; }
 
+/** How much finer than 24 columns a free layout's grid is (48 -> 2): rows
+ *  shrink by the same factor as columns, so a finer grid is finer both ways and
+ *  everything keeps its size on screen. 1 everywhere else. */
+function rowScale() {
+  return typeof freeMode === 'function' && freeMode() && gridCols() === FREE_COLS ? FREE_COLS / 24 : 1;
+}
+/** A row's height in px: GRID_ROW at 24 columns, the pitch (row + gap) scaled. */
+function gridRowH() { return (GRID_ROW + GRID_GAP) / rowScale() - GRID_GAP; }
+/** Rows a group's title bar takes: enough for GRID_ROW px. */
+function titleRows() { return Math.max(1, Math.ceil((GRID_ROW + GRID_GAP) / (gridRowH() + GRID_GAP) - 1e-9)); }
+
 /** Columns that fit the page now. jsdom has no layout (width 0): 24. */
 function gridCols() {
   // A free layout's grid is a fixed width in columns (free.js), however wide
@@ -81,7 +92,7 @@ function sizeOf(kind, size) {
 // size that fits inside it (its `base`), and the renderer is told the real
 // span (opts.span) to lay out into the room rather than stretch.
 
-var FREE_MIN = [2, 2], FREE_MAX = [48, 32];
+var FREE_MIN = [2, 2], FREE_MAX = [48, 64];   // rows: 32 at 24 columns, doubled for 48
 
 /** Tiles size by cells too on a free dashboard: there's no packer to keep
  *  them in step, so a tile is whatever span it is given. */
@@ -145,7 +156,7 @@ function applySpan(el, kind, size, cols) {
   el.dataset.size = size;
   el.dataset.base = base;
   // One row high: the cell drops its padding so a line fits (see .thin).
-  el.classList.toggle('thin', span[1] === 1);
+  el.classList.toggle('thin', span[1] <= rowScale());   // one 24-column row tall
   return [Math.min(span[0], cols), span[1]];
 }
 
@@ -198,7 +209,7 @@ function groupGrid(cat, tiles, placements, colsOverride) {
     ul.classList.add('colfirst');
     var pack = packColumns(placed.map(function (x) { return x.span; }), cols);
     ul.dataset.rows = pack.rows;
-    ul.style.gridTemplateRows = 'repeat(' + pack.rows + ', ' + GRID_ROW + 'px)';
+    ul.style.gridTemplateRows = 'repeat(' + pack.rows + ', ' + gridRowH() + 'px)';
     placed.forEach(function (x, i) {
       var at = pack.at[i];
       x.el.style.gridColumn = (at[0] + 1) + ' / span ' + x.span[0];
@@ -471,7 +482,7 @@ function resizeHandle(el, it, kind, cat) {
     if (h.setPointerCapture) { try { h.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic */ } }
     function move(e) {
       var wantC = (box.width + (e.clientX - sx) + GRID_GAP) / (colW + GRID_GAP);
-      var wantR = (box.height + (e.clientY - sy) + GRID_GAP) / (GRID_ROW + GRID_GAP);
+      var wantR = (box.height + (e.clientY - sy) + GRID_GAP) / (gridRowH() + GRID_GAP);
       var best;
       if (kind === 'tile' && !freeSizing()) {
         // Nearest named size: a tile has nothing in between.
