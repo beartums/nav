@@ -734,6 +734,8 @@ function createAccountsDialog(p, todo, done) {
     var row = el('div', 'person-row make-app');
     row.dataset.app = a.key;
     var lab = el('span', 'person-lab', a.label);
+    var skip = el('span', 'make-skip-tag', 'ignored');
+    skip.title = 'Nothing will be done in ' + a.label + ': press a way, or pick an existing account';
     lab.title = c ? 'Authentik lets ' + p.name + ' open ' + a.label : 'Authentik does not let ' + p.name + ' open ' + a.label + ' yet';
     row.appendChild(lab);
     var btns = (a.create || []).map(function (m) {
@@ -764,10 +766,11 @@ function createAccountsDialog(p, todo, done) {
       sel.addEventListener('change', function () { choice[a.key] = sel.value ? { link: sel.value } : null; paint(); });
       row.appendChild(sel);
     }
+    row.appendChild(skip);
     // Default: where Authentik already lets them in, the first way to make one.
     if (c && c.status === 'missing' && a.create && a.create.length) { choice[a.key] = { mode: a.create[0].id }; }
     box.appendChild(row);
-    return { a: a, btns: btns, sel: sel };
+    return { a: a, btns: btns, sel: sel, row: row };
   });
   var pwRow = el('label', 'person-row make-pw');
   pwRow.appendChild(el('span', 'person-lab', 'Password'));
@@ -805,6 +808,8 @@ function createAccountsDialog(p, todo, done) {
     rows.forEach(function (r) {
       var ch = choice[r.a.key];
       r.btns.forEach(function (b) { b.setAttribute('aria-pressed', String(!!(ch && ch.mode === b.dataset.mode))); });
+      // Unpressed: greyed, and says it is ignored.
+      r.row.classList.toggle('make-ignored', !ch && !r.row.classList.contains('make-done'));
     });
     pwRow.hidden = !needsPw();
     go.disabled = !any() || (needsPw() && pw.value.length < 8);
@@ -822,6 +827,7 @@ function createAccountsDialog(p, todo, done) {
       var r = rows.filter(function (x) { return x.a.key === a.key; })[0];
       r.btns.forEach(function (b) { b.disabled = true; });
       if (r.sel) { r.sel.disabled = true; }
+      r.row.classList.add('make-done');
     }
   }
   go.addEventListener('click', function () {
