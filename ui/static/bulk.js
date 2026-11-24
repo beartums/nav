@@ -33,7 +33,16 @@ function bulkEnter() {
   BULK.catsBase = BULK.cats.slice();
   BULK.catsMoved = {};
   closeEditor();
+  bulkButton();
   render();
+}
+
+// The toolbar button shows which view is on (pressed = the list).
+function bulkButton() {
+  var b = document.getElementById('admin-bulk-btn');
+  if (!b) { return; }
+  b.setAttribute('aria-pressed', String(!!BULK.on));
+  b.title = BULK.on ? 'Back to the tiles' : 'Bulk edit (a list of every tile)\u2026';
 }
 
 function bulkExit(restore) {
@@ -44,6 +53,7 @@ function bulkExit(restore) {
   BULK.cats = null;
   BULK.catsBase = null;
   BULK.catsMoved = {};
+  bulkButton();
   // refresh() rather than render(): staging mutates the app objects in
   // place for live preview, and only a re-read undoes that.
   refresh();

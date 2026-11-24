@@ -382,7 +382,7 @@ function setAdminMode(on, tab, want) {
       !confirm(Object.keys(BULK.dirty).length + ' unsaved change(s) will be discarded. Leave anyway?')) {
     return;
   }
-  if (typeof BULK !== 'undefined' && BULK) { BULK.on = false; BULK.dirty = {}; BULK.snapshot = null; }
+  if (typeof BULK !== 'undefined' && BULK) { BULK.on = false; BULK.dirty = {}; BULK.snapshot = null; bulkButton(); }
   ADMIN_MODE = on && IS_ADMIN;
   // One editor at a time: a template, or your own dashboard.
   if (ADMIN_MODE && EDIT_MODE) { EDIT_MODE = false; document.body.classList.remove('edit-mode'); }
