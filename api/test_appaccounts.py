@@ -52,6 +52,19 @@ class Match(unittest.TestCase):
         self.assertEqual(got["people"][9]["jf"]["login"], "mum")
         self.assertNotIn("jf", got["people"][8])
 
+    def test_hand_links_come_last_and_mark_the_cell(self):
+        found = {"jf": [aa.account(login="Grandpa"), aa.account(login="bear", email="bear@x.test")]}
+        got = aa.match(PEOPLE, found, {8: ["jellyfin"]}, AD, links={"jf": {"grandpa": 8, "bear": 9}})
+        self.assertEqual(got["people"][8]["jf"]["linked"], "grandpa")
+        self.assertEqual(got["people"][8]["jf"]["status"], "account")
+        self.assertEqual(got["people"][5]["jf"]["login"], "bear", "an email match beats a hand link")
+        self.assertNotIn("jf", got["people"][9])
+        self.assertEqual(got["orphans"]["jf"], [])
+
+    def test_orphans_carry_their_key(self):
+        got = aa.match(PEOPLE, {"jf": [aa.account(login="Ghost")]}, {}, AD)
+        self.assertEqual(got["orphans"]["jf"][0]["key"], "ghost")
+
     def test_name_only_for_an_account_with_no_email(self):
         people = PEOPLE + [{"pk": 11, "username": "tg", "email": "tg@x.test", "name": "Tucker Smith"}]
         found = {"jf": [aa.account(login="Tucker", name="Tucker"),                       # managed: no email

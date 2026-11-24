@@ -351,3 +351,14 @@ CREATE TABLE IF NOT EXISTS access_prs (
     by_whom TEXT        NOT NULL,
     at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- App accounts matched to a person by hand (Access -> App accounts): accounts that
+-- nothing (email, username, name) ties to anyone. `account` is appaccounts.acct_key.
+CREATE TABLE IF NOT EXISTS account_links (
+    app       TEXT        NOT NULL,
+    account   TEXT        NOT NULL,
+    person_pk INTEGER     NOT NULL,
+    by_whom   TEXT        NOT NULL,
+    at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (app, account)
+);
