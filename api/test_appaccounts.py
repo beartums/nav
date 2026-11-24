@@ -420,3 +420,35 @@ class Roles(unittest.TestCase):
         self.assertFalse(aa.is_last_admin([a, aa.account(login="c", admin=True)], a))
         self.assertEqual(aa.admin_groups("immich=fam, grafana=ga,nope=x,jellyfin="), {"immich": "fam", "grafana": "ga"})
         self.assertNotIn("plex", aa.ROLES)
+
+
+class JellyfinRule(unittest.TestCase):
+    ENV = {"NAV_JELLYFIN_LOCKOUT": "admin=3, user=5", "NAV_JELLYFIN_ADMIN_LAN_ONLY": "true"}
+
+    def setUp(self):
+        import os
+        self.saved = {k: os.environ.get(k) for k in self.ENV}
+        os.environ.update(self.ENV)
+
+    def tearDown(self):
+        import os
+        for k, v in self.saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+    def test_rule_per_role_and_nothing_when_unset(self):
+        self.assertEqual(aa.jellyfin_rule(True), {"LoginAttemptsBeforeLockout": 3, "EnableRemoteAccess": False})
+        self.assertEqual(aa.jellyfin_rule(False), {"LoginAttemptsBeforeLockout": 5, "EnableRemoteAccess": True})
+        self.assertEqual(aa.jellyfin_rule(True, {}), {})
+        self.assertIn("home only", aa.role_note("jellyfin", True))
+
+    def test_a_new_account_gets_the_user_rule(self):
+        pol = {"IsAdministrator": False, "LoginAttemptsBeforeLockout": -1, "AuthenticationProviderId": "x"}
+        c = make(aa._make_jellyfin, {"/Users/New": _Resp({"Id": "n1"}), "/Users/n1": _Resp({"Policy": pol}),
+                                     "/Users/n1/Policy": _Resp(None, text="")})
+        self.assertEqual(c.seen[-1][1], pol | {"LoginAttemptsBeforeLockout": 5, "EnableRemoteAccess": True})
+
+    def test_admin_change_brings_the_admin_rule(self):
+        pol = {"IsAdministrator": False, "LoginAttemptsBeforeLockout": 5, "EnableRemoteAccess": True}
+        c = role(aa._role_jellyfin, {"/Users/u1": _Resp({"Policy": pol}), "/Users/u1/Policy": _Resp(None, text="")},
+                 {"id": "u1"}, True)
+        self.assertEqual(c.seen[-1][1], {"IsAdministrator": True, "LoginAttemptsBeforeLockout": 3, "EnableRemoteAccess": False})
