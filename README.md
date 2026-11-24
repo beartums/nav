@@ -83,6 +83,7 @@ through Pomerium** — anyone who can reach it directly can name any user.
 | `NAV_IMPERSONATE_GROUP` | group allowed to "view as" (default `staff`) |
 | `NAV_ACCESS_GROUP` | group(s) allowed to use Access (default: the admin groups) |
 | `NAV_APP_SIGNIN` | how people sign in to each app, shown on App accounts: `key=method,...` with method `header`, `oidc`, `own`, `plex` or `jellyfin` (defaults in `api/appaccounts.py`) |
+| `NAV_APP_ADMIN_GROUP` | apps whose sign-in sets admin from an Authentik group: `key=group,...` (e.g. `immich=family-admins,grafana=grafana-admins`). App accounts then stages that group change instead of changing admin in the app, where the next sign-in would undo it |
 | `NAV_GITOPS_REPO`, `NAV_GITOPS_TOKEN` | `owner/name` of the repo holding the Authentik Terraform, and a token that may push branches and open PRs there (both unset: Access is off) |
 | `NAV_GITOPS_BASE`, `NAV_GITOPS_TF_DIR` | the branch to read and target (default `main`), and the `.tf` directory (default `terraform/authentik`) |
 | `NAV_GITOPS_CF_FILE`, `NAV_GITOPS_CF_POLICY` | the `.tf` file and resource name of the edge's email allow-list (a Cloudflare Access policy with `email = { email = "…" }` include entries). Add person stages a new outside address there in the same PR. Unset: the panel says to add it by hand |

@@ -26,7 +26,7 @@ class Match(unittest.TestCase):
         self.assertEqual(got["people"][5]["jf"]["status"], "account")
         self.assertEqual(got["people"][5]["jf"]["role"], "admin")
         self.assertEqual(got["people"][8]["jf"], {"status": "stale", "role": "user", "disabled": True,
-                                                  "last_seen": None, "login": "mum"})
+                                                  "last_seen": None, "login": "mum", "key": "mum"})
         self.assertEqual(got["people"][9]["jf"], {"status": "missing", "provision": "manual"})
         self.assertEqual(got["people"][5]["gr"], {"status": "missing", "provision": "first"})
         self.assertNotIn("gr", got["people"][8])
@@ -121,6 +121,14 @@ class _Client:
     async def post(self, url, json=None, headers=None, params=None):
         self.seen.append((url, json, headers))
         return self.routes["/" + url.split("/", 3)[-1]]
+
+    async def patch(self, url, json=None, headers=None, params=None):
+        self.seen.append(("PATCH " + url, json, params))
+        return self.routes.get("PATCH /" + url.split("/", 3)[-1], _Resp({}))
+
+    async def put(self, url, json=None, headers=None, params=None):
+        self.seen.append(("PUT " + url, json, params))
+        return self.routes.get("PUT /" + url.split("/", 3)[-1], _Resp({}))
 
 
 def run(fn, routes, key="k"):
@@ -351,3 +359,64 @@ class Creators(unittest.TestCase):
         self.assertEqual(c.seen[1][1], {"plexIds": ["42"]})
         with self.assertRaises(ValueError):
             make(aa._make_seerr_from_plex, {"/api/v1/settings/plex/users": _Resp([])})
+
+
+def role(fn, routes, acc, admin, key="k"):
+    c = _Client(routes)
+    asyncio.run(fn(c, "http://app", key, acc, admin))
+    return c
+
+
+class Roles(unittest.TestCase):
+    def test_seerr_flips_only_the_admin_bit_and_never_the_owner(self):
+        c = role(aa._role_seerr, {"/api/v1/user/7/settings/permissions": _Resp({"permissions": 32 | 2})},
+                 {"id": "7"}, False)
+        self.assertEqual(c.seen[-1][1], {"permissions": 32})
+        c = role(aa._role_seerr, {"/api/v1/user/7/settings/permissions": _Resp({"permissions": 32})}, {"id": "7"}, True)
+        self.assertEqual(c.seen[-1][1], {"permissions": 34})
+        with self.assertRaises(ValueError):
+            role(aa._role_seerr, {}, {"id": "1"}, False)
+
+    def test_jellyfin_sends_the_whole_policy_back(self):
+        pol = {"IsAdministrator": False, "EnableAllFolders": True, "AuthenticationProviderId": "x"}
+        c = role(aa._role_jellyfin, {"/Users/u1": _Resp({"Policy": pol}), "/Users/u1/Policy": _Resp(None, text="")},
+                 {"id": "u1"}, True)
+        self.assertEqual(c.seen[-1][1], pol | {"IsAdministrator": True})
+
+    def test_login_keys_never_change_their_own_account(self):
+        for fn in (aa._role_navidrome, aa._role_pingvin, aa._role_affine):
+            with self.assertRaises(ValueError):
+                role(fn, {}, {"id": "1", "login": "Boss", "email": None}, False, key="boss:pw")
+
+    def test_mealie_puts_the_user_back_without_tokens(self):
+        u = {"id": "m1", "username": "liz", "admin": False, "group": "Home", "tokens": [{"id": 3}]}
+        c = role(aa._role_mealie, {"/api/admin/users/m1": _Resp(u)}, {"id": "m1"}, True)
+        self.assertEqual(c.seen[-1][0], "PUT http://app/api/admin/users/m1")
+        self.assertEqual(c.seen[-1][1], {"id": "m1", "username": "liz", "admin": True, "group": "Home"})
+
+    def test_memos_patches_the_role_by_mask(self):
+        c = role(aa._role_memos, {}, {"id": "liz"}, True)
+        self.assertEqual(c.seen[-1], ("PATCH http://app/api/users/liz", {"name": "users/liz", "role": "ADMIN"},
+                                      {"updateMask": "role"}))
+
+    def test_filebrowser_sends_every_permission(self):
+        users = [{"username": "liz@x.test", "permissions": {"admin": False, "modify": True}}]
+        c = role(aa._role_filebrowser, {"/api/users": _Resp(users)}, {"id": "liz@x.test"}, True)
+        self.assertEqual(c.seen[-1][1], {"which": ["permissions"], "data": {"permissions": {"admin": True, "modify": True}}})
+
+    def test_paperless_sets_superuser_and_staff_together(self):
+        c = role(aa._role_paperless, {}, {"id": 4}, False)
+        self.assertEqual(c.seen[-1][1], {"is_superuser": False, "is_staff": False})
+
+    def test_affine_reads_admin_by_enum_name(self):
+        users = [{"id": "a1", "email": "x@x.test", "features": ["Admin"]}, {"id": "a2", "email": "y@x.test", "features": []}]
+        got, _ = run(aa._affine, {"/api/auth/sign-in": _Resp({}), "/graphql": _Resp({"data": {"users": users}})},
+                     key="boss@x.test:pw")
+        self.assertEqual([(a["role"], a["id"]) for a in got], [("admin", "a1"), ("user", "a2")])
+
+    def test_last_admin_and_groups(self):
+        a, b = aa.account(login="a", admin=True), aa.account(login="b", admin=True, disabled=True)
+        self.assertTrue(aa.is_last_admin([a, b], a), "a disabled admin doesn't count")
+        self.assertFalse(aa.is_last_admin([a, aa.account(login="c", admin=True)], a))
+        self.assertEqual(aa.admin_groups("immich=fam, grafana=ga,nope=x,jellyfin="), {"immich": "fam", "grafana": "ga"})
+        self.assertNotIn("plex", aa.ROLES)

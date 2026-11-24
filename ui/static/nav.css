@@ -1190,6 +1190,9 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .acc-pivoted th .note { font-weight:400; }
 /* App accounts indicators (access.js ACC_KEY); the words are the hover text. */
 .acc-cellind { text-align:center; }
+.acc-cellind.acc-adminable { cursor:pointer; }
+.acc-cellind.acc-adminable:hover { background:color-mix(in srgb, var(--accent) 12%, transparent); }
+.admin-why { max-width:46ch; line-height:1.4; color:var(--muted); }
 .acc-ind { display:inline-block; min-width:16px; font-size:14px; line-height:1; cursor:help; }
 .acc-ind-admin { color:var(--accent); }
 .acc-ind-user { color:#2f8a4a; }
