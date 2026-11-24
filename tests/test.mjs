@@ -3852,6 +3852,18 @@ test('a 48-column free dashboard draws 48 columns and 48 columns of cell lines',
   assert.equal(g.style.getPropertyValue('--fg-title-h'), '33px', 'a title bar is two rows: still 33px');
 });
 
+test('on a 48-column grid a tile draws by its size on screen, not its cell count', async () => {
+  const routes = freeRoutes(placed({ sonarr: { x: 8, y: 2, size: '6x4' } }));
+  const { window, doc } = await boot(USER, null,
+    (u) => (u.startsWith('api/apps') && /layout=7/.test(u)) ? { ...routes(u), layout: { ...FREE, free_cols: 48 } } : routes(u),
+    (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('ul.ugrid.free [data-key="app:sonarr"]'), 'tile');
+  const li = doc.querySelector('[data-key="app:sonarr"]');
+  assert.equal(li.style.gridColumn, '9 / span 6', 'it covers 6x4 cells');
+  // ...and looks like the 3x2 it is on screen.
+  assert.equal(li.dataset.base, window.eval("(function(){ var r = FREE_COLS; FREE_COLS = 24; var b = sizeBase('tile', '3x2'); FREE_COLS = r; return b; })()"));
+});
+
 test('changing the grid scales every placed thing both ways', async () => {
   const { window, doc, seen } = await boot(USER, null, freeRoutes(placed({ sonarr: { x: 4, y: 2 } })),
     (w) => w.localStorage.setItem('nav.layout', '7'));

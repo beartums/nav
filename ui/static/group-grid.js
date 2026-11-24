@@ -140,11 +140,25 @@ function sizeBase(kind, size) {
   return best || Object.keys(spans)[0];
 }
 
+/** A size as it is on screen, in 24-column cells: on a finer free grid an item
+ *  covers more cells for the same size, and how it draws (compact or full tile,
+ *  a widget's layout) must follow the size, not the cell count. */
+function screenSpan(span) {
+  var rs = rowScale();
+  return rs === 1 ? span : [Math.max(1, Math.round(span[0] / rs)), Math.max(1, Math.round(span[1] / rs))];
+}
+function screenSize(kind, size) {
+  var rs = rowScale();
+  if (rs === 1) { return size; }
+  var sp = screenSpan(spanOf(kind, size));
+  return sp[0] + 'x' + sp[1];
+}
+
 /** Apply a size to an item. Spans are capped at the columns that fit, so a
  *  6-wide chart on a phone is as wide as the phone, not wider. */
 function applySpan(el, kind, size, cols) {
   size = sizeOf(kind, size);
-  var span = spanOf(kind, size), base = sizeBase(kind, size);
+  var span = spanOf(kind, size), base = sizeBase(kind, screenSize(kind, size));
   // A packed (column-first) item keeps its cell while resized mid-drag;
   // otherwise it is auto-placed and jumps.
   var c0 = /^(\d+) \//.exec(el.style.gridColumn || ''), r0 = /^(\d+) \//.exec(el.style.gridRow || '');
@@ -156,7 +170,7 @@ function applySpan(el, kind, size, cols) {
   el.dataset.size = size;
   el.dataset.base = base;
   // One row high: the cell drops its padding so a line fits (see .thin).
-  el.classList.toggle('thin', span[1] === 1);
+  el.classList.toggle('thin', screenSpan(span)[1] === 1);
   return [Math.min(span[0], cols), span[1]];
 }
 
