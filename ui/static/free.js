@@ -113,7 +113,8 @@ function groupRect(g) { return { x: g.x, y: g.y, w: g.w, h: groupHeight(g) }; }
  *  `skip`: the key of the thing being moved ("app:x", "w:3", "g:id"). */
 function freeFits(rect, what, skip) {
   if (rect.x < 0 || rect.y < 0 || rect.x + rect.w > FREE_COLS) { return false; }
-  var items = freeItems(), groups = freeGroups();
+  if (what === 'shape') { return true; }            // a shape may lie over or under anything
+  var items = freeItems(), groups = freeGroups().filter(function (g) { return g.kind !== 'shape'; });
   var hitsItem = items.some(function (it) { return it.key !== skip && overlaps(rect, itemRect(it)); });
   var hitsGroup = function (onlyDynamic) {
     return groups.some(function (g) {
@@ -162,8 +163,10 @@ function renderFree() {
   ul.style.setProperty('--free-row', gridRowH() + 'px');
   ul.style.setProperty('--fg-title-h', (titleRows() * (gridRowH() + GRID_GAP) - GRID_GAP) + 'px');
   var bottom = 0;
-  groups.forEach(function (g) {
-    var el = groupEl(g);
+  // Groups, then shapes in stacking order (shapes.js): within one layer the
+  // later in the page is the higher.
+  groups.filter(function (g) { return g.kind !== 'shape'; }).concat(shapesByZ()).forEach(function (g) {
+    var el = g.kind === 'shape' ? shapeEl(g) : groupEl(g);
     ul.appendChild(el);
     bottom = Math.max(bottom, g.y + groupHeight(g));
   });
@@ -381,8 +384,9 @@ function groupResizeHandle(el, g) {
     var w0 = g.w, h0 = g.h, done = false;
     if (h.setPointerCapture) { try { h.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic */ } }
     function move(e) {
-      var w = Math.max(2, Math.min(FREE_COLS - g.x, Math.round((b.width + e.clientX - sx + GRID_GAP) / (colW + GRID_GAP))));
-      var hh = g.kind === 'dynamic' ? g.h : Math.max(titleRows() + 1, Math.round((b.height + e.clientY - sy + GRID_GAP) / (gridRowH() + GRID_GAP)));
+      var shape = g.kind === 'shape';
+      var w = Math.max(shape ? 1 : 2, Math.min(FREE_COLS - g.x, Math.round((b.width + e.clientX - sx + GRID_GAP) / (colW + GRID_GAP))));
+      var hh = g.kind === 'dynamic' ? g.h : Math.max(shape ? 1 : titleRows() + 1, Math.round((b.height + e.clientY - sy + GRID_GAP) / (gridRowH() + GRID_GAP)));
       var keep = { w: g.w, h: g.h };
       g.w = w; g.h = hh;
       if (!freeFits(groupRect(g), g.kind, 'g:' + g.id)) { g.w = keep.w; g.h = keep.h; return; }
@@ -409,6 +413,8 @@ function groupResizeHandle(el, g) {
  *  grid (a frame's contents, or a growing group's members); loose items
  *  between groups share a grid. */
 function renderFreeNarrow(items, groups) {
+  // Shapes are drawn on the cells; in reading order there are none to draw on.
+  groups = groups.filter(function (g) { return g.kind !== 'shape'; });
   var blocks = [];
   var inFrame = {};
   groups.forEach(function (g) {
@@ -501,6 +507,7 @@ function draggedThing() {
   }
   if (DRAG.newWidget) { return { key: 'new', what: 'item', span: s('unknown', null) }; }
   if (DRAG.newGroup) { return { key: 'newgroup', what: 'static', span: [8, 4] }; }
+  if (DRAG.newShape) { return { key: 'newshape', what: 'shape', span: [Math.round(FREE_COLS / 4), 3 * rowScale()] }; }
   if (DRAG.fgroup) {
     var g = freeGroup(DRAG.fgroup);
     return g ? { key: 'g:' + g.id, what: g.kind, span: [g.w, groupHeight(g)], group: g } : null;
@@ -582,9 +589,9 @@ function acceptFreeDrops(ul) {
     if (!r) { return; }
     ev.preventDefault();
     var slug = DRAG.slug, wid = DRAG.widget, def = DRAG.def, fresh = DRAG.newWidget,
-        newGroup = DRAG.newGroup, gid = DRAG.fgroup;
+        newGroup = DRAG.newGroup, gid = DRAG.fgroup, newShape = DRAG.newShape;
     DRAG.slug = null; DRAG.widget = null; DRAG.def = null; DRAG.newWidget = false;
-    DRAG.newGroup = false; DRAG.fgroup = null;
+    DRAG.newGroup = false; DRAG.fgroup = null; DRAG.newShape = false;
     if (!r.ok) { return; }                         // the ghost was red: refused, nothing moves
     if (slug) {
       var a = APPS.filter(function (x) { return x.slug === slug; })[0];
@@ -606,6 +613,8 @@ function acceptFreeDrops(ul) {
                                                    x: r.x, y: r.y, w: r.w, h: r.h }]);
       render();
       saveFreeGroups();
+    } else if (newShape) {
+      addShape(r.x, r.y, r.w, r.h);
     } else if (gid) {
       moveGroup(freeGroup(gid), r.x, r.y);
     }
@@ -630,7 +639,7 @@ function moveGroup(g, x, y) {
 }
 
 /** The effect a drop answers with: the one the current drag started with. */
-function dropEffectFor() { return DRAG.def || DRAG.newWidget || DRAG.newGroup ? 'copy' : 'move'; }
+function dropEffectFor() { return DRAG.def || DRAG.newWidget || DRAG.newGroup || DRAG.newShape ? 'copy' : 'move'; }
 
 function newGroupId() { return Math.random().toString(36).slice(2, 10) || 'g' + Date.now().toString(36); }
 

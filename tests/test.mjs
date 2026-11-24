@@ -4035,6 +4035,86 @@ test('arranging: drag "+ Group" onto the page; drop an app into a growing group'
             'no longer offered in the panel');
 });
 
+// --- shapes -------------------------------------------------------------------------
+
+const SHAPES = [
+  { id: 'g1', name: 'G', kind: 'static', x: 0, y: 6, w: 8, h: 4 },
+  { id: 's1', name: '', kind: 'shape', x: 0, y: 0, w: 6, h: 3, z: -1,
+    look: { form: 'ellipse', fill: 'blue', fill_a: 20, line: 'ink', line_w: 3, line_s: 'dashed' } },
+  { id: 's2', name: '', kind: 'shape', x: 2, y: 1, w: 6, h: 1, z: 1,
+    look: { form: 'hline', fill_a: 100, line: 'red', line_w: 2, line_s: 'solid' } }
+];
+
+test('shapes draw on their layers, in order, and stay off a phone', async () => {
+  const apps = placed({ books: { x: 1, y: 1 } });      // under both shapes: overlapping is allowed
+  const { window, doc } = await boot(USER, null, freeWith(SHAPES, apps), (w) => w.localStorage.setItem('nav.layout', '7'));
+  await settle(window, () => doc.querySelector('li.fshape'), 'shapes');
+  const back = doc.querySelector('li.fshape[data-key="g:s1"]'), front = doc.querySelector('li.fshape[data-key="g:s2"]');
+  assert.ok(back.classList.contains('fs-back') && front.classList.contains('fs-front'));
+  assert.ok(back.querySelector('.fs-art.fs-ellipse') && front.querySelector('.fs-art.fs-hline'));
+  assert.match(back.querySelector('.fs-art').style.background, /series-1.*20%/, 'fill at its opacity');
+  assert.equal(back.querySelector('.fs-tools'), null, 'no controls outside arranging');
+  const order = [...doc.querySelectorAll('ul.ugrid.free > li[data-key]')].map((li) => li.dataset.key);
+  assert.ok(order.indexOf('g:g1') < order.indexOf('g:s1') && order.indexOf('g:s1') < order.indexOf('g:s2'),
+            'frames, then shapes bottom to top');
+  assert.ok(doc.querySelector('[data-key="app:books"] a.app'), 'the tile under them is drawn');
+  // A phone: reading order, no cells -- and no shapes.
+  Object.defineProperty(doc.getElementById('out'), 'clientWidth', { configurable: true, get: () => 400 });
+  window.dispatchEvent(new window.Event('resize'));
+  await settle(window, () => !doc.querySelector('ul.ugrid.free-cells'), 'narrow');
+  assert.equal(doc.querySelector('li.fshape'), null);
+});
+
+test('arranging shapes: + Shape draws one behind the tiles; ↑ steps it past them; a shape overlaps anything', async () => {
+  const apps = placed({ books: { x: 0, y: 0 } });
+  const { window, doc, seen } = await boot(USER, null, freeWith(SHAPES.slice(0, 2), apps),
+    (w) => { w.localStorage.setItem('nav.layout', '7'); w.confirm = () => true; });
+  click(doc.getElementById('menu-btn'));
+  click(menuItem(doc, 'Edit layout'));
+  await settle(window, () => doc.getElementById('shape-new') && doc.querySelector('li.fshape .fs-tools'), 'arranging');
+  assert.equal(window.freeFits({ x: 0, y: 0, w: 4, h: 2 }, 'shape', 'newshape'), true, 'over a tile is fine');
+  const saves = () => seen.filter((r) => r.url === 'api/layouts/7/free-groups');
+  const last = () => JSON.parse(saves().pop().body).groups;
+  // jsdom: every pointer is cell 0,0 -- on top of the tile, which a shape may be.
+  const d = drag(window, doc.getElementById('shape-new'), doc.querySelector('ul.ugrid.free'));
+  assert.equal(d.dt.dropEffect, 'copy', 'the drop effect must be one the drag allowed');
+  await settle(window, () => saves().length === 1, 'saved');
+  let got = last();
+  assert.equal(got.length, 3);
+  const made = got[2];
+  assert.equal(made.kind, 'shape');
+  assert.equal(made.z, -1, 'on top of the layer behind the tiles');
+  assert.equal(got[1].z, -2, 'the older shape is now below it');
+  assert.deepEqual([made.x, made.y], [0, 0]);
+  // ↑ once: past the tiles, into the front layer.
+  await settle(window, () => doc.querySelector(`li.fshape[data-key="g:${made.id}"] .fs-up`), 'drawn');
+  click(doc.querySelector(`li.fshape[data-key="g:${made.id}"] .fs-up`));
+  await settle(window, () => saves().length === 2, 'restacked');
+  got = last();
+  assert.deepEqual(got.map((g) => g.z), [undefined, -1, 1]);
+  assert.ok(doc.querySelector(`li.fshape[data-key="g:${made.id}"]`).classList.contains('fs-front'));
+  // ↓ on the bottom one: it is already at the bottom, nothing to save.
+  click(doc.querySelector('li.fshape[data-key="g:s1"] .fs-down'));
+  assert.equal(saves().length, 2);
+  // The picker: form, fill none (transparent), line style -- each saved.
+  click(doc.querySelector('li.fshape[data-key="g:s1"] .fs-style'));
+  const pk = doc.getElementById('bg-picker');
+  assert.ok(pk.classList.contains('shape-picker'));
+  click(pk.querySelector('.fs-pressed button[data-v="rect"]'));
+  click(pk.querySelectorAll('.bg-swatches')[0].querySelector('.bg-sw[data-c=""]'));
+  click(pk.querySelector('.fs-pressed button[data-v="dotted"]'));
+  await settle(window, () => saves().length === 5, 'each choice saved');
+  const s1 = last().find((g) => g.id === 's1');
+  assert.equal(s1.look.form, 'rect');
+  assert.equal(s1.look.fill, undefined, 'no fill: transparent');
+  assert.equal(s1.look.line_s, 'dotted');
+  click(pk.querySelector('.fs-pressed button[data-v="hline"]'));
+  assert.ok(pk.querySelector('.fs-slider').hidden, 'a line has no fill to set');
+  // Delete.
+  click(doc.querySelector('li.fshape[data-key="g:s1"] .fs-del'));
+  await settle(window, () => !last().some((g) => g.id === 's1'), 'deleted');
+});
+
 // --- backgrounds --------------------------------------------------------------------
 
 test('page background: the bar\'s 🎨 picks a theme colour, saved on the layout and painted', async () => {

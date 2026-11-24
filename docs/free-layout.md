@@ -97,6 +97,19 @@ colours or an image reference; no new table for images (see below).
 - Tiles keep their own colours legible: the tile's text colour is chosen
   against its background, never left to the image.
 
+### Shapes (v1.24)
+
+A shape is a free group of kind `shape`: cells like a frame, plus a `look`
+(`form` rect / round / ellipse / hline / vline; `fill` and `line` a theme
+colour, `ink` / `muted` / `card`, `#rrggbb` or none for transparent; `fill_a`
+opacity 0-100; `line_w` 0-16 px; `line_s` solid / dashed / dotted) and a `z`.
+
+Stacking, bottom to top: group frames, shapes with `z < 0`, tiles and widgets,
+shapes with `z > 0`; within a layer, by `z`. The ↑/↓ on a shape step it one
+place in that stack, so stepping past the tiles changes its layer. Shapes
+overlap anything, hold nothing, never take a click, and are left out of the
+phone (reading-order) view.
+
 ## Cost and order
 
 1. **Free mode, static groups only, no backgrounds**: page grid, group

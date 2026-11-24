@@ -1041,7 +1041,31 @@ ul.ugrid.free > li.fgroup { display:flex; flex-direction:column; gap:10px; min-w
   background:color-mix(in srgb, var(--card) 55%, transparent); box-shadow:inset 0 0 0 1px var(--line); z-index:0; }
 ul.ugrid.free > li.fg-static { pointer-events:none; }
 ul.ugrid.free > li.fg-static > .fg-title, ul.ugrid.free > li.fg-static > .resize-handle { pointer-events:auto; }
-ul.ugrid.free > li:not(.fgroup):not(.free-ghost) { z-index:1; }
+ul.ugrid.free > li:not(.fgroup):not(.free-ghost):not(.fshape) { z-index:2; }
+/* Shapes (shapes.js): the layers bottom to top are group frames (0), shapes
+   behind (1), tiles and widgets (2), shapes in front (3); page order within. */
+ul.ugrid.free { isolation:isolate; }
+ul.ugrid.free > li.fshape { position:relative; display:flex; min-width:0; min-height:0; pointer-events:none; }
+ul.ugrid.free > li.fshape.fs-back { z-index:1; }
+ul.ugrid.free > li.fshape.fs-front { z-index:3; }
+.fs-art { flex:1 1 auto; box-sizing:border-box; min-width:0; }
+.fs-round { border-radius:12px; }
+.fs-ellipse { border-radius:50%; }
+.fs-hline { align-self:center; height:0; }
+.fs-vline { flex:0 0 0; width:0; margin:0 auto; }
+body.admin-mode li.fshape, body.edit-mode li.fshape { outline:1px dashed color-mix(in srgb, var(--muted) 45%, transparent); }
+li.fshape > .fs-tools { position:absolute; top:3px; left:3px; display:flex; align-items:center; gap:1px; padding:1px 3px;
+  pointer-events:auto; background:var(--card); border:1px solid var(--line); border-radius:6px; opacity:.7; }
+li.fshape:hover > .fs-tools, li.fshape > .fs-tools:focus-within { opacity:1; }
+li.fshape > .resize-handle { pointer-events:auto; }
+.fs-move { cursor:move; padding:0 3px; color:var(--muted); user-select:none; }
+.shape-picker .fs-pressed { display:flex; gap:4px; flex-wrap:wrap; }
+.shape-picker .fs-pressed button { min-width:30px; padding:3px 8px; font-size:13px; }
+.shape-picker .fs-pressed button[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:#fff; }
+.shape-picker .fs-slider { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
+.shape-picker .fs-slider input { flex:1; }
+.shape-picker .fs-slider span { min-width:38px; text-align:right; }
+.shape-picker [hidden] { display:none !important; }
 .fg-title { height:var(--fg-title-h, 33px); flex:0 0 var(--fg-title-h, 33px); display:flex; align-items:center; gap:6px; padding:0 12px;
   font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .fg-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

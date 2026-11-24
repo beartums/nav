@@ -100,6 +100,28 @@ class FreeGroups(unittest.TestCase):
                 layouts.clean_free_groups(bad)
 
 
+class Shapes(unittest.TestCase):
+    base = {"id": "s1", "kind": "shape", "x": 2, "y": 1, "w": 6, "h": 3, "z": -1}
+
+    def test_a_shape_keeps_its_look_and_layer(self):
+        got = layouts.clean_free_groups([{**self.base, "name": "ignored", "look": {
+            "form": "ellipse", "fill": "blue", "fill_a": 30, "line": "ink", "line_w": 3, "line_s": "dashed"}}])
+        self.assertEqual(got, [{"id": "s1", "name": "", "kind": "shape", "x": 2, "y": 1, "w": 6, "h": 3, "z": -1,
+                                "look": {"form": "ellipse", "fill_a": 30, "line_w": 3, "line_s": "dashed",
+                                         "fill": "blue", "line": "ink"}}])
+
+    def test_no_colour_is_transparent_and_defaults_fill_in(self):
+        got = layouts.clean_free_groups([{**self.base, "z": 4, "look": {"form": "hline"}}])
+        self.assertEqual(got[0]["look"], {"form": "hline", "fill_a": 100, "line_w": 2, "line_s": "solid"})
+
+    def test_a_bad_shape_is_refused(self):
+        for look, z in (({"form": "star"}, -1), ({"line_s": "wavy"}, -1), ({"fill": "puce"}, -1),
+                        ({"fill_a": 101}, -1), ({"line_w": 17}, -1), ({"extra": 1}, -1),
+                        ({}, 0), ({}, 1.5), ({}, True), ({}, 999)):
+            with self.assertRaises(ValueError, msg=(look, z)):
+                layouts.clean_free_groups([{**self.base, "look": look, "z": z}])
+
+
 class Backgrounds(unittest.TestCase):
     def test_colours_are_theme_names_or_hex(self):
         self.assertEqual(layouts.clean_colour("blue"), "blue")

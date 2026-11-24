@@ -165,8 +165,18 @@ def clean_groups(raw: Any, what: str) -> list[str]:
 # frame; what sits inside keeps its own cells and moves with the frame.
 # `dynamic`: a titled box of fixed width whose members (category "fg:<id>",
 # no cells of their own) are packed inside it, and which grows down to fit.
-FREE_GROUP_KINDS = ("static", "dynamic")
-FREE_GROUPS_MAX = 60
+# `shape`: a drawn rectangle, ellipse or line (its `look`) that sits on a
+# layer -- behind the tiles (z < 0) or in front of them (z > 0), ordered by z
+# within it. Shapes overlap anything; they hold nothing.
+FREE_GROUP_KINDS = ("static", "dynamic", "shape")
+FREE_GROUPS_MAX = 120
+SHAPE_FORMS = ("rect", "round", "ellipse", "hline", "vline")
+LINE_STYLES = ("solid", "dashed", "dotted")
+LINE_W_MAX = 16
+Z_MAX = 200
+# Besides the colours, a shape may take the theme's own: its text, its muted
+# text, its card -- so a line drawn in "ink" follows light and dark mode.
+SHAPE_INKS = ("ink", "muted", "card")
 GROUP_ID = re.compile(r"^[a-z0-9]{1,16}$")
 
 
@@ -193,10 +203,48 @@ def clean_free_groups(raw: Any, cols: int = FREE_COLS) -> list[dict[str, Any]]:
         if x is None or y is None or not w or not h or x + w > cols:
             raise ValueError(f"group {gid}: needs x, y, w >= 1 and h >= 1 inside the {cols} columns")
         item = {"id": gid, "name": name, "kind": kind, "x": x, "y": y, "w": w, "h": h}
+        if kind == "shape":
+            item["name"] = ""
+            item["look"] = clean_look(g.get("look"), gid)
+            z = g.get("z")
+            if not isinstance(z, int) or isinstance(z, bool) or not z or abs(z) > Z_MAX:
+                raise ValueError(f"shape {gid}: z must be a whole number from -{Z_MAX} to {Z_MAX}, not 0")
+            item["z"] = z
+            out.append(item)
+            continue
         bg = clean_bg(g.get("bg"))
         if bg:
             item["bg"] = bg
         out.append(item)
+    return out
+
+
+def clean_look(v: Any, gid: str) -> dict[str, Any]:
+    """A shape's look: {form, fill?, fill_a, line?, line_w, line_s}. A colour
+    left out is none (transparent); fill_a is the fill's opacity, 0-100."""
+    v = v if isinstance(v, dict) else {}
+    extra = set(v) - {"form", "fill", "fill_a", "line", "line_w", "line_s"}
+    if extra:
+        raise ValueError(f"shape {gid}: unknown look keys {sorted(extra)}")
+    form = v.get("form") or "rect"
+    if form not in SHAPE_FORMS:
+        raise ValueError(f"shape {gid}: form must be one of {list(SHAPE_FORMS)}")
+    line_s = v.get("line_s") or "solid"
+    if line_s not in LINE_STYLES:
+        raise ValueError(f"shape {gid}: line style must be one of {list(LINE_STYLES)}")
+
+    def num(key: str, lo: int, hi: int, default: int) -> int:
+        n = v.get(key, default)
+        if not isinstance(n, int) or isinstance(n, bool) or not lo <= n <= hi:
+            raise ValueError(f"shape {gid}: {key} must be a whole number {lo}-{hi}")
+        return n
+    out: dict[str, Any] = {"form": form, "fill_a": num("fill_a", 0, 100, 100),
+                           "line_w": num("line_w", 0, LINE_W_MAX, 2), "line_s": line_s}
+    for key in ("fill", "line"):
+        c = v.get(key)
+        c = c if c in SHAPE_INKS else clean_colour(c)
+        if c:
+            out[key] = c
     return out
 
 
