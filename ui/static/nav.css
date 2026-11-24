@@ -991,7 +991,8 @@ body.admin-mode ul.ugrid.free-cells, body.edit-mode ul.ugrid.free-cells {
   background-image:
     linear-gradient(to right, color-mix(in srgb, var(--line) 70%, transparent) 1px, transparent 1px),
     linear-gradient(to bottom, color-mix(in srgb, var(--line) 70%, transparent) 1px, transparent 1px);
-  background-size:calc((100% + 10px) / 24) 43px;
+  /* --free-cols: the layout's column count (free.js); 10px = the gap, 43px = row + gap. */
+  background-size:calc((100% + 10px) / var(--free-cols, 24)) 43px;
   border-radius:8px; outline:1px dashed var(--line); outline-offset:4px; }
 ul.ugrid.free > li.free-ghost { border:2px dashed var(--accent); border-radius:10px; pointer-events:none;
   background:color-mix(in srgb, var(--accent) 12%, transparent); z-index:4; }
