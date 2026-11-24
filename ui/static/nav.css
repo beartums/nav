@@ -1200,3 +1200,8 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .make-app { gap:6px; flex-wrap:wrap; align-items:center; }
 .make-app .person-lab { min-width:120px; }
 .make-existing { font:inherit; font-size:12px; padding:2px 4px; border-radius:6px; }
+/* A row with nothing chosen: greyed, tagged "ignored". */
+.make-skip-tag { display:none; font-size:11px; font-style:italic; color:var(--muted); }
+.make-app.make-ignored .person-lab { opacity:.45; }
+.make-app.make-ignored .person-choice, .make-app.make-ignored .make-existing { opacity:.55; }
+.make-app.make-ignored .make-skip-tag { display:inline; }

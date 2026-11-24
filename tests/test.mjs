@@ -4424,6 +4424,10 @@ test('access: + beside a person makes accounts: a way per app, one password, an 
   assert.deepEqual(pressed('plex'), ['Invite:true', 'Managed profile:false'], 'the first way, pressed');
   row('plex').querySelectorAll('.person-choice')[1].click();
   assert.deepEqual(pressed('plex'), ['Invite:false', 'Managed profile:true'], 'one way per app');
+  assert.equal(row('plex').classList.contains('make-ignored'), false);
+  row('plex').querySelectorAll('.person-choice')[1].click();
+  assert.equal(row('plex').classList.contains('make-ignored'), true, 'clicked off: greyed, "ignored"');
+  row('plex').querySelectorAll('.person-choice')[1].click();
   const ex = row('choreboard').querySelector('.make-existing');
   ex.value = 'lizzie'; ex.dispatchEvent(new window.Event('change'));
   const go = doc.getElementById('make-create');
