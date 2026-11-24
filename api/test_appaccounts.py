@@ -126,6 +126,10 @@ class _Client:
         self.seen.append(("PATCH " + url, json, params))
         return self.routes.get("PATCH /" + url.split("/", 3)[-1], _Resp({}))
 
+    async def delete(self, url, params=None, headers=None):
+        self.seen.append(("DELETE " + url, None, params))
+        return _Resp(None, text="")
+
     async def put(self, url, json=None, headers=None, params=None):
         self.seen.append(("PUT " + url, json, params))
         return self.routes.get("PUT /" + url.split("/", 3)[-1], _Resp({}))
@@ -452,3 +456,33 @@ class JellyfinRule(unittest.TestCase):
         c = role(aa._role_jellyfin, {"/Users/u1": _Resp({"Policy": pol}), "/Users/u1/Policy": _Resp(None, text="")},
                  {"id": "u1"}, True)
         self.assertEqual(c.seen[-1][1], {"IsAdministrator": True, "LoginAttemptsBeforeLockout": 3, "EnableRemoteAccess": False})
+
+
+class JellyfinOnly(unittest.TestCase):
+    POL = {"IsAdministrator": False, "EnableAllFolders": True, "EnabledFolders": [], "AuthenticationProviderId": "x"}
+
+    def go(self, libs):
+        c = _Client({"/Users/New": _Resp({"Id": "n1"}), "/Users/n1": _Resp({"Policy": dict(self.POL)}),
+                     "/Users/n1/Policy": _Resp(None, text="")})
+        uid = asyncio.run(aa.make_jellyfin_only(c, "http://app", "k", "gran", "pw-12345678", libs))
+        return uid, c
+
+    def test_every_library_by_default(self):
+        uid, c = self.go(None)
+        self.assertEqual(uid, "n1")
+        self.assertEqual(c.seen[0][1], {"Name": "gran", "Password": "pw-12345678"})
+        self.assertEqual(c.seen[-1][1]["EnableAllFolders"], True)
+
+    def test_chosen_libraries_only(self):
+        _, c = self.go(["lib-a", "lib-b"])
+        self.assertEqual((c.seen[-1][1]["EnableAllFolders"], c.seen[-1][1]["EnabledFolders"]), (False, ["lib-a", "lib-b"]))
+        self.assertFalse(c.seen[-1][1]["IsAdministrator"])
+
+    def test_names_and_libraries(self):
+        self.assertTrue(aa.JF_NAME.match("gran.smith"))
+        self.assertFalse(aa.JF_NAME.match("gran smith") or aa.JF_NAME.match("-x") or aa.JF_NAME.match("a"))
+        got, _ = run(aa.jellyfin_libraries, {"/Library/MediaFolders": _Resp({"Items": [{"Id": "1", "Name": "Movies"}, {"Name": "?"}]})})
+        self.assertEqual(got, [{"id": "1", "name": "Movies"}])
+        c = _Client({})
+        asyncio.run(aa.delete_jellyfin_user(c, "http://app", "k", "u9"))
+        self.assertEqual(c.seen[0][0], "DELETE http://app/Users/u9")

@@ -757,6 +757,39 @@ async def _role_choreboard(client: Any, base: str, key: str, acc: dict[str, Any]
     r.raise_for_status()
 
 
+# --- Jellyfin-only accounts: no Authentik user, Jellyfin's own sign-in from outside --
+JF_NAME = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$")
+
+
+async def jellyfin_libraries(client: Any, base: str, key: str) -> list[dict[str, str]]:
+    # LibraryController.GetMediaFolders: GET /Library/MediaFolders, {Items: [{Id, Name}]}.
+    r = await client.get(base + "/Library/MediaFolders", params={"ApiKey": key})
+    r.raise_for_status()
+    return [{"id": i["Id"], "name": i.get("Name") or i["Id"]} for i in (r.json() or {}).get("Items") or [] if i.get("Id")]
+
+
+async def make_jellyfin_only(client: Any, base: str, key: str, name: str, pw: str,
+                             libraries: list[str] | None) -> str:
+    """A regular Jellyfin user with the deployment's user rule; `libraries` (folder
+    ids) limits what they see, None = every library. Returns the new user's id."""
+    r = await client.post(base + "/Users/New", params={"ApiKey": key}, json={"Name": name, "Password": pw})
+    r.raise_for_status()
+    uid = (r.json() or {}).get("Id")
+    if not uid:
+        raise ValueError("Jellyfin made the account but returned no id")
+    change = {"IsAdministrator": False} | jellyfin_rule(False)
+    if libraries is not None:
+        change |= {"EnableAllFolders": False, "EnabledFolders": list(libraries)}
+    await _jellyfin_policy(client, base, key, uid, change)
+    return str(uid)
+
+
+async def delete_jellyfin_user(client: Any, base: str, key: str, uid: str) -> None:
+    # UserController.DeleteUser: DELETE /Users/{id} (admin).
+    r = await client.delete(f"{base}/Users/{uid}", params={"ApiKey": key})
+    r.raise_for_status()
+
+
 async def _role_jellyfin(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:
     # The whole policy back with the flag changed, plus the deployment's rule for the
     # new role (lockout, LAN-only admins). Jellyfin refuses (403) to remove the last admin.

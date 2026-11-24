@@ -362,3 +362,15 @@ CREATE TABLE IF NOT EXISTS account_links (
     at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (app, account)
 );
+
+-- Accounts nav made IN ONE APP for someone with no Authentik account (Access ->
+-- App accounts -> + Jellyfin-only). Listed on their own, not among the accounts
+-- that match nobody. `note` says who it is for.
+CREATE TABLE IF NOT EXISTS app_only_accounts (
+    app      TEXT        NOT NULL,
+    account  TEXT        NOT NULL,
+    note     TEXT        NOT NULL DEFAULT '',
+    by_whom  TEXT        NOT NULL,
+    at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (app, account)
+);

@@ -241,6 +241,16 @@ function accessPage(h) {
     flip.setAttribute('aria-pressed', String(pivot));
     flip.addEventListener('click', function () { pivot = !pivot; savePref(); urlPage(place(), false); render(); });
     h.body.appendChild(flip);
+    var jf = apps.apps.filter(function (a) { return a.key === 'jellyfin'; })[0];
+    if (apps.jellyfin_only && jf && !jf.error) {
+      var jo = document.createElement('button');
+      jo.type = 'button'; jo.id = 'acc-jf-only'; jo.className = 'acc-pivot';
+      jo.textContent = '+ Jellyfin-only';
+      jo.title = 'A Jellyfin account for someone with no Authentik account: Jellyfin\u2019s own sign-in, ' +
+        'from outside the house too (jf address, port 8920). Nothing else on the network.';
+      jo.addEventListener('click', function () { jellyfinOnlyDialog(function () { apps = null; loadApps(true); }); });
+      h.body.appendChild(jo);
+    }
     legend();
 
     var t = document.createElement('table');
@@ -268,6 +278,36 @@ function accessPage(h) {
     }
     t.appendChild(tb);
     h.body.appendChild(t);
+    var only = (apps.app_only || {}).jellyfin || [];
+    if (only.length) {
+      var ob = div('acc-orphans acc-app-only');
+      ob.appendChild(div('ts-lab', 'Jellyfin-only accounts (no Authentik account; Jellyfin\u2019s own sign-in)'));
+      only.forEach(function (o) {
+        var row = div('acc-orphan');
+        var st = o.gone ? ['missing', '\u2715', 'Jellyfin no longer has this account']
+               : o.disabled ? ['disabled', '\u25cb', 'Disabled in Jellyfin'] : ['user', '\u25cf', 'Account'];
+        var sp = document.createElement('span');
+        sp.className = 'acc-ind acc-ind-' + st[0]; sp.textContent = st[1];
+        sp.title = st[2] + (o.last_seen ? ' \u00b7 last seen ' + new Date(o.last_seen).toLocaleString() : ' \u00b7 never signed in') +
+          ' \u00b7 made by ' + o.by + ' ' + new Date(o.at).toLocaleDateString();
+        sp.setAttribute('role', 'img'); sp.setAttribute('aria-label', sp.title);
+        row.appendChild(sp);
+        row.appendChild(document.createTextNode(' ' + (o.login || o.account) + (o.note ? ' \u2014 ' + o.note : '') + ' '));
+        var x = document.createElement('button');
+        x.type = 'button'; x.className = 'fg-btn acc-jf-remove'; x.textContent = '\u00d7';
+        x.title = o.gone ? 'Forget it (Jellyfin no longer has it)' : 'Delete ' + (o.login || o.account) + ' from Jellyfin';
+        x.addEventListener('click', function () {
+          if (!o.gone && !confirm('Delete ' + (o.login || o.account) + ' from Jellyfin? Their watch history goes too.')) { return; }
+          x.disabled = true;
+          connSend('DELETE', 'api/admin/access/apps/jellyfin-only?account=' + encodeURIComponent(o.account))
+            .then(function (r) { note.textContent = (o.login || o.account) + ': ' + r.detail; apps = null; return loadApps(true); })
+            .catch(function (e) { note.textContent = 'Removing failed: ' + e.message; x.disabled = false; });
+        });
+        row.appendChild(x);
+        ob.appendChild(row);
+      });
+      h.body.appendChild(ob);
+    }
     var keys = Object.keys(apps.orphans || {});
     var hand = [];
     apps.people.forEach(function (p) {
@@ -1045,4 +1085,106 @@ function createAccountsDialog(p, todo, done) {
     });
   });
   setTimeout(function () { (needsPw() ? pw : go).focus(); }, 0);
+}
+
+
+// --- Jellyfin-only account (App accounts, + Jellyfin-only) --------------------------
+// For someone with no Authentik account: a regular Jellyfin user, reachable from
+// outside on Jellyfin's own sign-in. Libraries: all (pressed) or the ones pressed.
+function jellyfinOnlyDialog(done) {
+  var back = document.createElement('div');
+  back.className = 'icondlg-back';
+  back.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:60;' +
+                       'display:flex; align-items:center; justify-content:center;';
+  var box = document.createElement('div');
+  box.className = 'smalldlg person-dlg';
+  box.id = 'jfo-dlg';
+  back.appendChild(box);
+  document.body.appendChild(back);
+  var made = false;
+  function close() { back.remove(); document.removeEventListener('keydown', onKey); if (made) { done(); } }
+  function onKey(e) { if (e.key === 'Escape') { close(); } }
+  document.addEventListener('keydown', onKey);
+  back.addEventListener('click', function (e) { if (e.target === back) { close(); } });
+  function el(tag, cls, text) { var x = document.createElement(tag); if (cls) { x.className = cls; } if (text) { x.textContent = text; } return x; }
+  function field(label, id, type, title) {
+    var row = el('label', 'person-row');
+    row.appendChild(el('span', 'person-lab', label));
+    var i = el('input'); i.id = id; i.type = type; i.title = title;
+    if (type === 'password') { i.autocomplete = 'new-password'; }
+    row.appendChild(i);
+    box.appendChild(row);
+    return i;
+  }
+  box.appendChild(el('h3', null, 'Jellyfin-only account'));
+  box.appendChild(el('p', 'admin-why', 'For someone with no Authentik account. They sign in to Jellyfin with this ' +
+    'username and password, at home or from outside (allowed countries only). A regular user: locked out after ' +
+    'repeated wrong passwords. Nothing else on the network.'));
+  var user = field('Username', 'jfo-user', 'text', '2-32 letters, digits, . _ or - (what they type to sign in)');
+  var pw = field('Password', 'jfo-pw', 'password', 'At least 8 characters. nav never stores it.');
+  var who = field('Who is it for', 'jfo-note', 'text', 'Optional: a note shown in the list (e.g. "Grandma")');
+  var libRow = el('div', 'person-row jfo-libs');
+  libRow.appendChild(el('span', 'person-lab', 'Libraries'));
+  var allB = el('button', 'ts-t person-choice', 'All');
+  allB.type = 'button'; allB.setAttribute('aria-pressed', 'true');
+  allB.title = 'Every library, including ones added later. Click to choose instead';
+  libRow.appendChild(allB);
+  var libBtns = [];
+  var libWrap = el('span', 'jfo-liblist');
+  libRow.appendChild(libWrap);
+  box.appendChild(libRow);
+  connSend('GET', 'api/admin/access/apps/jellyfin-only/libraries').then(function (r) {
+    (r.libraries || []).forEach(function (l) {
+      var b = el('button', 'ts-t person-choice jfo-lib', l.name);
+      b.type = 'button'; b.dataset.id = l.id; b.setAttribute('aria-pressed', 'true'); b.disabled = true;
+      b.title = 'Pressed: they see ' + l.name;
+      b.addEventListener('click', function () { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); paint(); });
+      libWrap.appendChild(b);
+      libBtns.push(b);
+    });
+    paint();
+  }, function (e) { libWrap.textContent = 'Could not list libraries: ' + e.message; });
+  allB.addEventListener('click', function () {
+    allB.setAttribute('aria-pressed', String(allB.getAttribute('aria-pressed') !== 'true'));
+    paint();
+  });
+  var out = el('div', 'make-results');
+  box.appendChild(out);
+  var foot = el('div', 'smalldlg-foot');
+  var cancel = el('button', null, 'Close');
+  cancel.type = 'button'; cancel.addEventListener('click', close);
+  var go = el('button', 'primary', 'Create');
+  go.type = 'button'; go.id = 'jfo-create';
+  foot.appendChild(cancel); foot.appendChild(go);
+  box.appendChild(foot);
+  var NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$/;
+  function chosen() {
+    if (allB.getAttribute('aria-pressed') === 'true') { return null; }
+    return libBtns.filter(function (b) { return b.getAttribute('aria-pressed') === 'true'; }).map(function (b) { return b.dataset.id; });
+  }
+  function paint() {
+    var all = allB.getAttribute('aria-pressed') === 'true';
+    libBtns.forEach(function (b) { b.disabled = all || made; });
+    var libs = chosen();
+    go.disabled = made || !NAME.test(user.value.trim()) || pw.value.length < 8 || (libs !== null && !libs.length);
+  }
+  [user, pw].forEach(function (i) { i.addEventListener('input', paint); });
+  paint();
+  go.addEventListener('click', function () {
+    go.disabled = true;
+    out.textContent = 'Working\u2026';
+    connSend('POST', 'api/admin/access/apps/jellyfin-only',
+             { username: user.value.trim(), password: pw.value, note: who.value.trim(), libraries: chosen() })
+      .then(function (r) { made = true; return { ok: true, detail: r.detail }; }, function (e) { return { ok: false, detail: e.message }; })
+      .then(function (r) {
+        out.innerHTML = '';
+        var line = el('div', 'make-result');
+        line.appendChild(personInd(r.ok ? 'ok' : 'bad', r.detail));
+        line.appendChild(document.createTextNode(' ' + r.detail));
+        out.appendChild(line);
+        if (r.ok) { pw.value = ''; [user, pw, who, allB].forEach(function (x) { x.disabled = true; }); }
+        paint();
+      });
+  });
+  setTimeout(function () { user.focus(); }, 0);
 }
