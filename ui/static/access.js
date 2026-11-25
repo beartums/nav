@@ -53,16 +53,22 @@ function accessPage(h) {
   var want = h.want || {};
   var VIEWS = ['groups', 'apps', 'admins'];
   var mode = VIEWS.indexOf(want.view || pref.mode) > 0 ? (want.view || pref.mode) : 'groups';
-  var pivot = 'pivot' in want ? want.pivot === '1' : !!pref.pivot, apps = null;
+  // Per view: which way round (pivots[view]) and the two filters (filters[view]).
+  // An older remembered `pivot: true` was App accounts'.
+  var pivots = pref.pivots || { apps: !!pref.pivot };
+  var filters = pref.filters || {};
+  if ('pivot' in want) { pivots[mode] = want.pivot === '1'; }
+  var pivot = !!pivots[mode], apps = null;
   function savePref() {
-    try { localStorage.setItem(PREF, JSON.stringify({ mode: mode, pivot: pivot })); } catch (e) {}
+    pivots[mode] = pivot;
+    try { localStorage.setItem(PREF, JSON.stringify({ mode: mode, pivots: pivots, filters: filters })); } catch (e) {}
   }
-  function place() { return { view: mode, pivot: mode === 'apps' && pivot }; }
+  function place() { return { view: mode, pivot: pivot }; }
   urlPageSet(place());
   // Back/Forward within the page: another view, or the other way round.
   h.onURL = function (w) {
     mode = VIEWS.indexOf(w.view) > 0 ? w.view : 'groups';
-    pivot = w.pivot === '1';
+    pivot = 'pivot' in w ? w.pivot === '1' : !!pivots[mode];
     urlPageSet(place());
     if (!view) { return; }            // still loading: it draws the chosen view when done
     if (mode !== 'groups' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
@@ -76,8 +82,9 @@ function accessPage(h) {
       b.setAttribute('aria-pressed', String(mode === m[0]));
       b.addEventListener('click', function () {
         if (mode === m[0]) { return; }
-        mode = m[0];
         savePref();
+        mode = m[0];
+        pivot = !!pivots[mode];
         urlPage(place(), true);
         if (mode !== 'groups' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
       });
@@ -229,18 +236,101 @@ function accessPage(h) {
     });
   }
 
+  // --- shared by the three views: filters, pivot, and a table that scrolls inside the page
+  // Filters: comma-separated words, any of which may match (case-insensitive) a
+  // person's name, email or username, or a column's name. Typing redraws only the
+  // table, so the box keeps its focus.
+  function words(q) { return (q || '').toLowerCase().split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
+  function hits(q, texts) {
+    var w = words(q);
+    if (!w.length) { return true; }
+    var hay = texts.filter(Boolean).join(' ').toLowerCase();
+    return w.some(function (x) { return hay.indexOf(x) >= 0; });
+  }
+  function personHits(p) { return hits((filters[mode] || {}).people, [p.name, p.email, p.username]); }
+  function colHits(texts) { return hits((filters[mode] || {}).cols, texts); }
+  /** The bar above every view's table: two filters and the pivot. `redraw` draws the table again. */
+  function gridBar(colNoun, redraw) {
+    var bar = div('acc-gridbar');
+    var f = filters[mode] = filters[mode] || {};
+    function box(key, ph, title) {
+      var i = document.createElement('input');
+      i.type = 'search'; i.className = 'acc-filter'; i.id = 'acc-filter-' + key;
+      i.placeholder = ph; i.title = title; i.value = f[key] || '';
+      i.setAttribute('aria-label', ph);
+      i.addEventListener('input', function () { f[key] = i.value; savePref(); redraw(); });
+      bar.appendChild(i);
+    }
+    box('people', 'Filter people\u2026', 'Name, email or username; commas for several (any may match)');
+    box('cols', 'Filter ' + colNoun + '\u2026', colNoun.charAt(0).toUpperCase() + colNoun.slice(1) + ' by name; commas for several');
+    var flip = document.createElement('button');
+    flip.type = 'button'; flip.id = 'acc-pivot'; flip.className = 'acc-pivot';
+    flip.textContent = '\u21c4 ' + (pivot ? 'People across' : colNoun.charAt(0).toUpperCase() + colNoun.slice(1) + ' across');
+    flip.title = 'Swap rows and columns';
+    flip.setAttribute('aria-pressed', String(pivot));
+    flip.addEventListener('click', function () { pivot = !pivot; savePref(); urlPage(place(), false); render(); });
+    bar.appendChild(flip);
+    h.body.appendChild(bar);
+    return bar;
+  }
+  /** A people x columns table, either way round, inside a box that scrolls on its own
+   *  (the page never gets wider; the headings and the first column stay put).
+   *  o: {people, cols, corner, personHead(p, tag), colHead(c, tag), cell(p, c),
+   *      extra: {label, cell(p)} -- one more column (or, pivoted, row) per person, cls} */
+  function gridTable(o) {
+    var people = o.people.filter(personHits), cols = o.cols.filter(function (c) { return colHits(o.colText(c)); });
+    var wrap = div('acc-scroll');
+    var t = document.createElement('table');
+    t.className = 'acc-table ' + (o.cls || '') + (pivot ? ' acc-pivoted' : '');
+    var hr = document.createElement('tr');
+    var th0 = document.createElement('th'); th0.className = 'acc-corner';
+    th0.textContent = pivot ? o.corner : 'Person'; hr.appendChild(th0);
+    var tb = document.createElement('tbody');
+    if (pivot) {
+      people.forEach(function (p) { hr.appendChild(o.personHead(p, 'th')); });
+      cols.forEach(function (c) {
+        var tr = document.createElement('tr');
+        tr.appendChild(o.colHead(c, 'td'));
+        people.forEach(function (p) { tr.appendChild(o.cell(p, c)); });
+        tb.appendChild(tr);
+      });
+      if (o.extra) {
+        var er = document.createElement('tr');
+        var eh = document.createElement('td'); eh.className = 'acc-who'; eh.textContent = o.extra.label; er.appendChild(eh);
+        people.forEach(function (p) { er.appendChild(o.extra.cell(p)); });
+        tb.appendChild(er);
+      }
+    } else {
+      cols.forEach(function (c) { hr.appendChild(o.colHead(c, 'th')); });
+      if (o.extra) { var x = document.createElement('th'); x.textContent = o.extra.label; hr.appendChild(x); }
+      people.forEach(function (p) {
+        var tr = document.createElement('tr');
+        tr.appendChild(o.personHead(p, 'td'));
+        cols.forEach(function (c) { tr.appendChild(o.cell(p, c)); });
+        if (o.extra) { tr.appendChild(o.extra.cell(p)); }
+        tb.appendChild(tr);
+      });
+    }
+    t.appendChild(document.createElement('thead')).appendChild(hr);
+    t.appendChild(tb);
+    wrap.appendChild(t);
+    if (!people.length || !cols.length) {
+      wrap.appendChild(div('note acc-none', 'Nothing matches the filter' + (!people.length ? ' (no people)' : ' (no ' + o.corner.toLowerCase() + 's)') + '.'));
+    }
+    return wrap;
+  }
+  /** Put `node` where the last table was (or at the end). */
+  function placeTable(slot, node) {
+    if (slot.firstChild) { slot.replaceChild(node, slot.firstChild); } else { slot.appendChild(node); }
+  }
+
   function renderApps() {
     save.hidden = true;
     note.textContent = '';
     freshness(apps.as_of, "Each app's own accounts, read with its key in User management, matched to Authentik " +
       'people by email, then username. Read-only.', function () { note.textContent = 'Reading each app…'; loadApps(true); });
-    var flip = document.createElement('button');
-    flip.type = 'button'; flip.id = 'acc-pivot'; flip.className = 'acc-pivot';
-    flip.textContent = '⇄ ' + (pivot ? 'People across' : 'Apps across');
-    flip.title = 'Swap rows and columns';
-    flip.setAttribute('aria-pressed', String(pivot));
-    flip.addEventListener('click', function () { pivot = !pivot; savePref(); urlPage(place(), false); render(); });
-    h.body.appendChild(flip);
+    var slot = div('acc-slot');
+    var bar = gridBar('apps', function () { placeTable(slot, appsTable()); });
     var jf = apps.apps.filter(function (a) { return a.key === 'jellyfin'; })[0];
     if (apps.jellyfin_only && jf && !jf.error) {
       var jo = document.createElement('button');
@@ -249,35 +339,17 @@ function accessPage(h) {
       jo.title = 'A Jellyfin account for someone with no Authentik account: Jellyfin\u2019s own sign-in, ' +
         'from outside the house too (jf address, port 8920). Nothing else on the network.';
       jo.addEventListener('click', function () { jellyfinOnlyDialog(function () { apps = null; loadApps(true); }); });
-      h.body.appendChild(jo);
+      bar.appendChild(jo);
     }
     legend();
 
-    var t = document.createElement('table');
-    t.className = 'acc-table acc-apps-table' + (pivot ? ' acc-pivoted' : '');
-    var hr = document.createElement('tr');
-    var th0 = document.createElement('th'); th0.textContent = pivot ? 'App' : 'Person'; hr.appendChild(th0);
-    if (pivot) { apps.people.forEach(function (p) { hr.appendChild(personHead(p, 'th')); }); }
-    else { apps.apps.forEach(function (a) { hr.appendChild(appHead(a)); }); }
-    t.appendChild(document.createElement('thead')).appendChild(hr);
-    var tb = document.createElement('tbody');
-    if (pivot) {
-      apps.apps.forEach(function (a) {
-        var tr = document.createElement('tr');
-        tr.appendChild(appHead(a, 'td'));
-        apps.people.forEach(function (p) { tr.appendChild(appCell(p, a)); });
-        tb.appendChild(tr);
-      });
-    } else {
-      apps.people.forEach(function (p) {
-        var tr = document.createElement('tr');
-        tr.appendChild(personHead(p));
-        apps.apps.forEach(function (a) { tr.appendChild(appCell(p, a)); });
-        tb.appendChild(tr);
-      });
+    function appsTable() {
+      return gridTable({ people: apps.people, cols: apps.apps, corner: 'App', cls: 'acc-apps-table',
+                         colText: function (a) { return [a.label, a.key]; },
+                         personHead: personHead, colHead: appHead, cell: appCell });
     }
-    t.appendChild(tb);
-    h.body.appendChild(t);
+    h.body.appendChild(slot);
+    placeTable(slot, appsTable());
     var only = (apps.app_only || {}).jellyfin || [];
     if (only.length) {
       var ob = div('acc-orphans acc-app-only');
@@ -448,12 +520,8 @@ function accessPage(h) {
       h.body.appendChild(div('note', 'No app here lets nav change who is admin.'));
       return;
     }
-    var t = document.createElement('table');
-    t.className = 'acc-table acc-apps-table acc-admins-table';
-    var hr = document.createElement('tr');
-    var th0 = document.createElement('th'); th0.textContent = 'Person'; hr.appendChild(th0);
-    list.forEach(function (a) {
-      var th = appHead(a);
+    function adminHead(a, tag) {
+      var th = appHead(a, tag);
       if (a.admin.how === 'group') {
         var g = document.createElement('span');
         g.className = 'acc-signin adm-group';
@@ -463,19 +531,18 @@ function accessPage(h) {
         g.setAttribute('role', 'img'); g.setAttribute('aria-label', g.title);
         th.appendChild(g);
       }
-      hr.appendChild(th);
-    });
-    t.appendChild(document.createElement('thead')).appendChild(hr);
-    var tb = document.createElement('tbody');
-    apps.people.forEach(function (p) {
-      var tr = document.createElement('tr');
-      var who = document.createElement('td'); who.className = 'acc-who'; who.textContent = p.name;
-      tr.appendChild(who);
-      list.forEach(function (a) { tr.appendChild(adminCell(p, a)); });
-      tb.appendChild(tr);
-    });
-    t.appendChild(tb);
-    h.body.appendChild(t);
+      return th;
+    }
+    function nameHead(p, tag) { var w = document.createElement(tag); w.className = 'acc-who'; w.textContent = p.name; return w; }
+    var slot = div('acc-slot');
+    function adminsTable() {
+      return gridTable({ people: apps.people, cols: list, corner: 'App', cls: 'acc-apps-table acc-admins-table',
+                         colText: function (a) { return [a.label, a.key, a.admin.group]; },
+                         personHead: nameHead, colHead: adminHead, cell: adminCell });
+    }
+    gridBar('apps', function () { placeTable(slot, adminsTable()); });
+    h.body.appendChild(slot);
+    placeTable(slot, adminsTable());
   }
   function applyAdmins() {
     var inApp = [], groups = [], keyOf = {};
@@ -572,31 +639,21 @@ function accessPage(h) {
     addp.title = 'Create someone in Authentik now, and stage their groups for the next pull request';
     addp.addEventListener('click', function () { addPersonDialog(view, h, function () { apps = null; load(true); }); });
     h.body.appendChild(addp);
-    var t = document.createElement('table');
-    t.className = 'acc-table';
-    var hr = document.createElement('tr');
-    function th(text, cls, title) {
-      var h = document.createElement('th');
-      h.textContent = text;
-      if (cls) { h.className = cls; }
-      if (title) { h.title = title; }
-      hr.appendChild(h);
+    function groupHead(g, tag) {
+      var x = document.createElement(tag);
+      x.textContent = g.name;
+      if (!g.managed) { x.className = 'acc-unmanaged'; }
+      x.title = g.managed ? g.path : g.path + ' -- membership not in Terraform';
+      return x;
     }
-    th('Person');
-    view.groups.forEach(function (g) {
-      th(g.name, g.managed ? '' : 'acc-unmanaged', g.managed ? g.path : g.path + ' -- membership not in Terraform');
-    });
-    th('Apps');
-    t.appendChild(document.createElement('thead')).appendChild(hr);
-    var tb = document.createElement('tbody');
-    view.users.forEach(function (u) {
-      var tr = document.createElement('tr');
-      var who = document.createElement('td');
+    function userHead(u, tag) {
+      var who = document.createElement(tag);
       who.className = 'acc-who';
       who.textContent = u.name;
       who.appendChild(div('note', u.email || u.username || ''));
-      tr.appendChild(who);
-      view.groups.forEach(function (g) { tr.appendChild(cell(u, g)); });
+      return who;
+    }
+    function appsCell(u) {
       var apps = document.createElement('td');
       apps.className = 'acc-apps';
       var now = document.createElement('span');
@@ -604,15 +661,22 @@ function accessPage(h) {
       now.title = u.apps.map(function (x) { return x.name; }).join('\n') || 'none';
       apps.appendChild(now);
       if (u.gains.length) { apps.appendChild(div('acc-gain', '+ ' + u.gains.join(', '))); }
-      if (u.losses.length) { apps.appendChild(div('acc-loss', '− ' + u.losses.join(', '))); }
+      if (u.losses.length) { apps.appendChild(div('acc-loss', '\u2212 ' + u.losses.join(', '))); }
       if (u.unknown.length && (u.gains.length || u.losses.length)) {
         apps.appendChild(div('note', "can't judge: " + u.unknown.join(', ')));
       }
-      tr.appendChild(apps);
-      tb.appendChild(tr);
-    });
-    t.appendChild(tb);
-    h.body.appendChild(t);
+      return apps;
+    }
+    var slot = div('acc-slot');
+    function groupsTable() {
+      return gridTable({ people: view.users, cols: view.groups, corner: 'Group',
+                         colText: function (g) { return [g.name]; },
+                         personHead: userHead, colHead: groupHead, cell: cell,
+                         extra: { label: 'Apps', cell: appsCell } });
+    }
+    gridBar('groups', function () { placeTable(slot, groupsTable()); });
+    h.body.appendChild(slot);
+    placeTable(slot, groupsTable());
     (view.pending_emails || []).forEach(function (e) {
       var line = div('note acc-edge-staged');
       line.appendChild(personInd('ok', 'Staged: ' + e.email + ' joins the outside-access allow-list in the next pull request'));

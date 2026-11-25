@@ -4693,6 +4693,56 @@ test('access: + Jellyfin-only makes an account outside Authentik; they list on t
   assert.equal(seen.find((r) => r.method === 'DELETE').url, 'api/admin/access/apps/jellyfin-only?account=gran');
 });
 
+test('access: every view filters people and columns, pivots (remembered per view), and scrolls inside the page', async () => {
+  const VIEW = { enabled: true, repo: 'o/lab', base: 'main', last_pr: null, pending: [],
+    groups: [{ name: 'family', managed: true, path: 'tf/a.tf' }, { name: 'staff-media', managed: true, path: 'tf/a.tf' }],
+    users: [{ pk: 5, username: 'bear', name: 'Bear', email: 'b@x', groups: ['family'], live: [], drift: [], apps: [], gains: [], losses: [], unknown: [] },
+            { pk: 9, username: 'liz', name: 'Liz', email: 'liz@x', groups: [], live: [], drift: [], apps: [], gains: [], losses: [], unknown: [] }] };
+  const APPV = {
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2, admin: { how: 'app' } },
+           { key: 'memos', label: 'Memos', apps: ['memos'], provision: 'first', signin: 'oidc', error: null, count: 2, admin: { how: 'app' } }],
+    people: [{ pk: 5, name: 'Bear', email: 'b@x', username: 'bear',
+               cells: { jellyfin: { status: 'account', role: 'admin', login: 'bear', key: 'bear' }, memos: { status: 'account', role: 'user', login: 'bear', key: 'bear' } } },
+             { pk: 9, name: 'Liz', email: 'liz@x', username: 'liz',
+               cells: { jellyfin: { status: 'account', role: 'user', login: 'liz', key: 'liz' }, memos: { status: 'account', role: 'user', login: 'liz', key: 'liz' } } }],
+    orphans: {} };
+  const { window, doc } = await boot(APPS, null, (u) =>
+    u.startsWith('api/admin/access/apps') ? APPV : u.startsWith('api/admin/access') ? VIEW : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-scroll .acc-table'), 'groups table');
+  const rows = () => [...doc.querySelectorAll('.acc-scroll tbody tr')].map((r) => r.firstChild.firstChild.textContent);
+  const heads = () => [...doc.querySelectorAll('.acc-scroll thead th')].map((t) => t.firstChild ? t.firstChild.textContent : '');
+  assert.deepEqual(rows(), ['Bear', 'Liz']);
+
+  const people = doc.getElementById('acc-filter-people');
+  people.focus();
+  people.value = 'liz'; people.dispatchEvent(new window.Event('input'));
+  assert.deepEqual(rows(), ['Liz'], 'people filter (matches username too)');
+  assert.equal(doc.activeElement, people, 'typing keeps the focus: only the table redraws');
+  const cols = doc.getElementById('acc-filter-cols');
+  cols.value = 'staff, nothing'; cols.dispatchEvent(new window.Event('input'));
+  assert.deepEqual(heads(), ['Person', 'staff-media', 'Apps'], 'column filter, any of several words');
+
+  doc.getElementById('acc-pivot').click();
+  await settle(window, () => doc.querySelector('.acc-pivoted'), 'pivoted');
+  assert.deepEqual(rows(), ['staff-media', 'Apps'], 'groups down the side, the Apps summary as a last row');
+  assert.equal(doc.getElementById('acc-filter-people').value, 'liz', 'filters survive the pivot');
+
+  doc.querySelector('.acc-switch [data-view="admins"]').click();
+  await settle(window, () => doc.querySelector('.acc-admins-table'), 'admins');
+  assert.equal(doc.querySelector('.acc-admins-table').classList.contains('acc-pivoted'), false, 'pivot is per view');
+  assert.equal(doc.getElementById('acc-filter-people').value, '', 'and so are the filters');
+  const c2 = doc.getElementById('acc-filter-cols');
+  c2.value = 'memo'; c2.dispatchEvent(new window.Event('input'));
+  assert.deepEqual(heads(), ['Person', 'Memos']);
+  c2.value = 'zzz'; c2.dispatchEvent(new window.Event('input'));
+  assert.match(doc.querySelector('.acc-none').textContent, /Nothing matches/);
+  const saved = JSON.parse(window.localStorage.getItem('nav.accessView'));
+  assert.equal(saved.pivots.groups, true);
+  assert.equal(saved.filters.groups.people, 'liz');
+});
+
 test('access: App accounts shows each app’s accounts against people, errors and orphans', async () => {
   const APPV = {
     apps: [{ key: 'jellyfin', label: 'Jellyfin', apps: ['jellyfin'], provision: 'manual', signin: 'own', error: null, count: 2 },
@@ -4719,7 +4769,7 @@ test('access: App accounts shows each app’s accounts against people, errors an
   assert.match(doc.querySelector('.acc-signin-own').title, /second login/);
   doc.getElementById('acc-pivot').click();
   assert.equal(doc.querySelectorAll('.acc-apps-table tbody tr').length, 2, 'pivoted: one row per app');
-  assert.equal(JSON.parse(window.localStorage.getItem('nav.accessView')).pivot, true, 'remembered');
+  assert.equal(JSON.parse(window.localStorage.getItem('nav.accessView')).pivots.apps, true, 'remembered, for this view');
   assert.match(doc.querySelector('.acc-orphans').textContent, /Jellyfin: ghost/);
   const who = doc.querySelector('.acc-orphan-who');
   assert.deepEqual([...who.options].map((o) => o.textContent), ['is…', 'Kid'], 'only people with no account there');
