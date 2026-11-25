@@ -56,6 +56,7 @@ import health
 import images
 import people
 import layouts
+import music
 from layouts import OVERRIDABLE, merge
 import widgets
 import providers  # noqa: F401 -- importing registers every provider
@@ -685,7 +686,7 @@ async def list_apps(request: Request, who: str = Depends(whoami), layout: int | 
     # exactly how "View as" shipped invisible.
     return {"user": who, "admin": is_admin_, "layout": layout_info(lay), "apps": out,
             "may_impersonate": await may_impersonate(request, who),
-            "impersonating": impersonating}
+            "impersonating": impersonating, "music": MUSIC_ON}
 
 
 @app.post("/api/apps/{slug}/click")
@@ -3132,6 +3133,231 @@ async def add_person(body: dict[str, Any], who: str = Depends(require_access_adm
 #
 # Everything is no-cache: revalidated on every load (cheap, by ETag), so after
 # a rollout a browser never mixes a cached old script with a new page.
+# --- music libraries, self-service (music.py) -------------------------------------
+# Each person picks the music libraries they see (Menu -> My music libraries); an
+# access admin can block libraries for someone (Access -> Music). nav writes the
+# result into Jellyfin, Plex, Navidrome and Music Assistant at once. Off unless
+# NAV_MUSIC_LIBRARIES is set: it changes access in those apps.
+MUSIC_ON = (os.environ.get("NAV_MUSIC_LIBRARIES") or "").strip().lower() in ("1", "true", "yes")
+MUSIC_TTL = 60
+_MUSIC_CACHE: dict[str, Any] = {"at": 0.0, "wall": 0.0, "data": None}
+_AK_USERS: dict[str, Any] = {"at": 0.0, "data": None}
+
+
+def _music_off() -> None:
+    if not MUSIC_ON:
+        raise HTTPException(404, "music libraries are off (NAV_MUSIC_LIBRARIES)")
+
+
+async def _ak_users() -> list[dict[str, Any]]:
+    """Authentik's people, without the slow per-person reach the Access panel needs."""
+    if _AK_CACHE["data"] is not None and time.monotonic() - _AK_CACHE["at"] < PANEL_TTL:
+        return _AK_CACHE["data"]["users"]
+    if _AK_USERS["data"] is not None and time.monotonic() - _AK_USERS["at"] < PANEL_TTL:
+        return _AK_USERS["data"]
+    if not AUTHENTIK_TOKEN:
+        raise HTTPException(503, "AUTHENTIK_TOKEN is not set")
+    async with httpx.AsyncClient(base_url=AUTHENTIK_URL, headers={"Authorization": f"Bearer {AUTHENTIK_TOKEN}"},
+                                 timeout=20) as client:
+        r = await client.get("/api/v3/core/users/", params={"page_size": 200, "is_active": "true"})
+        r.raise_for_status()
+    users = [x for x in r.json().get("results") or [] if "service" not in str(x.get("type", ""))]
+    _AK_USERS.update(at=time.monotonic(), data=users)
+    return users
+
+
+async def _music_read(fresh: bool = False) -> dict[str, Any]:
+    """{apps: {key: {libs, accounts, error}}, links}: each music app's libraries, who
+    sees which, and its accounts (to match people). Reused for a minute."""
+    if not fresh and _MUSIC_CACHE["data"] is not None and time.monotonic() - _MUSIC_CACHE["at"] < MUSIC_TTL:
+        return _MUSIC_CACHE["data"]
+
+    async def one(app_key: str) -> tuple[str, dict[str, Any]]:
+        ad = appaccounts.ADAPTERS[app_key]
+        url, key, _ = creds.resolve(ad.conn)
+        got = await _read_app(ad, url, key)
+        if got["error"]:
+            return app_key, {"libs": None, "accounts": [], "error": got["error"]}
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                libs = await music.READ[app_key](client, url, key)
+            return app_key, {"libs": libs, "accounts": got["accounts"], "error": None}
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            return app_key, {"libs": None, "accounts": got["accounts"],
+                             "error": "reading its libraries: " + _http_why(exc, url)}
+
+    apps = dict(await asyncio.gather(*(one(k) for k in music.APPS)))
+    links: dict[str, dict[str, int]] = {}
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        for r in await (await conn.execute("SELECT app, account, person_pk FROM account_links")).fetchall():
+            links.setdefault(r["app"], {})[r["account"]] = r["person_pk"]
+    data = {"apps": apps, "links": links}
+    _MUSIC_CACHE.update(at=time.monotonic(), wall=time.time(), data=data)
+    return data
+
+
+async def _music_prefs() -> dict[int, dict[str, list[str]]]:
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        rows = await (await conn.execute("SELECT person_pk, blocked, hidden FROM music_prefs")).fetchall()
+    return {r["person_pk"]: {"blocked": list(r["blocked"] or []), "hidden": list(r["hidden"] or [])} for r in rows}
+
+
+def _music_folders(data: dict[str, Any]) -> list[str]:
+    return sorted({f for v in data["apps"].values() if v["libs"] for f in v["libs"].libs}, key=str.lower)
+
+
+def _music_cells(data: dict[str, Any], users: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    found = {k: v["accounts"] for k, v in data["apps"].items() if v["libs"] is not None}
+    return appaccounts.match(users, found, {}, links=data["links"])["people"]
+
+
+def _music_person(pk: int, data: dict[str, Any], cells: dict[int, dict[str, Any]],
+                  pref: dict[str, list[str]]) -> dict[str, Any]:
+    folders = _music_folders(data)
+    want = music.want_of(folders, pref.get("blocked") or [], pref.get("hidden") or [])
+    out = []
+    for k in music.APPS:
+        v = data["apps"][k]
+        acct = (cells.get(pk, {}).get(k) or {}).get("key")
+        out.append({"key": k, "label": appaccounts.ADAPTERS[k].label,
+                    "folders": sorted(v["libs"].libs) if v["libs"] else []}
+                   | music.status(v["libs"], v["error"], acct, want))
+    return {"libraries": [{"folder": f, "blocked": f in (pref.get("blocked") or []),
+                           "hidden": f in (pref.get("hidden") or [])} for f in folders],
+            "apps": out}
+
+
+async def _music_apply(pk: int, users: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Make every music app match what this person should see; read fresh first."""
+    data = await _music_read(True)
+    cells = _music_cells(data, users)
+    pref = (await _music_prefs()).get(pk, {})
+    want = music.want_of(_music_folders(data), pref.get("blocked") or [], pref.get("hidden") or [])
+    results = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for k in music.APPS:
+            v = data["apps"][k]
+            acct = (cells.get(pk, {}).get(k) or {}).get("key")
+            st = music.status(v["libs"], v["error"], acct, want)
+            if st["state"] != "drift":
+                continue
+            url, key, _ = creds.resolve(appaccounts.ADAPTERS[k].conn)
+            try:
+                await music.WRITE[k](client, url, key, v["libs"], acct, want)
+                results.append({"app": k, "ok": True, "detail": "updated"})
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                results.append({"app": k, "ok": False, "detail": _http_why(exc, url)})
+    _MUSIC_CACHE["data"] = None
+    return results
+
+
+async def _music_save(pk: int, who: str, **cols: list[str]) -> None:
+    names = list(cols)                                   # only "blocked" / "hidden" (callers)
+    sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in names)
+    async with pool.connection() as conn:  # type: ignore[union-attr]
+        await conn.execute(
+            f"INSERT INTO music_prefs (person_pk, {', '.join(names)}, by_whom) "
+            f"VALUES (%s, {', '.join(['%s::jsonb'] * len(names))}, %s) "
+            f"ON CONFLICT (person_pk) DO UPDATE SET {sets}, by_whom = EXCLUDED.by_whom, at = now()",
+            (pk, *[json.dumps(sorted(set(cols[c]))) for c in names], who))
+
+
+def _folder_list(body: dict[str, Any], name: str, folders: list[str]) -> list[str]:
+    raw = body.get(name)
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
+        raise HTTPException(422, f"{name}: a list of library folders is required")
+    unknown = sorted(set(raw) - set(folders))
+    if unknown:
+        raise HTTPException(422, f"no such music library: {', '.join(unknown)}")
+    return raw
+
+
+def _me_pk(users: list[dict[str, Any]], who: str) -> int | None:
+    hit = [u for u in users if (u.get("email") or "").lower() == who] or \
+          [u for u in users if (u.get("username") or "").lower() == who]
+    return hit[0]["pk"] if len(hit) == 1 else None
+
+
+@app.get("/api/music")
+async def my_music(who: str = Depends(whoami), fresh: bool = False) -> dict[str, Any]:
+    """The caller's music libraries: which they see, and whether each app agrees."""
+    if not MUSIC_ON:
+        return {"enabled": False}
+    users = await _ak_users()
+    pk = _me_pk(users, who)
+    if pk is None:
+        return {"enabled": True, "person": None}
+    data = await _music_read(fresh)
+    pref = (await _music_prefs()).get(pk, {})
+    return {"enabled": True, "person": pk} | _music_person(pk, data, _music_cells(data, users), pref)
+
+
+@app.put("/api/music")
+async def set_my_music(body: dict[str, Any], who: str = Depends(whoami)) -> dict[str, Any]:
+    """{hidden: [folder]}: the libraries the caller doesn't want; applied at once."""
+    _music_off()
+    users = await _ak_users()
+    pk = _me_pk(users, who)
+    if pk is None:
+        raise HTTPException(404, "you aren't in Authentik under this sign-in")
+    data = await _music_read()
+    hidden = _folder_list(body, "hidden", _music_folders(data))
+    await _music_save(pk, who, hidden=hidden)
+    results = await _music_apply(pk, users)
+    print(f"music: {who} hid {len(hidden)}; " + ", ".join(
+        f"{r['app']} {'ok' if r['ok'] else 'failed'}" for r in results), flush=True)
+    data = await _music_read()
+    pref = (await _music_prefs()).get(pk, {})
+    return {"enabled": True, "person": pk, "results": results} | _music_person(pk, data, _music_cells(data, users), pref)
+
+
+@app.get("/api/admin/music")
+async def admin_music(who: str = Depends(require_access_admin), fresh: bool = False) -> dict[str, Any]:
+    """Everyone's music libraries: blocked by an admin, hidden by them, and each app's state."""
+    _music_off()
+    users = await _ak_users()
+    data = await _music_read(fresh)
+    cells = _music_cells(data, users)
+    prefs = await _music_prefs()
+    people_out = []
+    for u in sorted(users, key=lambda x: (x.get("name") or x.get("username") or "").lower()):
+        v = _music_person(u["pk"], data, cells, prefs.get(u["pk"], {}))
+        if all(a["state"] in ("none", "error") for a in v["apps"]) and u["pk"] not in prefs:
+            continue                       # no music app account, nothing chosen: not listed
+        people_out.append({"pk": u["pk"], "name": u.get("name") or u.get("username"), "email": u.get("email")} | v)
+    return {"folders": _music_folders(data), "people": people_out,
+            "apps": [{"key": k, "label": appaccounts.ADAPTERS[k].label, "error": data["apps"][k]["error"]}
+                     for k in music.APPS],
+            "as_of": _MUSIC_CACHE.get("wall") or time.time()}
+
+
+@app.put("/api/admin/music/{pk}")
+async def admin_set_music(pk: int, body: dict[str, Any], who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """{blocked: [folder]}: the libraries this person may not see; applied at once."""
+    _music_off()
+    users = await _ak_users()
+    if not any(u["pk"] == pk for u in users):
+        raise HTTPException(404, "no such person")
+    data = await _music_read()
+    blocked = _folder_list(body, "blocked", _music_folders(data))
+    await _music_save(pk, who, blocked=blocked)
+    results = await _music_apply(pk, users)
+    print(f"music: {who} blocked {len(blocked)} for {pk}; " + ", ".join(
+        f"{r['app']} {'ok' if r['ok'] else 'failed'}" for r in results), flush=True)
+    return {"results": results}
+
+
+@app.post("/api/admin/music/{pk}/apply")
+async def admin_apply_music(pk: int, who: str = Depends(require_access_admin)) -> dict[str, Any]:
+    """Put each app back to what this person should see (after a change made in the app)."""
+    _music_off()
+    users = await _ak_users()
+    results = await _music_apply(pk, users)
+    print(f"music: {who} re-applied {pk}: " + ", ".join(
+        f"{r['app']} {'ok' if r['ok'] else 'failed'}" for r in results), flush=True)
+    return {"results": results}
+
+
 from pathlib import Path
 
 from fastapi.responses import FileResponse
