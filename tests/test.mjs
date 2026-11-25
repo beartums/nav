@@ -2708,7 +2708,7 @@ test('connections: keys are write-only, and Save sends only what changed', async
     ['api/admin/connections/sonarr', { key: '' }],
     ['api/admin/connections/mealie', { url: 'http://elsewhere:9000', key: 'tok123' }]]);
 
-  [...doc.querySelectorAll('fieldset.conn')][0].querySelector('button').click();
+  [...[...doc.querySelectorAll('fieldset.conn')][0].querySelectorAll('button')].find((b) => b.textContent === 'Test').click();
   await settle(window, () => /refused/.test(doc.querySelector('.conn-test').textContent), 'test result');
   assert.ok(doc.querySelector('.conn-test').classList.contains('conn-bad'));
 });
@@ -4695,6 +4695,13 @@ test('access: + Jellyfin-only makes an account outside Authentik; they list on t
   const set = (id, v) => { const i = doc.getElementById(id); i.value = v; i.dispatchEvent(new window.Event('input')); };
   set('jfo-user', 'bad name');
   set('jfo-pw', 'correct horse');
+  const eye = doc.getElementById('jfo-pw').parentNode.querySelector('.pw-show');
+  assert.equal(eye.getAttribute('aria-pressed'), 'false');
+  eye.click();
+  assert.equal(doc.getElementById('jfo-pw').type, 'text', 'the eye shows the password');
+  assert.equal(eye.getAttribute('aria-pressed'), 'true');
+  eye.click();
+  assert.equal(doc.getElementById('jfo-pw').type, 'password', 'and hides it again');
   assert.equal(go.disabled, true, 'a username with a space is refused');
   set('jfo-user', 'pops');
   doc.getElementById('jfo-note').value = 'Grandpa';
