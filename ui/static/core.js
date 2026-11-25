@@ -230,3 +230,20 @@ document.addEventListener('click', function (ev) {
 document.addEventListener('keydown', function (ev) {
   if (ev.key === 'Escape' && !menuList.hidden) { closeMenu(); menuBtn.focus(); }
 });
+
+/** Run `fn`, which redraws what is inside `el`, keeping where `el` and the
+ *  scrollers inside it were scrolled (matched by class), so a click that
+ *  redraws doesn't jump the view back to the start. */
+function keepScroll(el, fn) {
+  function all() { return [el].concat([].slice.call(el.querySelectorAll('*'))); }
+  var saved = all().filter(function (n) { return n.scrollTop || n.scrollLeft; }).map(function (n) {
+    return { cls: n === el ? null : n.className, t: n.scrollTop, l: n.scrollLeft };
+  });
+  fn();
+  if (!saved.length) { return; }
+  var now = all();
+  saved.forEach(function (s) {
+    var n = s.cls === null ? el : now.filter(function (x) { return x !== el && x.className === s.cls; })[0];
+    if (n) { n.scrollTop = s.t; n.scrollLeft = s.l; }
+  });
+}

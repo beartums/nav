@@ -30,6 +30,7 @@ function accessPage(h) {
     b.textContent = c ? (c.action === 'add' ? '+' : '−') : (on ? '●' : '');
     b.dataset.pk = u.pk;
     b.dataset.group = g.name;
+    b.dataset.cell = u.pk + '|' + g.name;
     var drift = u.drift.indexOf(g.name) >= 0;
     if (!g.managed) {
       b.disabled = true;
@@ -466,6 +467,7 @@ function accessPage(h) {
     var will = change ? adminWant[k] : now.admin;
     var b = document.createElement('button');
     b.type = 'button';
+    b.dataset.cell = p.pk + '|' + a.key;
     b.className = 'acc-cell adm-cell' + (change ? ' acc-staged' : '') + (now.staged ? ' adm-in-pr' : '');
     b.setAttribute('aria-pressed', String(will));
     b.textContent = change ? (will ? '+\u2605' : '\u2212') : (will ? '\u2605' : '');
@@ -605,7 +607,23 @@ function accessPage(h) {
     return appsReading;
   }
 
+  // A redraw (a toggle, Apply, a re-read) keeps the grid where it was and the focus on
+  // the same cell; only switching views starts at the top.
+  var drawn = null;
   function render() {
+    var old = h.body.querySelector('.acc-scroll'), act = document.activeElement;
+    var keep = drawn === mode && old ? { t: old.scrollTop, l: old.scrollLeft, x: window.scrollX, y: window.scrollY,
+                                         cell: act && h.body.contains(act) && act.dataset ? act.dataset.cell : null } : null;
+    drawn = mode;
+    draw();
+    if (!keep) { return; }
+    var grid = h.body.querySelector('.acc-scroll');
+    if (grid) { grid.scrollTop = keep.t; grid.scrollLeft = keep.l; }
+    window.scrollTo(keep.x, keep.y);
+    var f = keep.cell && [].filter.call(h.body.querySelectorAll('[data-cell]'), function (e) { return e.dataset.cell === keep.cell; })[0];
+    if (f) { f.focus({ preventScroll: true }); }
+  }
+  function draw() {
     h.body.innerHTML = '';
     switcher();
     if (mode !== 'groups') {
@@ -705,7 +723,7 @@ function accessPage(h) {
   }
 
   h.body.addEventListener('click', function onCell(e) {
-    var b = e.target.closest('.acc-cell');
+    var b = e.target.closest('.acc-cell[data-group]');
     if (!b || b.disabled) { return; }
     var pk = Number(b.dataset.pk), group = b.dataset.group;
     var u = view.users.filter(function (x) { return x.pk === pk; })[0];
