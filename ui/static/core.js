@@ -167,6 +167,18 @@ function buildMenu() {
 
   dashboardMenu(menuList);
 
+  // Only when the server offers it (NAV_MUSIC_LIBRARIES); music.js draws the dialog.
+  if (MUSIC_ON) {
+    var mli = document.createElement('li');
+    var mb = document.createElement('button');
+    mb.type = 'button';
+    mb.id = 'menu-music';
+    mb.textContent = 'My music libraries\u2026';
+    mb.addEventListener('click', function () { closeMenu(); musicDialog(); });
+    mli.appendChild(mb);
+    menuList.appendChild(mli);
+  }
+
   var sep0 = document.createElement('li');
   sep0.style.cssText = 'border-top:1px solid var(--line); margin:4px 0;';
   menuList.appendChild(sep0);

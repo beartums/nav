@@ -372,6 +372,7 @@ function refresh() {
       document.getElementById('who').textContent = data.user || '';
       IS_ADMIN = !!data.admin;
       MAY_IMPERSONATE = !!data.may_impersonate;
+      MUSIC_ON = !!data.music;
       // The SERVER's answer, not the local guess. If it declined -- the
       // subject vanished, the group emptied, membership was revoked -- the
       // banner must come down rather than mislabel a real dashboard as

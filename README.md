@@ -20,6 +20,10 @@ people in and tells nav who is asking.
   HTTP service that speaks a shape. The contract is [docs/widgets.md](docs/widgets.md).
 - **Health**: a red dot on a tile whose app isn't answering.
 - **Impersonation** ("view as") for staff, to see someone else's tiles.
+- **Music libraries** (optional, `NAV_MUSIC_LIBRARIES`): each person picks which
+  music libraries they see, and nav applies that in Jellyfin, Plex, Navidrome
+  and Music Assistant at once. Admins can block a library for someone. The
+  logic is in `api/music.py`.
 - **Access** (Manage → Access…): people × groups, with the apps each person
   reaches. For labs that keep Authentik group membership in Terraform, a click
   stages a change and **Open PR** turns the staged changes into one pull request
@@ -86,6 +90,7 @@ through Pomerium** — anyone who can reach it directly can name any user.
 | `NAV_APP_SIGNIN` | how people sign in to each app, shown on App accounts: `key=method,...` with method `header`, `oidc`, `own`, `plex` or `jellyfin` (defaults in `api/appaccounts.py`) |
 | `NAV_APP_ADMIN_GROUP` | apps whose sign-in sets admin from an Authentik group: `key=group,...` (e.g. `immich=family-admins,grafana=grafana-admins`). App accounts then stages that group change instead of changing admin in the app, where the next sign-in would undo it |
 | `NAV_JELLYFIN_LOCKOUT`, `NAV_JELLYFIN_ADMIN_LAN_ONLY` | the sign-in rule nav applies when it makes a Jellyfin account or changes admin: failed sign-ins before lockout per role (`admin=3,user=5`; Jellyfin's default never locks out), and admins signing in from the LAN only (`true`). Unset: those fields are left alone |
+| `NAV_MUSIC_LIBRARIES` | `true` turns on music libraries, self-service: Menu → My music libraries lets each person choose which music libraries they see, and Access → Music lets an admin block libraries per person. nav writes the result into Jellyfin, Plex, Navidrome and Music Assistant (their keys in User management), matching libraries across apps by folder name. This changes access in those apps. Unset: off |
 | `NAV_GITOPS_REPO`, `NAV_GITOPS_TOKEN` | `owner/name` of the repo holding the Authentik Terraform, and a token that may push branches and open PRs there (both unset: Access is off) |
 | `NAV_GITOPS_BASE`, `NAV_GITOPS_TF_DIR` | the branch to read and target (default `main`), and the `.tf` directory (default `terraform/authentik`) |
 | `NAV_GITOPS_CF_FILE`, `NAV_GITOPS_CF_POLICY` | the `.tf` file and resource name of the edge's email allow-list (a Cloudflare Access policy with `email = { email = "…" }` include entries). Add person stages a new outside address there in the same PR. Unset: the panel says to add it by hand |

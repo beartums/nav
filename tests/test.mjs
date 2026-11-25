@@ -4938,3 +4938,70 @@ test('press and hold shows hover text in a bubble (touchscreens)', async () => {
   assert.ok(tip, 'a bubble after the hold');
   assert.equal(tip.textContent, 'What this does');
 });
+
+// --- music libraries (music.js; Access -> Music) ------------------------------------
+const MUSIC_ME = {
+  enabled: true, person: 5,
+  libraries: [{ folder: 'Celtic', blocked: false, hidden: false },
+              { folder: 'Kids', blocked: false, hidden: true },
+              { folder: 'Jazz', blocked: true, hidden: false }],
+  apps: [{ key: 'jellyfin', label: 'Jellyfin', folders: ['Celtic', 'Kids', 'Jazz'], state: 'ok', detail: 'sees 1 of 3 music libraries' },
+         { key: 'plex', label: 'Plex', folders: ['Celtic', 'Kids'], state: 'fixed', detail: 'the Plex server owner sees every library' },
+         { key: 'navidrome', label: 'Navidrome', folders: ['Celtic'], state: 'drift', detail: 'missing Celtic' },
+         { key: 'music-assistant', label: 'Music Assistant', folders: [], state: 'none', detail: 'no account' }]
+};
+
+test('music: the menu offers My music libraries only when the server does', async () => {
+  const off = await boot();
+  click(off.doc.getElementById('menu-btn'));
+  assert.equal(off.doc.getElementById('menu-music'), null, 'no flag, no entry');
+  const { window, doc, seen } = await boot({ ...APPS, music: true }, null, (u) =>
+    u.startsWith('api/music') ? MUSIC_ME : null);
+  click(doc.getElementById('menu-btn'));
+  click(doc.getElementById('menu-music'));
+  await settle(window, () => doc.querySelectorAll('.mus-lib').length, 'library buttons');
+  const libs = [...doc.querySelectorAll('.mus-lib')];
+  assert.deepEqual(libs.map((b) => [b.textContent, b.getAttribute('aria-pressed')]),
+                   [['Celtic', 'true'], ['Kids', 'false']], 'a blocked library is not offered');
+  assert.match(doc.querySelector('.mus-box').textContent, /1 more library is off for you/);
+  const inds = [...doc.querySelectorAll('.mus-apps .mus-ind')];
+  assert.deepEqual(inds.map((i) => i.className.match(/mus-ind-(\w+)/)[1]), ['ok', 'fixed', 'drift', 'none']);
+  assert.match(inds[2].title, /^Navidrome: differs — missing Celtic$/, 'the words are the hover text');
+  click(libs[0]);                                   // hide Celtic too
+  await settle(window, () => seen.some((r) => r.method === 'PUT' && r.url === 'api/music'), 'PUT');
+  const put = seen.find((r) => r.method === 'PUT' && r.url === 'api/music');
+  assert.deepEqual(JSON.parse(put.body), { hidden: ['Celtic', 'Kids'] });
+});
+
+test('music: Access -> Music blocks a library for someone, and Fix re-applies', async () => {
+  const ADM = { folders: ['Celtic', 'Kids'], as_of: 1,
+    apps: [{ key: 'jellyfin', label: 'Jellyfin', error: null }],
+    people: [{ pk: 5, name: 'Bear', email: 'b@x',
+               libraries: [{ folder: 'Celtic', blocked: false, hidden: false }, { folder: 'Kids', blocked: false, hidden: true }],
+               apps: [{ key: 'jellyfin', label: 'Jellyfin', folders: ['Celtic', 'Kids'], state: 'drift', detail: 'also sees Kids' }] },
+             { pk: 9, name: 'Liz', email: 'liz@x',
+               libraries: [{ folder: 'Celtic', blocked: true, hidden: false }, { folder: 'Kids', blocked: false, hidden: false }],
+               apps: [{ key: 'jellyfin', label: 'Jellyfin', folders: ['Celtic', 'Kids'], state: 'ok', detail: '' }] }] };
+  const VIEW = { enabled: true, repo: 'o/lab', base: 'main', last_pr: null, pending: [], groups: [], users: [] };
+  const { window, doc, seen } = await boot({ ...APPS, music: true }, null, (u) =>
+    u.startsWith('api/admin/music/') ? { results: [{ app: 'jellyfin', ok: true, detail: 'updated' }] }
+      : u.startsWith('api/admin/music') ? ADM
+      : u.startsWith('api/admin/access') ? VIEW : null);
+  await enterAdmin(window, doc);
+  doc.getElementById('admin-tab-access').click();
+  await settle(window, () => doc.querySelector('.acc-switch [data-view="music"]'), 'Music in the switcher');
+  doc.querySelector('.acc-switch [data-view="music"]').click();
+  await settle(window, () => doc.querySelector('.acc-music-table'), 'music table');
+  const cell = (pk, f) => doc.querySelector(`.mus-cell[data-pk="${pk}"][data-folder="${f}"]`);
+  assert.equal(cell(5, 'Celtic').textContent, '●');
+  assert.equal(cell(5, 'Kids').textContent, '○', 'allowed, but they hid it');
+  assert.equal(cell(9, 'Celtic').getAttribute('aria-pressed'), 'false', 'blocked');
+  assert.ok(doc.querySelector('.mus-fix[data-pk="5"]'), 'Fix where an app differs');
+  assert.equal(doc.querySelector('.mus-fix[data-pk="9"]'), null, 'and nowhere else');
+  click(cell(9, 'Celtic'));                         // allow Celtic for Liz
+  await settle(window, () => seen.some((r) => r.method === 'PUT' && r.url === 'api/admin/music/9'), 'PUT');
+  assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/admin/music/9').body), { blocked: [] });
+  await settle(window, () => doc.querySelector('.mus-fix[data-pk="5"]'), 'redrawn');
+  click(doc.querySelector('.mus-fix[data-pk="5"]'));
+  await settle(window, () => seen.some((r) => r.method === 'POST' && r.url === 'api/admin/music/5/apply'), 'POST apply');
+});

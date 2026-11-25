@@ -1259,3 +1259,14 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .make-app.make-ignored .person-lab { opacity:.45; }
 .make-app.make-ignored .person-choice, .make-app.make-ignored .make-existing { opacity:.55; }
 .make-app.make-ignored .make-skip-tag { display:inline; }
+
+/* music libraries (music.js; Access -> Music in access.js) */
+.mus-box { display:grid; gap:10px; font-size:13px; min-width:min(380px, 86vw); }
+.mus-apps, .mus-apps-row { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; }
+.mus-apps-row { gap:4px; font-weight:400; margin-top:2px; }
+.mus-app { white-space:nowrap; }
+.mus-libs { display:flex; flex-wrap:wrap; gap:6px; }
+.mus-lib { border:1px solid var(--line); border-radius:14px; padding:4px 10px; background:none; color:var(--muted); cursor:pointer; text-decoration:line-through; }
+.mus-lib[aria-pressed="true"] { background:color-mix(in srgb, var(--accent) 18%, transparent); border-color:var(--accent); color:var(--fg); text-decoration:none; }
+.mus-lib:disabled { cursor:progress; opacity:.6; }
+.mus-fix { font-size:11px; }

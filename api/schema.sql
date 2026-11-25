@@ -374,3 +374,13 @@ CREATE TABLE IF NOT EXISTS app_only_accounts (
     at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (app, account)
 );
+
+-- Music libraries, self-service (music.py): per person, the library folders an
+-- access admin blocked and the ones they hid themselves. No row: they see all.
+CREATE TABLE IF NOT EXISTS music_prefs (
+    person_pk INTEGER     PRIMARY KEY,
+    blocked   JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    hidden    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    by_whom   TEXT        NOT NULL,
+    at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);

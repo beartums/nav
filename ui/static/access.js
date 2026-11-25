@@ -52,7 +52,7 @@ function accessPage(h) {
   try { pref = JSON.parse(localStorage.getItem(PREF) || '{}') || {}; } catch (e) {}
   // A link (?admin=access&view=apps&pivot=1) wins over what this browser remembers.
   var want = h.want || {};
-  var VIEWS = ['groups', 'apps', 'admins'];
+  var VIEWS = ['groups', 'apps', 'admins'].concat(MUSIC_ON ? ['music'] : []);
   var mode = VIEWS.indexOf(want.view || pref.mode) > 0 ? (want.view || pref.mode) : 'groups';
   // Per view: which way round (pivots[view]) and the two filters (filters[view]).
   // An older remembered `pivot: true` was App accounts'.
@@ -72,12 +72,12 @@ function accessPage(h) {
     pivot = 'pivot' in w ? w.pivot === '1' : !!pivots[mode];
     urlPageSet(place());
     if (!view) { return; }            // still loading: it draws the chosen view when done
-    if (mode !== 'groups' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
+    if (mode !== 'groups' && mode !== 'music' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
   };
 
   function switcher() {
     var sw = div('acc-switch');
-    [['groups', 'Groups'], ['apps', 'App accounts'], ['admins', 'Admins']].forEach(function (m) {
+    [['groups', 'Groups'], ['apps', 'App accounts'], ['admins', 'Admins']].concat(MUSIC_ON ? [['music', 'Music']] : []).forEach(function (m) {
       var b = document.createElement('button');
       b.type = 'button'; b.textContent = m[1]; b.dataset.view = m[0];
       b.setAttribute('aria-pressed', String(mode === m[0]));
@@ -87,7 +87,7 @@ function accessPage(h) {
         mode = m[0];
         pivot = !!pivots[mode];
         urlPage(place(), true);
-        if (mode !== 'groups' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
+        if (mode !== 'groups' && mode !== 'music' && !apps) { note.textContent = 'Reading each app…'; loadApps(false); } else { render(); }
       });
       sw.appendChild(b);
     });
@@ -597,6 +597,95 @@ function accessPage(h) {
       .catch(function (e) { note.textContent = 'Matching failed: ' + e.message; render(); });
   }
 
+  // --- Music: which music libraries each person may see (an admin's block) and sees
+  // (their own choice, Menu -> My music libraries); music.js and api/music.py.
+  // A click blocks or allows a library for that person, and nav changes their
+  // music apps at once. Only people with a music app account (or a choice) are listed.
+  var mus = null, musReading = null, musRes = {};
+  function loadMusic(fresh) {
+    if (musReading && !fresh) { return musReading; }
+    musReading = connSend('GET', 'api/admin/music' + (fresh ? '?fresh=1' : ''))
+      .then(function (v) { mus = v; note.textContent = ''; render(); })
+      .catch(function (e) { note.textContent = 'Could not read the music apps: ' + e.message; })
+      .then(function () { musReading = null; });
+    return musReading;
+  }
+  function musicSend(p, method, path, body, what) {
+    note.textContent = what + '\u2026';
+    return connSend(method, path, body).then(function (r) {
+      var bad = (r.results || []).filter(function (x) { return !x.ok; });
+      musRes[p.pk] = bad.length ? bad.map(function (x) { return x.app + ': ' + x.detail; }).join('\n') : '';
+      return loadMusic(true).then(function () {
+        note.textContent = bad.length ? p.name + ': ' + bad.length + ' app(s) not changed (\u26a0 says why).'
+          : p.name + ': ' + ((r.results || []).length ? (r.results.length + ' app(s) changed.') : 'nothing needed changing.');
+      });
+    }, function (e) { note.textContent = e.message; });
+  }
+  function renderMusic() {
+    save.hidden = true;
+    if (!mus) { note.textContent = 'Reading the music apps\u2026'; loadMusic(false); return; }
+    freshness(mus.as_of, 'Which music libraries each person sees in Jellyfin, Plex, Navidrome and Music Assistant. ' +
+      'A pressed cell: allowed (\u25cf they see it, \u25cb they hid it themselves). Click to block or allow it for them; ' +
+      'nav changes their apps at once. The marks after the name: does each app agree?',
+      function () { note.textContent = 'Reading the music apps\u2026'; loadMusic(true); });
+    var broken = mus.apps.filter(function (a) { return a.error; });
+    broken.forEach(function (a) { h.body.appendChild(div('note acc-err', a.label + ': ' + a.error)); });
+    function nameHead(p, tag) {
+      var w = document.createElement(tag);
+      w.className = 'acc-who';
+      w.textContent = p.name;
+      var inds = document.createElement('div');
+      inds.className = 'mus-apps-row';
+      p.apps.forEach(function (a) { inds.appendChild(musicAppInd(a)); });
+      if (musRes[p.pk]) {
+        inds.appendChild(personInd('bad', musRes[p.pk]));
+      }
+      if (p.apps.some(function (a) { return a.state === 'drift'; })) {
+        var fix = document.createElement('button');
+        fix.type = 'button'; fix.className = 'linkish mus-fix'; fix.dataset.pk = p.pk;
+        fix.textContent = 'Fix';
+        fix.title = 'Change the apps marked \u26a0 back to what ' + p.name + ' should see';
+        fix.addEventListener('click', function () {
+          musicSend(p, 'POST', 'api/admin/music/' + p.pk + '/apply', null, 'Fixing ' + p.name);
+        });
+        inds.appendChild(fix);
+      }
+      w.appendChild(inds);
+      return w;
+    }
+    function folderHead(f, tag) { var x = document.createElement(tag); x.textContent = f; return x; }
+    function musCell(p, f) {
+      var td = document.createElement('td');
+      var l = p.libraries.filter(function (x) { return x.folder === f; })[0] || { blocked: false, hidden: false };
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'acc-cell mus-cell';
+      b.dataset.pk = p.pk; b.dataset.folder = f;
+      b.dataset.cell = p.pk + '|' + f;
+      b.setAttribute('aria-pressed', String(!l.blocked));
+      b.textContent = l.blocked ? '' : (l.hidden ? '\u25cb' : '\u25cf');
+      b.title = l.blocked ? f + ': blocked for ' + p.name + '. Click to allow it'
+        : f + ': allowed' + (l.hidden ? ', but ' + p.name + ' hid it' : ', and ' + p.name + ' sees it') + '. Click to block it';
+      b.addEventListener('click', function () {
+        var blocked = p.libraries.filter(function (x) { return x.blocked !== (x.folder === f); })
+          .map(function (x) { return x.folder; });
+        musicSend(p, 'PUT', 'api/admin/music/' + p.pk, { blocked: blocked },
+                  (l.blocked ? 'Allowing ' : 'Blocking ') + f + ' for ' + p.name);
+      });
+      td.appendChild(b);
+      return td;
+    }
+    var slot = div('acc-slot');
+    function musicTable() {
+      return gridTable({ people: mus.people, cols: mus.folders, corner: 'Library', cls: 'acc-music-table',
+                         colText: function (f) { return [f]; },
+                         personHead: nameHead, colHead: folderHead, cell: musCell });
+    }
+    gridBar('libraries', function () { placeTable(slot, musicTable()); });
+    h.body.appendChild(slot);
+    placeTable(slot, musicTable());
+  }
+
   var appsReading = null;
   function loadApps(fresh) {
     if (appsReading && !fresh) { return appsReading; }
@@ -626,6 +715,7 @@ function accessPage(h) {
   function draw() {
     h.body.innerHTML = '';
     switcher();
+    if (mode === 'music') { renderMusic(); return; }
     if (mode !== 'groups') {
       // Not read yet (first open, or cleared after a PR): read, then draw.
       if (!apps) { note.textContent = 'Reading each app…'; loadApps(false); return; }
