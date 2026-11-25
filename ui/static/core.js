@@ -259,3 +259,35 @@ function keepScroll(el, fn) {
     if (n) { n.scrollTop = s.t; n.scrollLeft = s.l; }
   });
 }
+
+// An eye inside a password field: pressed = the password is shown. Every
+// password input gets one (Add person, Jellyfin-only, Connections).
+var PW_EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/>' +
+  '<circle cx="12" cy="12" r="3"/><path class="pw-slash" d="M3 3l18 18"/></svg>';
+function pwShow(input) {
+  var wrap = document.createElement('span');
+  wrap.className = 'pw-wrap';
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'pw-show';
+  b.innerHTML = PW_EYE;
+  b.disabled = input.disabled;
+  function paint() {
+    var on = input.type === 'text';
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Hide the password' : 'Show the password';
+    b.setAttribute('aria-label', b.title);
+  }
+  b.addEventListener('click', function (e) {
+    e.preventDefault();
+    input.type = input.type === 'password' ? 'text' : 'password';
+    paint();
+    input.focus();
+  });
+  paint();
+  wrap.appendChild(b);
+  return b;
+}

@@ -178,6 +178,7 @@ function connectionsPage(h, which) {
     key.input.type = 'password';
     key.input.autocomplete = 'off';
     key.input.disabled = !canStore;
+    pwShow(key.input);
     [url, pub, auth, who, key].forEach(function (f) { if (f) { box.appendChild(f.label); } });
     // The key as typed: '' when nothing (or only half a login) is entered.
     function typedKey() {
@@ -303,6 +304,7 @@ function connectionsPage(h, which) {
     f.key.input.type = 'password';
     f.key.input.autocomplete = 'off';
     f.key.input.disabled = !canStore;
+    pwShow(f.key.input);
     Object.keys(f).forEach(function (k) { box.appendChild(f[k].label); });
     var add = document.createElement('button');
     add.type = 'button';

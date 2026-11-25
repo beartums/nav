@@ -1270,3 +1270,13 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .mus-lib[aria-pressed="true"] { background:color-mix(in srgb, var(--accent) 18%, transparent); border-color:var(--accent); color:var(--fg); text-decoration:none; }
 .mus-lib:disabled { cursor:progress; opacity:.6; }
 .mus-fix { font-size:11px; }
+
+/* Password fields: an eye inside the field shows / hides it (pwShow, core.js). */
+.pw-wrap { position:relative; display:flex; flex:1; min-width:0; }
+.pw-wrap input { flex:1; min-width:0; padding-right:30px; }
+.pw-show { position:absolute; right:3px; top:50%; transform:translateY(-50%); width:24px; height:24px; padding:0;
+  display:grid; place-items:center; border:0; background:none; color:var(--muted); cursor:pointer; }
+.pw-show:hover { color:inherit; }
+.pw-show[aria-pressed="true"] { color:var(--accent); }
+.pw-show[aria-pressed="false"] .pw-slash { display:none; }
+.pw-show:disabled { opacity:.4; cursor:default; }

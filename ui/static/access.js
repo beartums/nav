@@ -1167,13 +1167,7 @@ function createAccountsDialog(p, todo, done) {
   pw.type = 'password'; pw.id = 'make-password'; pw.autocomplete = 'new-password';
   pw.title = 'One password for every app here that needs one (at least 8 characters). nav never stores it.';
   pwRow.appendChild(pw);
-  var show = el('button', 'ts-t', 'Show');
-  show.type = 'button'; show.title = 'Show the password';
-  show.addEventListener('click', function () {
-    pw.type = pw.type === 'password' ? 'text' : 'password';
-    show.setAttribute('aria-pressed', String(pw.type === 'text'));
-  });
-  pwRow.appendChild(show);
+  pwShow(pw);
   box.appendChild(pwRow);
   var out = el('div', 'make-results');
   box.appendChild(out);
@@ -1285,6 +1279,7 @@ function jellyfinOnlyDialog(done) {
     var i = el('input'); i.id = id; i.type = type; i.title = title;
     if (type === 'password') { i.autocomplete = 'new-password'; }
     row.appendChild(i);
+    if (type === 'password') { pwShow(i); }
     box.appendChild(row);
     return i;
   }
