@@ -3,6 +3,7 @@ import asyncio
 import json as _json
 import unittest
 
+import appaccounts as aa
 import music as m
 
 
@@ -119,8 +120,12 @@ PLEX_SECTIONS = {"MediaContainer": {"Directory": [
 class Plex(unittest.TestCase):
     def routes(self, listing=PLEX_LIST):
         return {"/identity": _Resp({"MediaContainer": {"machineIdentifier": "M1"}}),
+                "/api/users": _Resp(None, text='<MediaContainer><User id="5" username="mum" email="mum@x" title="Mum"/></MediaContainer>'),
+                "/api/home/users": _Resp(None, text='<MediaContainer><User id="6" title="Liz" email="liz@x"/></MediaContainer>'),
                 "/library/sections": _Resp(PLEX_SECTIONS),
                 "/users/account.json": _Resp({"user": {"username": "Bear"}}),
+                "/api/servers/M1": _Resp(None, text='<MediaContainer><Server><Section id="902" key="3"/>'
+                                                   '<Section id="903" key="4"/></Server></MediaContainer>'),
                 "/api/servers/M1/shared_servers": _Resp(None, text=listing),
                 "/api/servers/M1/shared_servers/77": _Resp(None, text=PLEX_LIST)}
 
@@ -130,6 +135,22 @@ class Plex(unittest.TestCase):
         self.assertEqual(libs.users["mum"]["shown"], {"Shared"})
         self.assertIs(libs.users["mum@x"], libs.users["mum"], "found by email too")
         self.assertEqual(libs.users["bear"]["fixed"], "the Plex server owner sees every library")
+
+    def test_share_found_by_user_id_under_the_account_login(self):
+        # Shared with a Home member: the share has no username, App accounts calls her "liz".
+        listing = PLEX_LIST.replace('<SharedServer id="77" username="mum" email="mum@x" userID="5">',
+                                    '<SharedServer id="78" userID="6">')
+        libs, _ = run(m._plex_read, self.routes(listing))
+        self.assertEqual(libs.users["liz"]["shown"], {"Shared"})
+        self.assertIs(libs.users["liz@x"], libs.users["liz"])
+
+    def test_a_home_member_with_no_share_gets_one(self):
+        libs, _ = run(m._plex_read, self.routes())       # Liz (id 6) is in Plex Home, no share here
+        self.assertEqual(libs.users["liz"]["shown"], set(), "no share = no libraries here")
+        self.assertEqual(m.status(libs, None, "liz", {"Kids"})["state"], "drift")
+        _, c = run(m._plex_write, {"POST /api/servers/M1/shared_servers": _Resp({})}, libs, "liz", {"Kids"})
+        sent = c.seen[-1][2]["shared_server"]
+        self.assertEqual(sent, {"library_section_ids": ["903"], "invited_id": "6"})
 
     def test_sections_from_the_share_when_the_list_has_none(self):
         bare = '<MediaContainer><SharedServer id="77" username="mum" email="mum@x"/></MediaContainer>'
@@ -144,6 +165,25 @@ class Plex(unittest.TestCase):
 
 
 class Navidrome(unittest.TestCase):
+    def setUp(self):
+        aa.ND_TOKENS.clear()
+
+    def test_login_is_kept_and_redone_on_401(self):
+        n = {"login": 0}
+
+        def login(_):
+            n["login"] += 1
+            return _Resp({"token": f"t{n['login']}"})
+        calls = {"users": 0}
+
+        def users(_):
+            calls["users"] += 1
+            return _Resp([], status=401) if calls["users"] == 2 else _Resp([])
+        routes = {"/auth/login": login, "/api/user": users}
+        for _ in range(3):
+            run(aa._navidrome, routes, key="admin:pw")
+        self.assertEqual(n["login"], 2, "one login, then one more after the 401")
+
     def test_read_and_write(self):
         routes = {"/auth/login": _Resp({"token": "t"}),
                   "/api/library": _Resp([{"id": 1, "path": "/media/music-libraries/Shared"},

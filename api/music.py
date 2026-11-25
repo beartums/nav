@@ -69,8 +69,10 @@ def status(libs: Libs | None, error: str | None, acct: str | None, want: set[str
     library script's business, not drift."""
     if error:
         return {"state": "error", "detail": error}
-    if not acct or libs is None or acct not in libs.users:
+    if not acct or libs is None:
         return {"state": "none", "detail": "no account"}
+    if acct not in libs.users:
+        return {"state": "none", "detail": f"has an account ({acct}), but the app lists no library access for it"}
     u = libs.users[acct]
     if u.get("fixed"):
         return {"state": "fixed", "detail": u["fixed"]}
@@ -172,9 +174,33 @@ async def _plex_read(client: Any, base: str, key: str) -> Libs:
     me = await client.get(PLEX_TV + "/users/account.json", headers=h)
     me.raise_for_status()
     owner = (me.json().get("user") or {}).get("username") or ""
+    # A share names its person by plex.tv user id; App accounts names them by
+    # login (username, else title -- a Home profile has no username) and email, from
+    # the friends list and Plex Home. Key each share by all of those, so a person's
+    # account key (appaccounts.acct_key) finds it whichever way they were matched.
+    names: dict[str, set[str]] = {}
+    for path in ("/api/users", "/api/home/users"):
+        fr = await client.get(PLEX_TV + path, headers=h)
+        if fr.status_code != 200:
+            continue
+        for u in ET.fromstring(fr.text).iter("User"):
+            if u.get("admin") == "1":          # the owner (Plex Home lists them too)
+                continue
+            names.setdefault(str(u.get("id")), set()).update(
+                x.lower() for x in (u.get("username") or u.get("title"), u.get("email"), u.get("title")) if x)
+    # Every library's plex.tv id (Section@id by its local key), so a share can be
+    # written even for a library no one is sharing yet (as _plex_share does).
+    srv = await client.get(f"{PLEX_TV}/api/servers/{machine}", headers=h)
+    if srv.status_code == 200:
+        for sec in ET.fromstring(srv.text).iter("Section"):
+            f = music_keys.get(str(sec.get("key")))
+            if f and sec.get("id"):
+                out.libs[f] = sec.get("id")
     r = await client.get(f"{PLEX_TV}/api/servers/{machine}/shared_servers", headers=h)
     r.raise_for_status()
+    shared_ids: set[str] = set()
     for s in ET.fromstring(r.text).iter("SharedServer"):
+        shared_ids.add(str(s.get("userID")))
         # The list may leave out the sections; the share itself lists them all.
         secs_of = list(s.iter("Section"))
         if not secs_of:
@@ -192,10 +218,15 @@ async def _plex_read(client: Any, base: str, key: str) -> Libs:
                 other.append(sec.get("id"))
         out.libs.update(ids)
         u = {"shown": shown, "ref": {"id": s.get("id"), "other": other}}
-        for k in {(s.get(a) or "").lower() for a in ("username", "email", "name")} - {""}:
+        for k in ({(s.get(a) or "").lower() for a in ("username", "email", "name")} - {""}) | names.get(str(s.get("userID")), set()):
             out.users[k] = u
-    # Music libraries no one is sharing yet: still libraries (their plex.tv ids come
-    # with the first share that lists them; a write needs them).
+    # Plex Home members and friends with NO share of this server see none of its
+    # libraries; the writer makes their share (POST shared_servers, invited_id).
+    for uid, keys in names.items():
+        if uid not in shared_ids:
+            u = {"shown": set(), "ref": {"id": None, "user_id": uid, "other": []}}
+            for k in keys:
+                out.users.setdefault(k, u)
     for k, f in music_keys.items():
         out.libs.setdefault(f, "")
     if owner:
@@ -207,49 +238,47 @@ async def _plex_write(client: Any, base: str, key: str, libs: Libs, acct: str, w
     ref = libs.users[acct]["ref"]
     missing = [f for f in want if f in libs.libs and not libs.libs[f]]
     if missing:
-        raise ValueError(f"plex.tv lists no id for {', '.join(sorted(missing))} yet")
+        raise ValueError(f"plex.tv lists no id for {', '.join(sorted(missing))}")
     ids = list(ref["other"]) + [libs.libs[f] for f in sorted(want) if libs.libs.get(f)]
     if not ids:
         raise ValueError("Plex would share nothing at all: stop sharing with them in Plex instead")
     machine = libs.ctx["machine"]
-    r = await client.put(f"{PLEX_TV}/api/servers/{machine}/shared_servers/{ref['id']}",
-                         headers=_plex_h(key) | {"Content-Type": "application/json"},
-                         json={"server_id": machine, "shared_server": {"library_section_ids": ids}})
+    h = _plex_h(key) | {"Content-Type": "application/json"}
+    if ref["id"] is None:
+        # No share yet (a Home member or friend with no libraries here): make one, by
+        # plex.tv user id, the way nav's own account creation does (_plex_share).
+        r = await client.post(f"{PLEX_TV}/api/servers/{machine}/shared_servers", headers=h,
+                              json={"server_id": machine,
+                                    "shared_server": {"library_section_ids": ids, "invited_id": ref["user_id"]},
+                                    "sharing_settings": {"allowSync": "0", "allowCameraUpload": "0", "allowChannels": "0",
+                                                         "filterMovies": "", "filterTelevision": "", "filterMusic": ""}})
+    else:
+        r = await client.put(f"{PLEX_TV}/api/servers/{machine}/shared_servers/{ref['id']}", headers=h,
+                             json={"server_id": machine, "shared_server": {"library_section_ids": ids}})
     r.raise_for_status()
 
 
 # --- Navidrome ------------------------------------------------------------------------
 
-async def _nd_login(client: Any, base: str, key: str) -> dict[str, str]:
-    user, _, password = key.partition(":")
-    if not password:
-        raise ValueError("the Navidrome key is an admin's username:password")
-    lg = await client.post(base + "/auth/login", json={"username": user, "password": password})
-    lg.raise_for_status()
-    return {"X-ND-Authorization": f"Bearer {lg.json()['token']}"}
-
-
 async def _nd_read(client: Any, base: str, key: str) -> Libs:
     # nativeapi (0.58+): GET /api/library [{id, name, path}], GET /api/user,
     # GET /api/user/{id}/library. Admins get every library and can't be limited.
-    h = await _nd_login(client, base, key)
-    r = await client.get(base + "/api/library", headers=h)
-    r.raise_for_status()
+    # The login is appaccounts' kept token: Navidrome rate-limits /auth/login.
+    from appaccounts import nd_call
+    r = await nd_call(client, "get", base, key, "/api/library")
     out = Libs()
     by_id: dict[str, str] = {}
     for lib in r.json() or []:
         f = folder_of(lib.get("path"))
         out.libs[f] = str(lib.get("id"))
         by_id[str(lib.get("id"))] = f
-    r = await client.get(base + "/api/user", headers=h)
-    r.raise_for_status()
+    r = await nd_call(client, "get", base, key, "/api/user")
     for u in r.json() or []:
         k = (u.get("userName") or "").lower()
         if u.get("isAdmin"):
             out.users[k] = {"shown": None, "fixed": "Navidrome admins see every library"}
             continue
-        lr = await client.get(f"{base}/api/user/{u.get('id')}/library", headers=h)
-        lr.raise_for_status()
+        lr = await nd_call(client, "get", base, key, f"/api/user/{u.get('id')}/library")
         out.users[k] = {"shown": {by_id[str(x.get("id"))] for x in lr.json() or [] if str(x.get("id")) in by_id},
                         "ref": u.get("id")}
     return out
@@ -259,9 +288,8 @@ async def _nd_write(client: Any, base: str, key: str, libs: Libs, acct: str, wan
     ids = [int(libs.libs[f]) for f in sorted(want) if f in libs.libs]
     if not ids:
         raise ValueError("Navidrome needs at least one library for a user")
-    h = await _nd_login(client, base, key)
-    r = await client.put(f"{base}/api/user/{libs.users[acct]['ref']}/library", headers=h, json={"libraryIds": ids})
-    r.raise_for_status()
+    from appaccounts import nd_call
+    await nd_call(client, "put", base, key, f"/api/user/{libs.users[acct]['ref']}/library", {"libraryIds": ids})
 
 
 # --- Music Assistant ------------------------------------------------------------------

@@ -290,16 +290,43 @@ async def _audiobookshelf(client: Any, base: str, key: str) -> list[dict[str, An
                     last_seen=_iso_ms(u.get("lastSeen")), id=u.get("id")) for u in r.json()["users"]]
 
 
-async def _navidrome(client: Any, base: str, key: str) -> list[dict[str, Any]]:
-    # No API keys: the "key" is an admin's "username:password", logged in per read.
-    # The token goes in X-ND-Authorization, not Authorization (server/auth.go).
+# Navidrome has no API keys: the "key" is an admin's "username:password". Its
+# /auth/login is rate limited (AuthRequestLimit, 5 per 20 s by default), so the
+# session token is kept and reused (Navidrome's sessions last 24 h); a 401 logs
+# in again once. The token goes in X-ND-Authorization, not Authorization (server/auth.go).
+ND_TOKENS: dict[tuple[str, str, int], tuple[float, str]] = {}
+ND_TOKEN_TTL = 3600
+
+
+async def nd_headers(client: Any, base: str, key: str, fresh: bool = False) -> dict[str, str]:
+    import time
     user, _, password = key.partition(":")
     if not password:
         raise ValueError("the Navidrome key is an admin's username:password")
+    k = (base, user, hash(password))
+    hit = ND_TOKENS.get(k)
+    if hit and not fresh and time.monotonic() - hit[0] < ND_TOKEN_TTL:
+        return {"X-ND-Authorization": f"Bearer {hit[1]}"}
     lg = await client.post(base + "/auth/login", json={"username": user, "password": password})
     lg.raise_for_status()
-    r = await client.get(base + "/api/user", headers={"X-ND-Authorization": f"Bearer {lg.json()['token']}"})
-    r.raise_for_status()
+    ND_TOKENS[k] = (time.monotonic(), lg.json()["token"])
+    return {"X-ND-Authorization": f"Bearer {ND_TOKENS[k][1]}"}
+
+
+async def nd_call(client: Any, method: str, base: str, key: str, path: str, json: Any = None) -> Any:
+    """One Navidrome API call with the kept token; a 401 logs in again, once."""
+    for fresh in (False, True):
+        h = await nd_headers(client, base, key, fresh)
+        fn = getattr(client, method)
+        r = await (fn(base + path, headers=h) if json is None else fn(base + path, headers=h, json=json))
+        if r.status_code != 401 or fresh:
+            r.raise_for_status()
+            return r
+    raise AssertionError("unreachable")
+
+
+async def _navidrome(client: Any, base: str, key: str) -> list[dict[str, Any]]:
+    r = await nd_call(client, "get", base, key, "/api/user")
     return [account(login=u.get("userName"), email=u.get("email"), name=u.get("name"), admin=bool(u.get("isAdmin")),
                     last_seen=u.get("lastAccessAt") or u.get("lastLoginAt"), id=u.get("id")) for u in r.json()]
 
@@ -563,13 +590,8 @@ async def _make_jellyfin(client: Any, base: str, key: str, p: dict[str, Any], pw
 
 async def _make_navidrome(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
     # nativeapi: POST /api/user (admin); gets the libraries marked for new users.
-    user, _, password = key.partition(":")
-    lg = await client.post(base + "/auth/login", json={"username": user, "password": password})
-    lg.raise_for_status()
-    r = await client.post(base + "/api/user", headers={"X-ND-Authorization": f"Bearer {lg.json()['token']}"},
-                          json={"userName": p["username"], "name": p["name"], "email": p["email"],
-                                "password": pw, "isAdmin": False})
-    r.raise_for_status()
+    await nd_call(client, "post", base, key, "/api/user",
+                  {"userName": p["username"], "name": p["name"], "email": p["email"], "password": pw, "isAdmin": False})
 
 
 async def _make_audiobookshelf(client: Any, base: str, key: str, p: dict[str, Any], pw: str) -> None:
@@ -815,15 +837,10 @@ async def _role_navidrome(client: Any, base: str, key: str, acc: dict[str, Any],
     # PUT /api/user/{id} writes every column: send the user as read, isAdmin changed
     # (no password: it is kept). A grant also gives every library; a revoke keeps them.
     _not_self("Navidrome", key, acc)
-    user, password = _login(key, "Navidrome")
-    lg = await client.post(base + "/auth/login", json={"username": user, "password": password})
-    lg.raise_for_status()
-    h = {"X-ND-Authorization": f"Bearer {lg.json()['token']}"}
+    _login(key, "Navidrome")
     uid = _need_id(acc)
-    r = await client.get(f"{base}/api/user/{uid}", headers=h)
-    r.raise_for_status()
-    r = await client.put(f"{base}/api/user/{uid}", headers=h, json=r.json() | {"isAdmin": admin})
-    r.raise_for_status()
+    r = await nd_call(client, "get", base, key, f"/api/user/{uid}")
+    await nd_call(client, "put", base, key, f"/api/user/{uid}", r.json() | {"isAdmin": admin})
 
 
 async def _role_pingvin(client: Any, base: str, key: str, acc: dict[str, Any], admin: bool) -> None:

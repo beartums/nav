@@ -184,6 +184,7 @@ class Adapters(unittest.TestCase):
         self.assertTrue(got[1]["disabled"])
 
     def test_navidrome_logs_in_and_uses_its_header(self):
+        aa.ND_TOKENS.clear()
         got, c = run(aa._navidrome, {"/auth/login": _Resp({"token": "JWT"}),
                                      "/api/user": _Resp([{"userName": "bear", "isAdmin": True, "email": "b@x"}])},
                      key="admin:pw")
@@ -315,6 +316,7 @@ class Creators(unittest.TestCase):
         self.assertFalse(c.seen[0][1]["shouldChangePassword"])
 
     def test_navidrome_logs_in_then_creates(self):
+        aa.ND_TOKENS.clear()
         c = make(aa._make_navidrome, {"/auth/login": _Resp({"token": "T"}), "/api/user": _Resp({"id": "1"})}, key="adm:pw")
         self.assertEqual(c.seen[1][2], {"X-ND-Authorization": "Bearer T"})
         self.assertEqual(c.seen[1][1]["userName"], "liz")
