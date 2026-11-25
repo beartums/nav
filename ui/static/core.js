@@ -291,3 +291,30 @@ function pwShow(input) {
   wrap.appendChild(b);
   return b;
 }
+
+// A dialog box: stands off the page (.dlg: its own surface, a strong edge and
+// shadow) and is dragged by its title (the box's first child), so what's under it
+// can be seen. The box is centred by its backdrop until the first drag, then fixed.
+function dlgMovable(box) {
+  box.classList.add('dlg');
+  box.style.removeProperty('background');
+  box.style.removeProperty('border');
+  var from = null;
+  box.addEventListener('pointerdown', function (ev) {
+    var head = box.firstElementChild;
+    if (!head || !head.contains(ev.target) || ev.target.closest('button, input, select, textarea, a')) { return; }
+    var r = box.getBoundingClientRect();
+    box.style.position = 'fixed'; box.style.margin = '0';
+    box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+    from = { x: ev.clientX, y: ev.clientY, left: r.left, top: r.top };
+    if (box.setPointerCapture) { box.setPointerCapture(ev.pointerId); }
+    ev.preventDefault();
+  });
+  box.addEventListener('pointermove', function (ev) {
+    if (!from) { return; }
+    box.style.left = Math.min(Math.max(0, from.left + ev.clientX - from.x), innerWidth - 80) + 'px';
+    box.style.top = Math.min(Math.max(0, from.top + ev.clientY - from.y), innerHeight - 40) + 'px';
+  });
+  box.addEventListener('pointerup', function () { from = null; });
+  return box;
+}

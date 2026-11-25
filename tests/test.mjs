@@ -4691,6 +4691,13 @@ test('access: + Jellyfin-only makes an account outside Authentik; they list on t
 
   doc.getElementById('acc-jf-only').click();
   await settle(window, () => doc.querySelectorAll('.jfo-lib').length === 2, 'libraries');
+  const dlg = doc.getElementById('jfo-dlg');
+  assert.ok(dlg.classList.contains('dlg'), 'a dialog stands off the page');
+  const ev = (type, x, y) => new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+  dlg.querySelector('h3').dispatchEvent(ev('pointerdown', 10, 10));
+  dlg.dispatchEvent(ev('pointermove', 60, 40));
+  dlg.dispatchEvent(ev('pointerup', 60, 40));
+  assert.deepEqual([dlg.style.position, dlg.style.left, dlg.style.top], ['fixed', '50px', '30px'], 'dragged by its title');
   const go = doc.getElementById('jfo-create');
   const set = (id, v) => { const i = doc.getElementById(id); i.value = v; i.dispatchEvent(new window.Event('input')); };
   set('jfo-user', 'bad name');
@@ -4974,7 +4981,17 @@ test('music: the menu offers My music libraries only when the server does', asyn
   const inds = [...doc.querySelectorAll('.mus-apps .mus-ind')];
   assert.deepEqual(inds.map((i) => i.className.match(/mus-ind-(\w+)/)[1]), ['ok', 'fixed', 'drift', 'none']);
   assert.match(inds[2].title, /^Navidrome: differs — missing Celtic$/, 'the words are the hover text');
+  const apply = doc.getElementById('editor-save');
+  assert.equal(apply.disabled, true, 'nothing to apply yet');
+  click(libs[1]);                                   // show Kids: staged
+  assert.equal(libs[1].getAttribute('aria-pressed'), 'true');
+  assert.ok(libs[1].classList.contains('mus-changed'), 'outlined until applied');
+  click(libs[1]);                                   // ...and back: nothing staged
+  assert.equal(apply.disabled, true);
   click(libs[0]);                                   // hide Celtic too
+  assert.equal(seen.some((r) => r.method === 'PUT'), false, 'a click only stages');
+  assert.equal(apply.textContent, 'Apply (1)');
+  click(apply);
   await settle(window, () => seen.some((r) => r.method === 'PUT' && r.url === 'api/music'), 'PUT');
   const put = seen.find((r) => r.method === 'PUT' && r.url === 'api/music');
   assert.deepEqual(JSON.parse(put.body), { hidden: ['Celtic', 'Kids'] });
@@ -5005,7 +5022,13 @@ test('music: Access -> Music blocks a library for someone, and Fix re-applies', 
   assert.equal(cell(9, 'Celtic').getAttribute('aria-pressed'), 'false', 'blocked');
   assert.ok(doc.querySelector('.mus-fix[data-pk="5"]'), 'Fix where an app differs');
   assert.equal(doc.querySelector('.mus-fix[data-pk="9"]'), null, 'and nowhere else');
-  click(cell(9, 'Celtic'));                         // allow Celtic for Liz
+  click(cell(9, 'Celtic'));                         // allow Celtic for Liz: staged
+  assert.equal(seen.some((r) => r.method === 'PUT'), false, 'a click only stages');
+  assert.ok(cell(9, 'Celtic').classList.contains('mus-changed'));
+  click(cell(5, 'Kids'));                           // block Kids for Bear
+  click(cell(5, 'Kids'));                           // ...no, undo
+  assert.equal(doc.getElementById('adminpage-save').textContent, 'Apply (1)');
+  click(doc.getElementById('adminpage-save'));
   await settle(window, () => seen.some((r) => r.method === 'PUT' && r.url === 'api/admin/music/9'), 'PUT');
   assert.deepEqual(JSON.parse(seen.find((r) => r.url === 'api/admin/music/9').body), { blocked: [] });
   await settle(window, () => doc.querySelector('.mus-fix[data-pk="5"]'), 'redrawn');

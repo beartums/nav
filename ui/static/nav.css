@@ -1,8 +1,10 @@
 :root { color-scheme: light dark; --bg:#f6f7f9; --fg:#14161a; --card:#fff;
-        --line:#e3e6ea; --muted:#5b6370; --accent:#3b6ea5; }
+        --line:#e3e6ea; --muted:#5b6370; --accent:#3b6ea5;
+        --dlg:#fff; --dlg-line:#b9c0ca; --dlg-shadow:0 0 0 1px rgba(0,0,0,.04), 0 18px 50px rgba(0,0,0,.30); }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#14161a; --fg:#e8eaed; --card:#1d2027; --line:#2c313a;
-          --muted:#9aa3b0; --accent:#7aa7d9; }
+          --muted:#9aa3b0; --accent:#7aa7d9;
+          --dlg:#272b34; --dlg-line:#525a69; --dlg-shadow:0 0 0 1px rgba(0,0,0,.6), 0 20px 56px rgba(0,0,0,.75); }
 }
 * { box-sizing: border-box; }
 /* `hidden` must always win. A single unscoped display rule silently
@@ -377,10 +379,10 @@ h2.cat.closed .chev, h3.cat.closed .chev { transform:rotate(-90deg); }
 
 /* --- the movable editor -------------------------------------------- */
 #editor { position:fixed; z-index:50; width:330px; display:none;
-          background:var(--card); border:1px solid var(--line);
-          border-radius:11px; box-shadow:0 14px 44px rgba(0,0,0,.3); }
+          background:var(--dlg); border:1px solid var(--dlg-line);
+          border-radius:11px; box-shadow:var(--dlg-shadow); }
 body.editing #editor { display:block; }
-#editor .bar { display:flex; align-items:center; gap:8px; padding:9px 12px;
+#editor .bar { cursor:move; display:flex; align-items:center; gap:8px; padding:9px 12px;
                border-bottom:1px solid var(--line); cursor:move; }
 #editor .bar strong { flex:1; font-size:13px; overflow:hidden;
                       text-overflow:ellipsis; white-space:nowrap; }
@@ -1261,7 +1263,7 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .make-app.make-ignored .make-skip-tag { display:inline; }
 
 /* music libraries (music.js; Access -> Music in access.js) */
-.mus-box { display:grid; gap:10px; font-size:13px; min-width:min(380px, 86vw); }
+.mus-box { display:grid; gap:10px; font-size:13px; }
 .mus-apps, .mus-apps-row { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; }
 .mus-apps-row { gap:4px; font-weight:400; margin-top:2px; }
 .mus-app { white-space:nowrap; }
@@ -1280,3 +1282,9 @@ fieldset.conn.conn-healthy { border-color:#2f8a4a; box-shadow:inset 3px 0 0 #2f8
 .pw-show[aria-pressed="true"] { color:var(--accent); }
 .pw-show[aria-pressed="false"] .pw-slash { display:none; }
 .pw-show:disabled { opacity:.4; cursor:default; }
+
+/* Dialogs: their own surface, a strong edge and shadow, dragged by the title (dlgMovable, core.js). */
+.dlg { background:var(--dlg); border:1px solid var(--dlg-line); box-shadow:var(--dlg-shadow); max-height:92vh; overflow:auto; }
+.dlg > :first-child { cursor:move; user-select:none; }
+/* A staged change, not applied yet. */
+.mus-changed { outline:2px dashed var(--accent); outline-offset:1px; }

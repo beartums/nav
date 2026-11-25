@@ -101,7 +101,7 @@ function smallDialog(title) {
   var h = document.createElement('strong');
   h.textContent = title;
   box.appendChild(h);
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   function close() { back.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(e) { if (e.key === 'Escape') { close(); } }
