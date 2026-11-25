@@ -432,6 +432,15 @@ function rowFor(doc, name) {
     .find((r) => r.querySelector('input[type=text]')?.value === name);
 }
 
+// jsdom has no layout, so scrollTop/scrollLeft always read 0: remember what is set.
+function fakeScroll(window) {
+  const pos = new WeakMap();
+  for (const k of ['scrollTop', 'scrollLeft']) {
+    Object.defineProperty(window.Element.prototype, k, { configurable: true,
+      get() { return (pos.get(this) || {})[k] || 0; }, set(v) { pos.set(this, { ...(pos.get(this) || {}), [k]: v }); } });
+  }
+}
+
 test('bulk edit lists every app with its fields exposed', async () => {
   const { window, doc } = await boot();
   await enterAdmin(window, doc);
@@ -864,6 +873,13 @@ test('groups collapse in the bulk table and still accept drops', async () => {
 
   click(groupRow(doc, 'Media').querySelector('td[role=button]'));
   await settle(window, () => bulkNames(doc).length === 3, 'the group to reopen');
+
+  // Folding redraws the table; it stays scrolled where it was.
+  fakeScroll(window);
+  doc.querySelector('.bulkwrap').scrollLeft = 200;
+  click(groupRow(doc, 'Media').querySelector('td[role=button]'));
+  await settle(window, () => bulkNames(doc).length === 1, 'Media folded again');
+  assert.equal(doc.querySelector('.bulkwrap').scrollLeft, 200, 'the sideways scroll is kept');
 });
 
 test('dragging a bulk row onto a sidebar group stages the move', async () => {
@@ -4612,11 +4628,7 @@ test('access: Admins page — toggle cells, Apply makes every change at once; gr
   assert.equal(doc.getElementById('adm-apply').disabled, true, 'nothing staged yet');
 
   // A toggle redraws, but the grid stays where it was scrolled and the focus stays put.
-  const pos = new WeakMap();
-  for (const k of ['scrollTop', 'scrollLeft']) {
-    Object.defineProperty(window.HTMLElement.prototype, k, { configurable: true,
-      get() { return (pos.get(this) || {})[k] || 0; }, set(v) { pos.set(this, { ...(pos.get(this) || {}), [k]: v }); } });
-  }
+  fakeScroll(window);
   const grid = () => doc.querySelector('.acc-scroll');
   grid().scrollTop = 120; grid().scrollLeft = 340;
   btn(2, 1).focus();

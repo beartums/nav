@@ -180,9 +180,13 @@ function renderTabs() {
 
 function render() {
   if (typeof closePeek === 'function') { closePeek(); }
+  // The list redraws on collapse and on every move: keep its sideways scroll.
+  if (BULK.on && ADMIN_MODE) {
+    keepScroll(out, function () { out.className = ''; out.innerHTML = ''; out.appendChild(bulkTable()); });
+    return;
+  }
   out.className = '';
   out.innerHTML = '';
-  if (BULK.on && ADMIN_MODE) { out.appendChild(bulkTable()); return; }
   if (!APPS.length) {
     out.className = 'msg';
     out.textContent = 'No applications are available to you. That is Authentik’s answer, ' +
