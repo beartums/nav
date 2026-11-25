@@ -599,9 +599,9 @@ function accessPage(h) {
 
   // --- Music: which music libraries each person may see (an admin's block) and sees
   // (their own choice, Menu -> My music libraries); music.js and api/music.py.
-  // A click blocks or allows a library for that person, and nav changes their
-  // music apps at once. Only people with a music app account (or a choice) are listed.
-  var mus = null, musReading = null, musRes = {};
+  // Clicks block or allow a library for that person (staged, outlined); Apply changes
+  // each changed person's music apps. Only people with a music app account (or a choice) are listed.
+  var mus = null, musReading = null, musRes = {}, musStaged = {};   // pk -> {folder: blocked}
   function loadMusic(fresh) {
     if (musReading && !fresh) { return musReading; }
     musReading = connSend('GET', 'api/admin/music' + (fresh ? '?fresh=1' : ''))
@@ -621,12 +621,50 @@ function accessPage(h) {
       });
     }, function (e) { note.textContent = e.message; });
   }
+  function musBlocked(p, f) {
+    var st = musStaged[p.pk];
+    if (st && f in st) { return st[f]; }
+    return !!(p.libraries.filter(function (x) { return x.folder === f; })[0] || {}).blocked;
+  }
+  function musCount() {
+    return Object.keys(musStaged).reduce(function (n, pk) { return n + Object.keys(musStaged[pk]).length; }, 0);
+  }
+  function musPaint() {
+    var n = musCount();
+    save.hidden = !n; save.disabled = !n;
+    save.textContent = 'Apply (' + n + ')';
+    if (n) { note.textContent = n + ' change' + (n === 1 ? '' : 's') + ' staged'; }
+  }
+  function musApply() {
+    var todo = mus.people.filter(function (p) { return musStaged[p.pk]; });
+    save.disabled = true;
+    var bad = 0, done = 0;
+    function next(i) {
+      if (i >= todo.length) {
+        musStaged = {};
+        return loadMusic(true).then(function () {
+          note.textContent = bad ? bad + ' app(s) not changed (\u26a0 says why).' : done + ' app(s) changed.';
+        });
+      }
+      var p = todo[i];
+      var blocked = mus.folders.filter(function (f) { return musBlocked(p, f); });
+      note.textContent = 'Changing ' + p.name + '\u2026';
+      return connSend('PUT', 'api/admin/music/' + p.pk, { blocked: blocked }).then(function (r) {
+        var b = (r.results || []).filter(function (x) { return !x.ok; });
+        musRes[p.pk] = b.map(function (x) { return x.app + ': ' + x.detail; }).join('\n');
+        bad += b.length; done += (r.results || []).length - b.length;
+        delete musStaged[p.pk];
+        return next(i + 1);
+      });
+    }
+    next(0).catch(function (e) { note.textContent = e.message; musPaint(); });
+  }
   function renderMusic() {
     save.hidden = true;
     if (!mus) { note.textContent = 'Reading the music apps\u2026'; loadMusic(false); return; }
     freshness(mus.as_of, 'Which music libraries each person sees in Jellyfin, Plex, Navidrome and Music Assistant. ' +
-      'A pressed cell: allowed (\u25cf they see it, \u25cb they hid it themselves). Click to block or allow it for them; ' +
-      'nav changes their apps at once. The marks after the name: does each app agree?',
+      'A pressed cell: allowed (\u25cf they see it, \u25cb they hid it themselves). Click to block or allow it for them, ' +
+      'then Apply. The marks after the name: does each app agree?',
       function () { note.textContent = 'Reading the music apps\u2026'; loadMusic(true); });
     var broken = mus.apps.filter(function (a) { return a.error; });
     broken.forEach(function (a) { h.body.appendChild(div('note acc-err', a.label + ': ' + a.error)); });
@@ -657,20 +695,22 @@ function accessPage(h) {
     function musCell(p, f) {
       var td = document.createElement('td');
       var l = p.libraries.filter(function (x) { return x.folder === f; })[0] || { blocked: false, hidden: false };
+      var blocked = musBlocked(p, f), staged = blocked !== !!l.blocked;
       var b = document.createElement('button');
       b.type = 'button';
-      b.className = 'acc-cell mus-cell';
+      b.className = 'acc-cell mus-cell' + (staged ? ' mus-changed' : '');
       b.dataset.pk = p.pk; b.dataset.folder = f;
       b.dataset.cell = p.pk + '|' + f;
-      b.setAttribute('aria-pressed', String(!l.blocked));
-      b.textContent = l.blocked ? '' : (l.hidden ? '\u25cb' : '\u25cf');
-      b.title = l.blocked ? f + ': blocked for ' + p.name + '. Click to allow it'
-        : f + ': allowed' + (l.hidden ? ', but ' + p.name + ' hid it' : ', and ' + p.name + ' sees it') + '. Click to block it';
+      b.setAttribute('aria-pressed', String(!blocked));
+      b.textContent = blocked ? '' : (l.hidden ? '\u25cb' : '\u25cf');
+      b.title = (blocked ? f + ': blocked for ' + p.name + '. Click to allow it'
+        : f + ': allowed' + (l.hidden ? ', but ' + p.name + ' hid it' : ', and ' + p.name + ' sees it') + '. Click to block it') +
+        (staged ? ' (not applied yet)' : '');
       b.addEventListener('click', function () {
-        var blocked = p.libraries.filter(function (x) { return x.blocked !== (x.folder === f); })
-          .map(function (x) { return x.folder; });
-        musicSend(p, 'PUT', 'api/admin/music/' + p.pk, { blocked: blocked },
-                  (l.blocked ? 'Allowing ' : 'Blocking ') + f + ' for ' + p.name);
+        var st = musStaged[p.pk] = musStaged[p.pk] || {};
+        if (staged) { delete st[f]; } else { st[f] = !blocked; }
+        if (!Object.keys(st).length) { delete musStaged[p.pk]; }
+        render();
       });
       td.appendChild(b);
       return td;
@@ -684,6 +724,7 @@ function accessPage(h) {
     gridBar('libraries', function () { placeTable(slot, musicTable()); });
     h.body.appendChild(slot);
     placeTable(slot, musicTable());
+    musPaint();
   }
 
   var appsReading = null;
@@ -829,6 +870,7 @@ function accessPage(h) {
   }
 
   save.onclick = function () {
+    if (mode === 'music') { musApply(); return; }
     save.disabled = true;
     note.textContent = 'Opening the pull request…';
     connSend('POST', 'api/admin/access/pr').then(function (r) {
@@ -875,7 +917,7 @@ function addPersonDialog(view, h, done) {
   var box = document.createElement('div');
   box.className = 'smalldlg person-dlg';
   box.id = 'person-dlg';
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   var created = null, checkTimer = null, checked = { taken: [], outside: null }, dirty = false;
 
@@ -1092,7 +1134,7 @@ function createAccountsDialog(p, todo, done) {
   var box = document.createElement('div');
   box.className = 'smalldlg person-dlg';
   box.id = 'make-dlg';
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   var made = false;
   function close() { back.remove(); document.removeEventListener('keydown', onKey); if (made) { done(); } }
@@ -1265,7 +1307,7 @@ function jellyfinOnlyDialog(done) {
   var box = document.createElement('div');
   box.className = 'smalldlg person-dlg';
   box.id = 'jfo-dlg';
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   var made = false;
   function close() { back.remove(); document.removeEventListener('keydown', onKey); if (made) { done(); } }

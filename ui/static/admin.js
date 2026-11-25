@@ -216,7 +216,7 @@ function viewAsListDialog() {
       .catch(function (e) { note.textContent = e.message; });
   });
 
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   loadPrincipals().then(fill);
 }
@@ -364,7 +364,7 @@ function impersonateDialog() {
   cancel.addEventListener('click', close);
   back.addEventListener('click', function (ev) { if (ev.target === back) { close(); } });
 
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   loadPrincipals().then(function () { paint(); filter.focus(); });
 }

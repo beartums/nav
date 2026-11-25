@@ -201,7 +201,7 @@ function iconDialog(a, key, current, fallback, onApply) {
   cancel.addEventListener('click', close);
   back.addEventListener('click', function (ev) { if (ev.target === back) { close(); } });
 
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   input.focus();
 }

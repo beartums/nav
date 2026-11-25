@@ -384,7 +384,7 @@ function newTileDialog(existing) {
       .catch(function (e) { create.disabled = false; note.textContent = e.message; });
   });
 
-  back.appendChild(box);
+  back.appendChild(dlgMovable(box));
   document.body.appendChild(back);
   fName.focus();
 }
