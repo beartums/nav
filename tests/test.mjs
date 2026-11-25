@@ -4611,7 +4611,18 @@ test('access: Admins page — toggle cells, Apply makes every change at once; gr
   assert.equal(btn(2, 3).getAttribute('aria-pressed'), 'false', 'Liz: the group toggles even before her Immich account exists');
   assert.equal(doc.getElementById('adm-apply').disabled, true, 'nothing staged yet');
 
+  // A toggle redraws, but the grid stays where it was scrolled and the focus stays put.
+  const pos = new WeakMap();
+  for (const k of ['scrollTop', 'scrollLeft']) {
+    Object.defineProperty(window.HTMLElement.prototype, k, { configurable: true,
+      get() { return (pos.get(this) || {})[k] || 0; }, set(v) { pos.set(this, { ...(pos.get(this) || {}), [k]: v }); } });
+  }
+  const grid = () => doc.querySelector('.acc-scroll');
+  grid().scrollTop = 120; grid().scrollLeft = 340;
+  btn(2, 1).focus();
   btn(2, 1).click();                       // Liz: Jellyfin admin
+  assert.deepEqual([grid().scrollTop, grid().scrollLeft], [120, 340], 'the toggle keeps the scroll position');
+  assert.equal(doc.activeElement, btn(2, 1), 'and the focus');
   btn(2, 2).click();                       // Liz: Memos admin
   btn(1, 3).click();                       // Bear: Immich, via the group
   assert.equal(btn(2, 1).textContent, '+★');
