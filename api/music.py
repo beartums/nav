@@ -72,8 +72,7 @@ def status(libs: Libs | None, error: str | None, acct: str | None, want: set[str
     if not acct or libs is None:
         return {"state": "none", "detail": "no account"}
     if acct not in libs.users:
-        return {"state": "none", "detail": f"has an account ({acct}), but the app lists no library access for it"
-                                           " (for Plex: no share of this server)"}
+        return {"state": "none", "detail": f"has an account ({acct}), but the app lists no library access for it"}
     u = libs.users[acct]
     if u.get("fixed"):
         return {"state": "fixed", "detail": u["fixed"]}
@@ -185,11 +184,23 @@ async def _plex_read(client: Any, base: str, key: str) -> Libs:
         if fr.status_code != 200:
             continue
         for u in ET.fromstring(fr.text).iter("User"):
+            if u.get("admin") == "1":          # the owner (Plex Home lists them too)
+                continue
             names.setdefault(str(u.get("id")), set()).update(
                 x.lower() for x in (u.get("username") or u.get("title"), u.get("email"), u.get("title")) if x)
+    # Every library's plex.tv id (Section@id by its local key), so a share can be
+    # written even for a library no one is sharing yet (as _plex_share does).
+    srv = await client.get(f"{PLEX_TV}/api/servers/{machine}", headers=h)
+    if srv.status_code == 200:
+        for sec in ET.fromstring(srv.text).iter("Section"):
+            f = music_keys.get(str(sec.get("key")))
+            if f and sec.get("id"):
+                out.libs[f] = sec.get("id")
     r = await client.get(f"{PLEX_TV}/api/servers/{machine}/shared_servers", headers=h)
     r.raise_for_status()
+    shared_ids: set[str] = set()
     for s in ET.fromstring(r.text).iter("SharedServer"):
+        shared_ids.add(str(s.get("userID")))
         # The list may leave out the sections; the share itself lists them all.
         secs_of = list(s.iter("Section"))
         if not secs_of:
@@ -209,8 +220,13 @@ async def _plex_read(client: Any, base: str, key: str) -> Libs:
         u = {"shown": shown, "ref": {"id": s.get("id"), "other": other}}
         for k in ({(s.get(a) or "").lower() for a in ("username", "email", "name")} - {""}) | names.get(str(s.get("userID")), set()):
             out.users[k] = u
-    # Music libraries no one is sharing yet: still libraries (their plex.tv ids come
-    # with the first share that lists them; a write needs them).
+    # Plex Home members and friends with NO share of this server see none of its
+    # libraries; the writer makes their share (POST shared_servers, invited_id).
+    for uid, keys in names.items():
+        if uid not in shared_ids:
+            u = {"shown": set(), "ref": {"id": None, "user_id": uid, "other": []}}
+            for k in keys:
+                out.users.setdefault(k, u)
     for k, f in music_keys.items():
         out.libs.setdefault(f, "")
     if owner:
@@ -222,14 +238,23 @@ async def _plex_write(client: Any, base: str, key: str, libs: Libs, acct: str, w
     ref = libs.users[acct]["ref"]
     missing = [f for f in want if f in libs.libs and not libs.libs[f]]
     if missing:
-        raise ValueError(f"plex.tv lists no id for {', '.join(sorted(missing))} yet")
+        raise ValueError(f"plex.tv lists no id for {', '.join(sorted(missing))}")
     ids = list(ref["other"]) + [libs.libs[f] for f in sorted(want) if libs.libs.get(f)]
     if not ids:
         raise ValueError("Plex would share nothing at all: stop sharing with them in Plex instead")
     machine = libs.ctx["machine"]
-    r = await client.put(f"{PLEX_TV}/api/servers/{machine}/shared_servers/{ref['id']}",
-                         headers=_plex_h(key) | {"Content-Type": "application/json"},
-                         json={"server_id": machine, "shared_server": {"library_section_ids": ids}})
+    h = _plex_h(key) | {"Content-Type": "application/json"}
+    if ref["id"] is None:
+        # No share yet (a Home member or friend with no libraries here): make one, by
+        # plex.tv user id, the way nav's own account creation does (_plex_share).
+        r = await client.post(f"{PLEX_TV}/api/servers/{machine}/shared_servers", headers=h,
+                              json={"server_id": machine,
+                                    "shared_server": {"library_section_ids": ids, "invited_id": ref["user_id"]},
+                                    "sharing_settings": {"allowSync": "0", "allowCameraUpload": "0", "allowChannels": "0",
+                                                         "filterMovies": "", "filterTelevision": "", "filterMusic": ""}})
+    else:
+        r = await client.put(f"{PLEX_TV}/api/servers/{machine}/shared_servers/{ref['id']}", headers=h,
+                             json={"server_id": machine, "shared_server": {"library_section_ids": ids}})
     r.raise_for_status()
 
 

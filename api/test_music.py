@@ -124,6 +124,8 @@ class Plex(unittest.TestCase):
                 "/api/home/users": _Resp(None, text='<MediaContainer><User id="6" title="Liz" email="liz@x"/></MediaContainer>'),
                 "/library/sections": _Resp(PLEX_SECTIONS),
                 "/users/account.json": _Resp({"user": {"username": "Bear"}}),
+                "/api/servers/M1": _Resp(None, text='<MediaContainer><Server><Section id="902" key="3"/>'
+                                                   '<Section id="903" key="4"/></Server></MediaContainer>'),
                 "/api/servers/M1/shared_servers": _Resp(None, text=listing),
                 "/api/servers/M1/shared_servers/77": _Resp(None, text=PLEX_LIST)}
 
@@ -141,6 +143,14 @@ class Plex(unittest.TestCase):
         libs, _ = run(m._plex_read, self.routes(listing))
         self.assertEqual(libs.users["liz"]["shown"], {"Shared"})
         self.assertIs(libs.users["liz@x"], libs.users["liz"])
+
+    def test_a_home_member_with_no_share_gets_one(self):
+        libs, _ = run(m._plex_read, self.routes())       # Liz (id 6) is in Plex Home, no share here
+        self.assertEqual(libs.users["liz"]["shown"], set(), "no share = no libraries here")
+        self.assertEqual(m.status(libs, None, "liz", {"Kids"})["state"], "drift")
+        _, c = run(m._plex_write, {"POST /api/servers/M1/shared_servers": _Resp({})}, libs, "liz", {"Kids"})
+        sent = c.seen[-1][2]["shared_server"]
+        self.assertEqual(sent, {"library_section_ids": ["903"], "invited_id": "6"})
 
     def test_sections_from_the_share_when_the_list_has_none(self):
         bare = '<MediaContainer><SharedServer id="77" username="mum" email="mum@x"/></MediaContainer>'
